@@ -1,1 +1,1 @@
-# niche-jepa
+# nichejepa
