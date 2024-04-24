@@ -58,8 +58,8 @@ warnings.filterwarnings("ignore", message=".*The 'nopython' keyword.*") # noqa
 
 logger = logging.getLogger(__name__)
 
-CELL_GENE_MEDIAN_FILE = Path(__file__).parent.parent.parent.parent / "cell_gene_median_dictionary.pkl"
-NICHE_GENE_MEDIAN_FILE = Path(__file__).parent.parent.parent.parent / "niche_gene_median_dictionary.pkl"
+CELL_GENE_MEAN_FILE = Path(__file__).parent.parent.parent.parent / "cell_gene_mean_dictionary.pkl"
+NICHE_GENE_MEAN_FILE = Path(__file__).parent.parent.parent.parent / "niche_gene_mean_dictionary.pkl"
 TOKEN_DICTIONARY_FILE = Path(__file__).parent.parent.parent.parent / "token_dictionary.pkl"
 
 
@@ -125,7 +125,7 @@ def rank_gene_tokens(
     Parameters
     ----------
     gene_scores:
-        1D vector containing gene scores (normalized gene expression scaled by corpus median).
+        1D vector containing gene scores (normalized gene expression scaled by corpus non-zero means).
     gene_tokens:
         1D vector containing gene tokens.
 
@@ -152,9 +152,9 @@ def tokenize_cell(
     Parameters
     ----------
     norm_counts_cell:
-        Read-depth normalized and median-scaled gene expression counts of the cell.
+        Read-depth normalized and non-zero-mean-scaled gene expression counts of the cell.
     norm_counts_niche:
-        Read-depth normalized and median-scaled gene expression counts of the niche.
+        Read-depth normalized and non-zero-mean-scaled gene expression counts of the niche.
     coding_miRNA_tokens_cell:
         Protein-coding and micro RNA gene tokens of the cell.
     coding_miRNA_tokens_niche:
@@ -187,8 +187,8 @@ class STRankTokenizer:
         nproc: int = 1,
         chunk_size: int = 512,
         model_input_size: int = 2048,
-        cell_gene_median_file: Path | str = CELL_GENE_MEDIAN_FILE,
-        niche_gene_median_file: Path | str = NICHE_GENE_MEDIAN_FILE,
+        cell_gene_mean_file: Path | str = CELL_GENE_MEAN_FILE,
+        niche_gene_mean_file: Path | str = NICHE_GENE_MEAN_FILE,
         token_dictionary_file: Path | str = TOKEN_DICTIONARY_FILE,
         cell_special_tokens: Optional[list[str]] = None, # = ["<cls>"],
         cell_special_tokens_idx: Optional[list[int]] = None, # = [0],
@@ -209,11 +209,11 @@ class STRankTokenizer:
             Chunk size for adata tokenizer.
         model_input_size:
             Max input size of the model to truncate input to.
-        cell_gene_median_file:
-            Path to pickle file containing dictionary of non-zero median gene expression values of
+        cell_gene_mean_file:
+            Path to pickle file containing dictionary of non-zero mean gene expression values of
             cells across STcorpus.
-        niche_gene_median_file:
-            Path to pickle file containing dictionary of non-zero median gene expression values of
+        niche_gene_mean_file:
+            Path to pickle file containing dictionary of non-zero mean gene expression values of
             niches across STcorpus.
         token_dictionary_file:
             Path to pickle file containing token dictionary (gene tokens are Ensembl IDs + '_cell' or
@@ -237,12 +237,12 @@ class STRankTokenizer:
         self.niche_special_tokens_idx = niche_special_tokens_idx
 
         # Load dictionary of cell gene normalization factors
-        with open(cell_gene_median_file, "rb") as f:
-            self.cell_gene_median_dict = pickle.load(f)
+        with open(cell_gene_mean_file, "rb") as f:
+            self.cell_gene_mean_dict = pickle.load(f)
 
         # Load dictionary of niche gene normalization factors
-        with open(niche_gene_median_file, "rb") as f:
-            self.niche_gene_median_dict = pickle.load(f)
+        with open(niche_gene_mean_file, "rb") as f:
+            self.niche_gene_mean_dict = pickle.load(f)
 
         # Load token dictionary
         with open(token_dictionary_file, "rb") as f:
@@ -392,10 +392,10 @@ class STRankTokenizer:
             [self.coding_miRNA_dict.get(gene_id, False) for gene_id in adata.var["ensembl_id"]]
             )[0]
         norm_factors_cell = np.array(
-            [self.cell_gene_median_dict[gene_id] for gene_id in adata.var["ensembl_id"][coding_miRNA_idx]]
+            [self.cell_gene_mean_dict[gene_id] for gene_id in adata.var["ensembl_id"][coding_miRNA_idx]]
             )
         norm_factors_niche = np.array(
-            [self.niche_gene_median_dict[gene_id] for gene_id in adata.var["ensembl_id"][coding_miRNA_idx]]
+            [self.niche_gene_mean_dict[gene_id] for gene_id in adata.var["ensembl_id"][coding_miRNA_idx]]
             )
         coding_miRNA_ids = adata.var["ensembl_id"][coding_miRNA_idx]
         coding_miRNA_tokens_cell = np.array([self.token_dict[gene_id + "_cell"] for gene_id in coding_miRNA_ids])
@@ -417,7 +417,7 @@ class STRankTokenizer:
         for i in range(0, len(filter_pass_idx), self.chunk_size):
             chunk_idx = filter_pass_idx[i : i + self.chunk_size]
 
-            # Perform read depth normalization of counts and scale by median values from corpus
+            # Perform read depth normalization of counts and scale by non-zero mean values from corpus
             total_counts_cell = adata[chunk_idx].obs["total_counts_cell"].values[:, None]
             total_counts_niche = adata[chunk_idx].obs["total_counts_niche"].values[:, None]
             counts_cell = adata[chunk_idx, coding_miRNA_idx].X
