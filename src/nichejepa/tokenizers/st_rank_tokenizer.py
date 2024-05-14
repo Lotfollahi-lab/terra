@@ -66,11 +66,14 @@ logger = logging.getLogger(__name__)
 CELL_GENE_MEANS_FILE = Path(__file__).parent.parent.parent.parent / "cell_gene_means_dictionary.pkl"
 CELL_GENE_REG_STDS_FILE = Path(__file__).parent.parent.parent.parent / "cell_gene_reg_stds_dictionary.pkl"
 CELL_GENE_NZMEDIANS_FILE = Path(__file__).parent.parent.parent.parent / "cell_gene_nzmedians_dictionary.pkl"
+CELL_GENE_LOGMEANS_FILE = Path(__file__).parent.parent.parent.parent / "cell_gene_logmeans_dictionary.pkl"
 NEIGHBORHOOD_GENE_MEANS_FILE = Path(__file__).parent.parent.parent.parent / "neighborhood_gene_means_dictionary.pkl"
 NEIGHBORHOOD_GENE_REG_STDS_FILE = Path(
     __file__).parent.parent.parent.parent / "neighborhood_gene_reg_stds_dictionary.pkl"
 NEIGHBORHOOD_GENE_NZMEDIANS_FILE = Path(
     __file__).parent.parent.parent.parent / "neighborhood_gene_nzmedians_dictionary.pkl"
+NEIGHBORHOOD_GENE_LOGMEANS_FILE = Path(
+    __file__).parent.parent.parent.parent / "neighborhood_gene_logmeans_dictionary.pkl"
 TOKEN_DICTIONARY_FILE = Path(__file__).parent.parent.parent.parent / "token_dictionary.pkl"
 
 
@@ -203,10 +206,12 @@ class STRankTokenizer:
         norm_factor: Optional[Literal["read_depth", "cell_area"]]=None,
         cell_gene_means_file: Path | str = CELL_GENE_MEANS_FILE,
         cell_gene_reg_stds_file: Path | str = CELL_GENE_REG_STDS_FILE,
-        cell_gene_nzmedians_file: Path | str = CELL_GENE_NZMEDIANS_FILE, 
+        cell_gene_nzmedians_file: Path | str = CELL_GENE_NZMEDIANS_FILE,
+        cell_gene_logmeans_file: Path | str = CELL_GENE_NZMEDIANS_FILE, 
         neighborhood_gene_means_file: Path | str = NEIGHBORHOOD_GENE_MEANS_FILE,
         neighborhood_gene_reg_stds_file: Path | str = NEIGHBORHOOD_GENE_REG_STDS_FILE,
-        neighborhood_gene_nzmedians_file: Path | str = NEIGHBORHOOD_GENE_NZMEDIANS_FILE, 
+        neighborhood_gene_nzmedians_file: Path | str = NEIGHBORHOOD_GENE_NZMEDIANS_FILE,
+        neighborhood_gene_logmeans_file: Path | str = NEIGHBORHOOD_GENE_LOGMEANS_FILE,
         token_dictionary_file: Path | str = TOKEN_DICTIONARY_FILE,
         cell_special_tokens: Optional[list[str]] = ["<cls_cell>"],
         cell_special_tokens_idx: Optional[list[int]] = [0],
@@ -261,6 +266,10 @@ class STRankTokenizer:
             Path to pickle file containing dictionary of non-zero median gene expression of cells across STcorpus (for
             each gene).
             Only relevant if 'norm_method' in ['nzmean'].
+        cell_gene_logmeans_file:
+            Path to pickle file containing dictionary of log mean gene expression of cells across STcorpus (for each
+            gene).
+            Only relevant if 'norm_method' in ['log_shifted'].        
         neighborhood_gene_means_file:
             Path to pickle file containing dictionary of mean gene expression of neighborhoods across STcorpus (for each
             gene).
@@ -275,6 +284,10 @@ class STRankTokenizer:
             Path to pickle file containing dictionary of non-zero median gene expression of neighborhoods across
             STcorpus (for each gene).
             Only relevant if 'norm_method' in ['nzmean'].
+        neighborhood_gene_logmeans_file:
+            Path to pickle file containing dictionary of log mean gene expression of neighborhoods across STcorpus (for
+            each gene).
+            Only relevant if 'norm_method' in ['log_shifted'].   
         token_dictionary_file:
             Path to pickle file containing token dictionary (gene tokens are Ensembl IDs + '_cell' or '_neighborhood').
         cell_special_tokens:
@@ -297,36 +310,38 @@ class STRankTokenizer:
         self.neighborhood_special_tokens = neighborhood_special_tokens
         self.neighborhood_special_tokens_idx = neighborhood_special_tokens_idx
 
+        # Load normalization factors
         if self.norm_method == "seurat_v3":
             # Load dictionaries of cell gene means and reg stds
             with open(cell_gene_means_file, "rb") as f:
                 self.cell_gene_means_dict = pickle.load(f)
             with open(cell_gene_reg_stds_file, "rb") as f:
                 self.cell_gene_reg_stds_dict = pickle.load(f)
-
             # Load dictionaries of neighborhood gene means and reg stds
             with open(neighborhood_gene_means_file, "rb") as f:
                 self.neighborhood_gene_means_dict = pickle.load(f)
             with open(neighborhood_gene_reg_stds_file, "rb") as f:
                 self.neighborhood_gene_reg_stds_dict = pickle.load(f)
-
         elif self.norm_method == "mean":
             # Load dictionaries of cell gene means
             with open(cell_gene_means_file, "rb") as f:
                 self.cell_gene_means_dict = pickle.load(f)
-
             # Load dictionaries of neighborhood gene means
             with open(neighborhood_gene_means_file, "rb") as f:
                 self.neighborhood_gene_means_dict = pickle.load(f)
-
         elif self.norm_method == "nzmedian":
             # Load dictionaries of cell gene non-zero medians
             with open(cell_gene_nzmedians_file, "rb") as f:
                 self.cell_gene_nzmedians_dict = pickle.load(f)
-
             # Load dictionaries of neighborhood gene non-zero medians
             with open(neighborhood_gene_nzmedians_file, "rb") as f:
                 self.neighborhood_gene_nzmedians_dict = pickle.load(f)
+        elif self.norm_method == "shifted_log":
+            # Load dictionaries of cell gene means and reg stds
+            with open(cell_gene_logmeans_file, "rb") as f:
+                self.cell_gene_logmeans_dict = pickle.load(f)
+            with open(neighborhood_gene_logmeans_file, "rb") as f:
+                self.neighborhood_gene_logmeans_dict = pickle.load(f)
 
         # Load token dictionary
         with open(token_dictionary_file, "rb") as f:
@@ -524,7 +539,7 @@ class STRankTokenizer:
                                                   np.mean(adata.obs["neighborhood_area"])
                                                   )
             if self.norm_method == "seurat_v3":
-                # Retrieve cell and neighborhood gene means and reg stds
+                # Retrieve cell and neighborhood gene means and regularized standard deviations
                 cell_gene_means = np.array([self.cell_gene_means_dict[gene_id] for gene_id in adata.var["ensembl_id"]])
                 cell_gene_reg_stds = np.array(
                     [self.cell_gene_reg_stds_dict[gene_id] for gene_id in adata.var["ensembl_id"]]
@@ -537,7 +552,7 @@ class STRankTokenizer:
                     )
             
                 # Normalize cell and neighborhood counts
-                adata.X  = adata.X - cell_gene_means / cell_gene_reg_stds
+                adata.X = adata.X - cell_gene_means / cell_gene_reg_stds
                 adata.layers["X_neighborhood"] = (
                     adata.layers["X_neighborhood"] - neighborhood_gene_means / neighborhood_gene_reg_stds
                     )
@@ -553,7 +568,8 @@ class STRankTokenizer:
                 adata.layers["X_neighborhood"] = adata.layers["X_neighborhood"] / neighborhood_gene_means
             elif self.norm_method == "nzmedian":
                 # Retrieve cell and neighborhood gene non-zero medians
-                cell_gene_nzmedians = np.array([self.cell_gene_nzmedians_dict[gene_id] for gene_id in adata.var["ensembl_id"]])
+                cell_gene_nzmedians = np.array(
+                    [self.cell_gene_nzmedians_dict[gene_id] for gene_id in adata.var["ensembl_id"]])
                 neighborhood_gene_nzmedians = np.array(
                     [self.neighborhood_gene_nzmedians_dict[gene_id] for gene_id in adata.var["ensembl_id"]]
                     )
@@ -564,6 +580,17 @@ class STRankTokenizer:
             elif self.norm_method == "shifted_log":
                 sc.pp.log1p(adata)
                 sc.pp.log1p(adata, layer="X_neighborhood")
+
+                # Retrieve cell and neighborhood gene logmeans
+                cell_gene_logmeans = np.array(
+                    [self.cell_gene_logmeans_dict[gene_id] for gene_id in adata.var["ensembl_id"]])
+                neighborhood_gene_logmeans = np.array(
+                    [self.neighborhood_gene_logmeans_dict[gene_id] for gene_id in adata.var["ensembl_id"]]
+                    )
+
+                # Normalize cell and neighborhood counts
+                adata.X = adata.X / cell_gene_logmeans
+                adata.layers["X_neighborhood"] = adata.layers["X_neighborhood"] / neighborhood_gene_logmeans
         else:
             raise ValueError(f"'norm_method' {self.norm_method} is not valid.")
 
