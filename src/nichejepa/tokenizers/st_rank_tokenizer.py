@@ -57,6 +57,9 @@ import squidpy as sq
 from datasets import Dataset
 from skmisc.loess import loess
 
+import nichejepa.preprocess
+import nichejepa.aggregate
+import nichejepa.normalise
 
 warnings.filterwarnings("ignore", message=".*The 'nopython' keyword.*") # noqa
 
@@ -454,118 +457,50 @@ class STRankTokenizer:
         """
         adata = ad.read_h5ad(adata_file_path)
 
-        # Filter cells that did not pass QC
-        if "filter_pass" in adata.obs.columns:
-            filter_pass_idx = np.where([filter_pass == 1 for filter_pass in adata.obs["filter_pass"]])[0]
-        else:
-            print(f"'{adata_file_path}' has no column 'filter_pass'; utilizing all cells.")
-            filter_pass_idx = np.array([i for i in range(adata.shape[0])])
-        adata = adata[filter_pass_idx]
+        # filter to remove poor quality cells
+        adata = nichejepa.preprocess.filter_poor_quality_cells(adata)
 
-        # Compute spatial neighborhood graph based on Visium spot diameter of 55 microns
-        sq.gr.spatial_neighbors(adata,
-                                coord_type="generic",
-                                spatial_key="spatial",
-                                radius=27.5,
-                                )
-        
-        # Add self loops to spatial neighborhood graph
-        adata.obsp["spatial_connectivities"].setdiag(1)
-            
-        # Compute sum of counts across each cell's neighborhood to get neighborhood counts per cell
-        adata.layers["X_neighborhood"] = adata.obsp["spatial_connectivities"].T @ adata.X
-            
-        # Normalize counts before ranking of genes
+        # aggregate neighbourhood cells
+        adata = nichejepa.aggregate.aggregate_by_radius(adata)
+
+        # normalise cell and neighbourhood counts
         if self.norm_method == "analytic_pearson_residuals":
-            # Define negative binomial overdispersion parameter
-            theta = 100
+            adata.X = nichejepa.normalise.analytic_pearson_residuals(adata.X)
+            adata.layers["X_neighborhood"] = nichejepa.normalise.analytic_pearson_residuals(
+                adata.layers["X_neighborhood"])
 
-            # Normalize cell counts
-            sum_counts_cells = np.sum(adata.X, axis=1).reshape(-1, 1)
-            sum_counts_genes = np.sum(adata.X, axis=0).reshape(1, -1)
-            sum_counts_total = np.sum(sum_counts_genes)
-            mu_counts = np.array(sum_counts_cells @ sum_counts_genes / sum_counts_total)
-            diff_counts = np.array(adata.X - mu_counts)
-            residuals_counts = diff_counts / np.sqrt(mu_counts + mu_counts**2 / theta)
-            adata.X = np.clip(residuals_counts, a_min=-np.sqrt(adata.shape[0]), a_max=np.sqrt(adata.shape[0]))
+        if self.norm_factor == "read_depth":
+            adata.X = nichejepa.normalise.read_depth(adata.X)
+            adata.layers["X_neighborhood"] = nichejepa.normalise.read_depth(adata.layers["X_neighborhood"])
 
-            # Normalize neighborhood counts
-            sum_counts_neighborhood_cells = np.sum(adata.layers["X_neighborhood"], axis=1).reshape(-1, 1)
-            sum_counts_neighborhood_genes = np.sum(adata.layers["X_neighborhood"], axis=0).reshape(1, -1)
-            sum_counts_neighborhood_total = np.sum(sum_counts_neighborhood_genes)
-            mu_counts_neighborhood = np.array(
-                sum_counts_neighborhood_cells @ sum_counts_neighborhood_genes / sum_counts_neighborhood_total)
-            diff_counts_neighborhood = np.array(adata.layers["X_neighborhood"] - mu_counts_neighborhood)
-            residuals_counts_neighborhood = diff_counts_neighborhood / np.sqrt(
-                mu_counts_neighborhood + mu_counts_neighborhood**2 / theta)
-            adata.layers["X_neighborhood"] = np.clip(
-                residuals_counts_neighborhood, a_min=-np.sqrt(adata.shape[0]), a_max=np.sqrt(adata.shape[0]))
-        elif self.norm_method in ["seurat_v3", "mean", "nzmedian", "shifted_log"]:
-            if self.norm_factor == "read_depth":
-                # Normalize cell counts
-                target_sum = 10_000
-                adata.X = adata.X / adata.X.sum(1).reshape(-1, 1) * target_sum
+        if self.norm_factor == "cell_area":
+            adata = nichejepa.normalise.cell_area(adata)
 
-                # Normalize neighborhood counts
-                adata.layers["X_neighborhood"] = (
-                    adata.layers["X_neighborhood"] /
-                    adata.layers["X_neighborhood"].sum(1).reshape(-1, 1) * target_sum)
-            elif self.norm_factor == "cell_area":
-                # Normalize cell counts
-                adata.X = adata.X / adata.obs["area"].values.reshape(-1, 1) * np.mean(adata.obs["area"])
+        if self.norm_method == "seurat_v3":
+            adata = nichejepa.normalise.seurat_v3(
+                adata,
+                cell_gene_means_file=CELL_GENE_MEANS_FILE,
+                cell_gene_reg_stds_file=CELL_GENE_REG_STDS_FILE,
+                neighborhood_gene_means_file=NEIGHBORHOOD_GENE_MEANS_FILE,
+                neighborhood_gene_reg_stds_file=NEIGHBORHOOD_GENE_REG_STDS_FILE
+            )
 
-                # Compute neighborhood area
-                adata.obs["neighborhood_area"] = np.array(adata.obsp["spatial_connectivities"].T @
-                                                          adata.obs["area"].values.reshape(-1, 1))  
+        if self.norm_method == "mean":
+            adata = nichejepa.normalise.mean(
+                adata,
+                cell_gene_means_file=CELL_GENE_MEANS_FILE,
+                neighborhood_gene_means_file=NEIGHBORHOOD_GENE_MEANS_FILE
+            )
 
-                # Normalize neighborhood counts
-                adata.layers["X_neighborhood"] = (adata.layers["X_neighborhood"] /
-                                                  adata.obs["neighborhood_area"].values.reshape(-1, 1) *
-                                                  np.mean(adata.obs["neighborhood_area"])
-                                                  )
-            if self.norm_method == "seurat_v3":
-                # Retrieve cell and neighborhood gene means and reg stds
-                cell_gene_means = np.array([self.cell_gene_means_dict[gene_id] for gene_id in adata.var["ensembl_id"]])
-                cell_gene_reg_stds = np.array(
-                    [self.cell_gene_reg_stds_dict[gene_id] for gene_id in adata.var["ensembl_id"]]
-                    )
-                neighborhood_gene_means = np.array(
-                    [self.neighborhood_gene_means_dict[gene_id] for gene_id in adata.var["ensembl_id"]]
-                    )
-                neighborhood_gene_reg_stds = np.array(
-                    [self.neighborhood_gene_reg_stds_dict[gene_id] for gene_id in adata.var["ensembl_id"]]
-                    )
-            
-                # Normalize cell and neighborhood counts
-                adata.X  = adata.X - cell_gene_means / cell_gene_reg_stds
-                adata.layers["X_neighborhood"] = (
-                    adata.layers["X_neighborhood"] - neighborhood_gene_means / neighborhood_gene_reg_stds
-                    )
-            elif self.norm_method == "mean":
-                # Retrieve cell and neighborhood gene means
-                cell_gene_means = np.array([self.cell_gene_means_dict[gene_id] for gene_id in adata.var["ensembl_id"]])
-                neighborhood_gene_means = np.array(
-                    [self.neighborhood_gene_means_dict[gene_id] for gene_id in adata.var["ensembl_id"]]
-                    )
+        if self.norm_method == "nzmedian":
+            adata = nichejepa.normalise.non_zero_median(
+                adata,
+                cell_gene_nzmedians_file=CELL_GENE_NZMEDIANS_FILE,
+                neighborhood_gene_nzmedians_file=NEIGHBORHOOD_GENE_NZMEDIANS_FILE
+            )
 
-                # Normalize cell and neighborhood counts
-                adata.X = adata.X / cell_gene_means
-                adata.layers["X_neighborhood"] = adata.layers["X_neighborhood"] / neighborhood_gene_means
-            elif self.norm_method == "nzmedian":
-                # Retrieve cell and neighborhood gene non-zero medians
-                cell_gene_nzmedians = np.array([self.cell_gene_nzmedians_dict[gene_id] for gene_id in adata.var["ensembl_id"]])
-                neighborhood_gene_nzmedians = np.array(
-                    [self.neighborhood_gene_nzmedians_dict[gene_id] for gene_id in adata.var["ensembl_id"]]
-                    )
-
-                # Normalize cell and neighborhood counts
-                adata.X = adata.X / cell_gene_nzmedians
-                adata.layers["X_neighborhood"] = adata.layers["X_neighborhood"] / neighborhood_gene_nzmedians
-            elif self.norm_method == "shifted_log":
-                sc.pp.log1p(adata)
-                sc.pp.log1p(adata, layer="X_neighborhood")
-        else:
-            raise ValueError(f"'norm_method' {self.norm_method} is not valid.")
+        if self.norm_method == "shifted_log":
+            adata = nichejepa.normalise.shifted_log(adata)
 
         # Initialize cell metadata
         if self.custom_attr_name_dict is not None:
