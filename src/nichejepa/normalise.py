@@ -267,8 +267,8 @@ def shifted_log(x: scipy.sparse.csr_matrix) -> scipy.sparse.csr_matrix:
 
     Returns
     ----------
-    anndata.AnnData
-        An AnnData object containing the normalised features
+    scipy.sparse.csr_matrix
+        A sparse matrix containing the normalised features
     """
 
     y = sc.pp.log1p(x)
