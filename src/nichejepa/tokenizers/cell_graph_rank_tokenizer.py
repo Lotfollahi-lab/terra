@@ -1,5 +1,5 @@
 """
-Cell Neighborhood Rank Tokenizer.
+Cell Graph Rank Tokenizer.
 
 Adapted from Theodoris, C. V. et al. Transfer learning enables predictions in network biology. Nature 618, 616–624
 (2023); https://huggingface.co/ctheodoris/Geneformer/blob/main/geneformer/tokenizer.py (12.04.2024).
@@ -19,8 +19,8 @@ Optional cell attributes:
 Usage
 ----------
 .. code-block :: python
-    >>> from nichejepa import CellNeighborhoodRankTokenizer
-    >>> tk = CellNeighborhoodRankTokenizer(custom_attr_name_dict={"cell_type": "cell_types"}, nproc=4)
+    >>> from nichejepa import CellGraphRankTokenizer
+    >>> tk = CellGraphRankTokenizer(custom_attr_name_dict={"cell_type": "cell_types"}, nproc=4)
     >>> tk.tokenize_data("input_directory", "output_directory", "output_file_prefix")
 
 Description
@@ -39,7 +39,7 @@ as a binary indicator of whether to include these cells in the tokenization. All
 be tokenized, whereas the others will be excluded. One may use this column to indicate QC filtering or other criteria
 for selection for inclusion in the final tokenized dataset. If one's data is in other formats besides '.h5ad', one can
 use the relevant tools (such as Anndata tools) to convert the file to '.h5ad' format prior to initializing the
-CellNeighborhoodRankTokenizer.
+CellGraphRankTokenizer.
 """
 
 from __future__ import annotations
@@ -53,9 +53,9 @@ from typing import Literal, Optional, Tuple
 import anndata as ad
 import numpy as np
 import scipy.sparse as sp
+import squidpy as sq
 from datasets import Dataset
 
-from .aggregate import aggregate_by_radius
 from .normalize import (read_depth,
                         cell_area,
                         analytic_pearson_residuals,
@@ -66,50 +66,39 @@ from .normalize import (read_depth,
 from .preprocess import filter_poor_quality_cells
 from .tokenize import process_gene_tokens, rank_gene_tokens
 
+
 warnings.filterwarnings("ignore", message=".*The 'nopython' keyword.*") # noqa
 
 logger = logging.getLogger(__name__)
 
 
-CELL_GENE_MEANS_FILE = Path(__file__).parent.parent.parent.parent / "cell_gene_means_dictionary.pkl"
-CELL_GENE_REG_STDS_FILE = Path(__file__).parent.parent.parent.parent / "cell_gene_reg_stds_dictionary.pkl"
-CELL_GENE_NZMEDIANS_FILE = Path(__file__).parent.parent.parent.parent / "cell_gene_nzmedians_dictionary.pkl"
-CELL_GENE_LOGMEANS_FILE = Path(__file__).parent.parent.parent.parent / "cell_gene_logmeans_dictionary.pkl"
-NEIGHBORHOOD_GENE_MEANS_FILE = Path(__file__).parent.parent.parent.parent / "neighborhood_gene_means_dictionary.pkl"
-NEIGHBORHOOD_GENE_REG_STDS_FILE = Path(
-    __file__).parent.parent.parent.parent / "neighborhood_gene_reg_stds_dictionary.pkl"
-NEIGHBORHOOD_GENE_NZMEDIANS_FILE = Path(
-    __file__).parent.parent.parent.parent / "neighborhood_gene_nzmedians_dictionary.pkl"
-NEIGHBORHOOD_GENE_LOGMEANS_FILE = Path(
-    __file__).parent.parent.parent.parent / "neighborhood_gene_logmeans_dictionary.pkl"
+GENE_MEANS_FILE = Path(__file__).parent.parent.parent.parent / "cell_gene_means_dictionary.pkl"
+GENE_REG_STDS_FILE = Path(__file__).parent.parent.parent.parent / "cell_gene_reg_stds_dictionary.pkl"
+GENE_NZMEDIANS_FILE = Path(__file__).parent.parent.parent.parent / "cell_gene_nzmedians_dictionary.pkl"
+GENE_LOGMEANS_FILE = Path(__file__).parent.parent.parent.parent / "cell_gene_logmeans_dictionary.pkl"
 TOKEN_DICTIONARY_FILE = Path(__file__).parent.parent.parent.parent / "token_dictionary.pkl"
 
 
-class CellNeighborhoodRankTokenizer:
+class CellGraphRankTokenizer:
     def __init__(self,
                  custom_attr_name_dict: Optional[dict] = None,
                  nproc: int = 1,
                  chunk_size: int = 512,
                  model_input_size: int = 2048,
+                 tokens_per_cell: int = 64, 
                  norm_method: Literal["analytic_pearson_residuals",
-                                     "seurat_v3",
-                                     "mean",
-                                     "nzmedian",
-                                     "shifted_log"]="analytic_pearson_residuals",
+                                      "seurat_v3",
+                                      "mean",
+                                      "nzmedian",
+                                      "shifted_log"]="analytic_pearson_residuals",
                  norm_factor: Optional[Literal["read_depth", "cell_area"]]=None,
-                 cell_gene_means_file: Path | str = CELL_GENE_MEANS_FILE,
-                 cell_gene_reg_stds_file: Path | str = CELL_GENE_REG_STDS_FILE,
-                 cell_gene_nzmedians_file: Path | str = CELL_GENE_NZMEDIANS_FILE,
-                 cell_gene_logmeans_file: Path | str = CELL_GENE_LOGMEANS_FILE,
-                 neighborhood_gene_means_file: Path | str = NEIGHBORHOOD_GENE_MEANS_FILE,
-                 neighborhood_gene_reg_stds_file: Path | str = NEIGHBORHOOD_GENE_REG_STDS_FILE,
-                 neighborhood_gene_nzmedians_file: Path | str = NEIGHBORHOOD_GENE_NZMEDIANS_FILE,
-                 neighborhood_gene_logmeans_file: Path | str = NEIGHBORHOOD_GENE_LOGMEANS_FILE,
+                 gene_means_file: Path | str = GENE_MEANS_FILE,
+                 gene_reg_stds_file: Path | str = GENE_REG_STDS_FILE,
+                 gene_nzmedians_file: Path | str = GENE_NZMEDIANS_FILE,
+                 gene_logmeans_file: Path | str = GENE_LOGMEANS_FILE, 
                  token_dictionary_file: Path | str = TOKEN_DICTIONARY_FILE,
-                 cell_special_tokens: Optional[list[str]] = ["<cls_cell>"],
-                 cell_special_tokens_idx: Optional[list[int]] = [0],
-                 neighborhood_special_tokens: Optional[list[str]] = ["<cls_neighborhood>"],
-                 neighborhood_special_tokens_idx: Optional[list[int]] = [0]):
+                 special_tokens: Optional[list[str]] = ["<cls>"],
+                 special_tokens_idx: Optional[list[int]] = [0]):
         """
         Initialize spatial transcriptomics rank tokenizer.
 
@@ -146,62 +135,43 @@ class CellNeighborhoodRankTokenizer:
         norm_factor:
             Norm factor for cellular normalization to adjust for cell size differences. Has to match norm factor used
             for computation of means and regularized stds. Is not used if 'norm_method' is 'analytic_pearson_residuals'. 
-        cell_gene_means_file:
+        gene_means_file:
             Path to pickle file containing dictionary of mean gene expression of cells across STcorpus (for each gene).
             Only relevant if 'norm_method' in ['seurat_v3', 'mean'].
-        cell_gene_reg_stds_file:
+        gene_reg_stds_file:
             Path to pickle file containing dictionary of regularizing standard deviations of gene expression of cells
             across STcorpus (for each gene). Regularizing standard deviations are expected standard deviations based
             on means and are used for normalization to stabilize variances and only keep 'unexpected' variation.
             Only relevant if 'norm_method' in ['seurat_v3'].
-        cell_gene_nzmedians_file:
+        gene_nzmedians_file:
             Path to pickle file containing dictionary of non-zero median gene expression of cells across STcorpus (for
             each gene).
             Only relevant if 'norm_method' in ['nzmean'].
-        neighborhood_gene_means_file:
-            Path to pickle file containing dictionary of mean gene expression of neighborhoods across STcorpus (for each
+        gene_logmeans_file:
+            Path to pickle file containing dictionary of log mean gene expression of cells across STcorpus (for each
             gene).
-            Only relevant if 'norm_method' in ['seurat_v3', 'mean'].
-        neighborhood_gene_reg_stds_file:
-            Path to pickle file containing dictionary of regularizing standard deviations of gene expression of
-            neighborhoods across STcorpus (for each gene). Regularizing standard deviations are expected standard
-            deviations based on means and are used for normalization to stabilize variances and only keep 'unexpected'
-            variation.
-            Only relevant if 'norm_method' in ['seurat_v3'].
-        neighborhood_gene_nzmedians_file:
-            Path to pickle file containing dictionary of non-zero median gene expression of neighborhoods across
-            STcorpus (for each gene).
-            Only relevant if 'norm_method' in ['nzmean'].
+            Only relevant if 'norm_method' in ['log_shifted'].      
         token_dictionary_file:
-            Path to pickle file containing token dictionary (gene tokens are Ensembl IDs + '_cell' or '_neighborhood').
-        cell_special_tokens:
+            Path to pickle file containing token dictionary (gene tokens are Ensembl IDs).
+        special_tokens:
             List with special tokens inserted into the gene token vector containing cell gene tokens.
-        cell_special_tokens_idx:
+        special_tokens_idx:
             Index where special tokens are to be inserted into the cell gene token vector.
-        neighborhood_special_tokens:
-            List with special tokens inserted into the gene token vector containing neighborhood gene tokens.
-        neighborhood_special_tokens_idx:
-            Index where special tokens are to be inserted into the neighborhood gene token vector.
         """
 
         self.custom_attr_name_dict = custom_attr_name_dict
         self.nproc = nproc
         self.chunk_size = chunk_size
         self.model_input_size = model_input_size
+        self.tokens_per_cell = tokens_per_cell
         self.norm_method = norm_method
         self.norm_factor = norm_factor
-        self.cell_gene_means_file = cell_gene_means_file
-        self.cell_gene_reg_stds_file = cell_gene_reg_stds_file
-        self.cell_gene_nzmedians_file = cell_gene_nzmedians_file
-        self.cell_gene_logmeans_file = cell_gene_logmeans_file
-        self.neighborhood_gene_means_file = neighborhood_gene_means_file
-        self.neighborhood_gene_reg_stds_file = neighborhood_gene_reg_stds_file
-        self.neighborhood_gene_nzmedians_file = neighborhood_gene_nzmedians_file
-        self.neighborhood_gene_logmeans_file = neighborhood_gene_logmeans_file
-        self.cell_special_tokens = cell_special_tokens
-        self.cell_special_tokens_idx = cell_special_tokens_idx
-        self.neighborhood_special_tokens = neighborhood_special_tokens
-        self.neighborhood_special_tokens_idx = neighborhood_special_tokens_idx
+        self.gene_means_file = gene_means_file
+        self.gene_reg_stds_file = gene_reg_stds_file
+        self.gene_nzmedians_file = gene_nzmedians_file
+        self.gene_logmeans_file = gene_logmeans_file
+        self.special_tokens = special_tokens
+        self.special_tokens_idx = special_tokens_idx
 
         # Load token dictionary
         with open(token_dictionary_file, "rb") as f:
@@ -209,7 +179,7 @@ class CellNeighborhoodRankTokenizer:
 
         # Get vocabulary and gene Ensembl IDs (protein-coding and miRNA genes)
         self.vocab = list(self.token_dict.keys())
-        self.coding_miRNA_ids = [key.split("_")[0] for key in list(self.vocab) if "_cell" in key]
+        self.coding_miRNA_ids = [key.split("_")[0] for key in list(self.vocab) if "ENS" in key]
         self.coding_miRNA_dict = dict(zip(self.coding_miRNA_ids, [True] * len(self.vocab)))
 
     def tokenize_data(self,
@@ -235,12 +205,13 @@ class CellNeighborhoodRankTokenizer:
             If 'True', use generator for tokenization, else dict.
         """
 
-        gene_tokens_cell, gene_tokens_neighborhood, cell_metadata = self.tokenize_files(
+        gene_tokens, cell_pos_tokens, gene_pos_tokens, cell_metadata = self.tokenize_files(
             Path(input_directory), file_format
             )
 
-        tokenized_dataset = self.create_dataset(gene_tokens_cell,
-                                                gene_tokens_neighborhood,
+        tokenized_dataset = self.create_dataset(gene_tokens,
+                                                cell_pos_tokens,
+                                                gene_pos_tokens,
                                                 cell_metadata,
                                                 use_generator=use_generator)
 
@@ -249,7 +220,7 @@ class CellNeighborhoodRankTokenizer:
 
     def tokenize_files(self,
                        data_directory: Path | str,
-                       file_format: Literal["h5ad"] = "h5ad") -> Tuple[np.ndarray, np.ndarray, dict]:
+                       file_format: Literal["h5ad"] = "h5ad") -> Tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
         """
         Tokenize multiple files.
 
@@ -262,16 +233,19 @@ class CellNeighborhoodRankTokenizer:
 
         Returns 
         ----------
-        gene_tokens_cell:
-            Cell-wise vector of ranked cell gene tokens.
-        gene_tokens_neighborhood:
-            Cell-wise vector of ranked neighborhood gene tokens.
+        gene_tokens:
+            Cell-wise vector of ranked gene tokens.
+        cell_pos_tokens:
+            Cell-wise vector of positional tokens for cells.
+        gene_pos_tokens:
+            Cell-wise vector of positional tokens for genes.
         cell_metadata:
             Dictionary of cell metadata where keys are metadata columns and values are lists of cell-wise values.
         """
 
-        gene_tokens_cell = []
-        gene_tokens_neighborhood = []
+        gene_tokens = []
+        cell_pos_tokens = []
+        gene_pos_tokens = []
         if self.custom_attr_name_dict is not None:
             cell_attr = [attr_key for attr_key in self.custom_attr_name_dict.keys()]
             cell_metadata = {attr_key: [] for attr_key in self.custom_attr_name_dict.values()}
@@ -284,9 +258,10 @@ class CellNeighborhoodRankTokenizer:
         for file_path in data_directory.glob(f"*.{file_format}"):
             file_found = 1
             print(f"Tokenizing '{file_path}'...")
-            file_gene_tokens_cell, file_gene_tokens_neighborhood, file_cell_metadata = tokenize_file_fn(file_path)
-            gene_tokens_cell += file_gene_tokens_cell
-            gene_tokens_neighborhood += file_gene_tokens_neighborhood
+            file_gene_tokens, file_cell_pos_tokens, file_gene_pos_tokens, file_cell_metadata = tokenize_file_fn(file_path)
+            gene_tokens += file_gene_tokens
+            cell_pos_tokens += file_cell_pos_tokens
+            gene_pos_tokens += file_gene_pos_tokens
             if self.custom_attr_name_dict is not None:
                 for k in cell_attr:
                     cell_metadata[self.custom_attr_name_dict[k]] += file_cell_metadata[k]
@@ -297,10 +272,10 @@ class CellNeighborhoodRankTokenizer:
             logger.error(f"No '.{file_format}' files found in directory '{data_directory}'.")
             raise
 
-        return gene_tokens_cell, gene_tokens_neighborhood, cell_metadata
+        return gene_tokens, cell_pos_tokens, gene_pos_tokens, cell_metadata
 
     def tokenize_adata(self,
-                       adata_file_path: Path | str) -> Tuple[np.ndarray, np.ndarray, dict]:
+                       adata_file_path: Path | str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
         """
         Tokenize cells from an '.h5ad' (anndata) file.
 
@@ -311,10 +286,12 @@ class CellNeighborhoodRankTokenizer:
 
         Returns 
         ----------
-        gene_tokens_cell:
+        gene_tokens:
             Cell-wise vector of ranked cell gene tokens.
-        gene_tokens_neighborhood:
-            Cell-wise vector of ranked neighborhood gene tokens.
+        cell_pos_tokens:
+            Cell-wise vector of positional tokens for cells.
+        gene_pos_tokens:
+            Cell-wise vector of positional tokens for genes.
         cell_metadata:
             Dictionary of cell metadata where keys are metadata columns and values are lists of cell-wise values.
         """
@@ -325,59 +302,42 @@ class CellNeighborhoodRankTokenizer:
         # Filter to remove poor quality cells
         adata = filter_poor_quality_cells(adata)
 
-        print("Computing spatial neighborhood graph and aggregating counts.")
-        # Aggregate neighborhood cell gene expression
-        adata = aggregate_by_radius(adata)
-
+        print("Computing spatial neighborhood graph.")
+        # Compute spatial neighborhood graph based on Visium spot diameter of 55 microns
+        sq.gr.spatial_neighbors(adata,
+                                coord_type="generic",
+                                spatial_key="spatial",
+                                radius=27.5)
+        
         print("Normalizing counts.")
-        # Normalize cell and neighborhood counts before gene ranking
+        # Normalize counts before gene ranking
         if self.norm_method == "analytic_pearson_residuals":
             adata.X = analytic_pearson_residuals(adata.X)
-            adata.layers["X_neighborhood"] = analytic_pearson_residuals(adata.layers["X_neighborhood"])
         elif self.norm_factor == "read_depth":
             adata.X = read_depth(adata.X)
-            adata.layers["X_neighborhood"] = read_depth(adata.layers["X_neighborhood"])
         elif self.norm_factor == "cell_area":
             adata.X = cell_area(adata.X,
                                 cell_areas=adata.obs["cell_area"])
-            adata.obs["neighborhood_cell_area"] = np.array(
-                adata.obsp["spatial_connectivities"].T @ adata.obs["cell_area"].values.reshape(-1, 1))
-            adata.X = cell_area(adata.layers["X_neighborhood"],
-                                cell_areas=adata.obs["neighborhood_cell_area"])
-
+            
         if self.norm_method == "seurat_v3":
             adata.X = seurat_v3(adata.X,
-                                gene_means_file=self.cell_gene_means_file,
-                                gene_reg_stds_file=self.cell_gene_reg_stds_file,
+                                gene_means_file=self.gene_means_file,
+                                gene_reg_stds_file=self.gene_reg_stds_file,
                                 probed_genes=adata.var["ensembl_id"])
-            adata.layers["X_neighborhood"] = seurat_v3(adata.layers["X_neighborhood"],
-                                                       gene_means_file=self.neighborhood_gene_means_file,
-                                                       gene_reg_stds_file=self.neighborhood_gene_reg_stds_file,
-                                                       probed_genes=adata.var["ensembl_id"])
 
         if self.norm_method == "mean":
             adata.X = mean(adata.X,
-                           gene_means_file=self.cell_gene_means_file,
+                           gene_means_file=self.gene_means_file,
                            probed_genes=adata.var["ensembl_id"])
-            adata.layers["X_neighborhood"] = mean(adata.layers["X_neighborhood"],
-                                                  gene_means_file=self.neighborhood_gene_means_file,
-                                                  probed_genes=adata.var["ensembl_id"])
-
+        
         if self.norm_method == "nzmedian":
             adata.X = non_zero_median(adata.X,
-                                      gene_nzmedians_file=self.cell_gene_nzmedians_file,
+                                      gene_nzmedians_file=self.gene_nzmedians_file,
                                       probed_genes=adata.var["ensembl_id"])
-            adata.layers["X_neighborhood"] = non_zero_median(adata.layers["X_neighborhood"],
-                                                             gene_nzmedians_file=self.neighborhood_gene_nzmedians_file,
-                                                             probed_genes=adata.var["ensembl_id"])
-
         if self.norm_method == "shifted_log":
             adata.X = shifted_log(adata.X,
-                                  gene_logmeans_file=self.cell_gene_logmeans_file,
+                                  gene_logmeans_file=self.gene_logmeans_file,
                                   probed_genes=adata.var["ensembl_id"])
-            adata.layers["X_neighborhood"] = shifted_log(adata.layers["X_neighborhood"],
-                                                         gene_logmeans_file=self.neighborhood_gene_logmeans_file,
-                                                         probed_genes=adata.var["ensembl_id"])
 
         # Initialize cell metadata
         if self.custom_attr_name_dict is not None:
@@ -388,32 +348,25 @@ class CellNeighborhoodRankTokenizer:
             [self.coding_miRNA_dict.get(gene_id, False) for gene_id in adata.var["ensembl_id"]]
             )[0]
         coding_miRNA_ids = adata.var["ensembl_id"][coding_miRNA_idx]
-        coding_miRNA_tokens_cell = np.array([self.token_dict[gene_id + "_cell"] for gene_id in coding_miRNA_ids])
-        coding_miRNA_tokens_neighborhood = np.array(
-            [self.token_dict[gene_id + "_neighborhood"] for gene_id in coding_miRNA_ids])
+        coding_miRNA_tokens = np.array([self.token_dict[gene_id] for gene_id in coding_miRNA_ids])
 
-        gene_tokens_cell = []
-        gene_tokens_neighborhood = []
+        gene_tokens = []
+        cell_pos_tokens = []
+        gene_pos_tokens = []
 
+        print("Retrieving tokens for index cell and adding cell metadata.")
         # Divide cells into chunks and loop through chunks
         for i in range(0, len(adata), self.chunk_size):
-            norm_counts_cell = sp.csr_matrix(adata[i : i + self.chunk_size, coding_miRNA_idx].X)
-            norm_counts_neighborhood = sp.csr_matrix(
-                adata[i : i + self.chunk_size, coding_miRNA_idx].layers["X_neighborhood"]
-                )
+            norm_counts = sp.csr_matrix(adata[i : i + self.chunk_size, coding_miRNA_idx].X)
 
-            # Rank cell gene tokens and append across chunks
-            gene_tokens_cell += [
-                rank_gene_tokens(norm_counts_cell[j].data, coding_miRNA_tokens_cell[norm_counts_cell[j].indices])
-                for j in range(norm_counts_cell.shape[0])
-                ]
-            
-            # Rank neighborhood gene tokens and append across chunks
-            gene_tokens_neighborhood += [
-                rank_gene_tokens(norm_counts_neighborhood[j].data,
-                                 coding_miRNA_tokens_neighborhood[norm_counts_neighborhood[j].indices])
-                for j in range(norm_counts_neighborhood.shape[0])
-                ]
+            # Rank gene tokens of index cell and append across chunks
+            gene_tokens_chunk = [rank_gene_tokens(norm_counts[j].data,
+                                                  coding_miRNA_tokens[norm_counts[j].indices],
+                                                  self.tokens_per_cell) for j in range(norm_counts.shape[0])]
+            gene_tokens += gene_tokens_chunk
+            # Add positional tokens for each gene token
+            cell_pos_tokens += [[0] * len(gene_tokens_chunk[j]) for j in range(len(gene_tokens_chunk))]
+            gene_pos_tokens += [[k for k in range(len(gene_tokens_chunk[j]))] for j in range(len(gene_tokens_chunk))]
 
             # Add values to cell metadata
             if self.custom_attr_name_dict is not None:
@@ -422,28 +375,51 @@ class CellNeighborhoodRankTokenizer:
             else:
                 cell_metadata = None
 
-        return gene_tokens_cell, gene_tokens_neighborhood, cell_metadata
+        print("Retrieving tokens for neighborhood cells.")
+        gene_tokens_copy = gene_tokens.copy()
+        # Loop through all cells to add neighbor cell gene tokens based on position of cell compared to index cell.
+        # Gene tokens of cells that are closer to the index cell will be added first.
+        for i in range(0, len(adata)):
+            # Get sorted indices of neighbor cells based on distance to index cell
+            row_start = adata.obsp["spatial_distances"].indptr[i]
+            row_end = adata.obsp["spatial_distances"].indptr[i+1]
+            row_data = adata.obsp["spatial_distances"].data[row_start:row_end]
+            sorted_indices = np.argsort(row_data)
+            # Loop through distance-sorted neighbor cells and add gene, cell pos and gene pos tokens
+            for j, k in enumerate(adata.obsp["spatial_connectivities"][i].nonzero()[1][sorted_indices]):
+               gene_tokens[i] = np.hstack((gene_tokens[i], gene_tokens_copy[k]))
+               cell_pos_tokens[i] = np.hstack((cell_pos_tokens[i],
+                                               [j+1] * len(gene_tokens_copy[k])))
+               gene_pos_tokens[i] = np.hstack((gene_pos_tokens[i],
+                                               [l for l in range(len(gene_tokens_copy[k]))]))
 
+        return gene_tokens, cell_pos_tokens, gene_pos_tokens, cell_metadata
 
     def create_dataset(self,
-                       gene_tokens_cell: np.ndarray,
-                       gene_tokens_neighborhood: np.ndarray,
+                       gene_tokens: np.array,
+                       cell_pos_tokens: np.array,
+                       gene_pos_tokens: np.array,
                        cell_metadata: dict,
                        use_generator: bool = False,
+                       add_pos_tokens: bool = True,
                        keep_original_gene_tokens: bool = False) -> Dataset:
         """
         Create a Hugging Face dataset based on tokenized cells.
 
         Parameters
         ----------
-        gene_tokens_cell:
-            Cell-wise vector of ranked cell gene tokens.
-        gene_tokens_neighborhood:
-            Cell-wise vector of ranked neighborhood gene tokens.
+        gene_tokens:
+            Cell-wise vector of ranked gene tokens.
+        cell_pos_tokens:
+            Cell-wise vector of positional tokens for cells.
+        gene_pos_tokens:
+            Cell-wise vector of positional tokens for genes.
         cell_metadata:
             Dictionary of cell metadata where keys are metadata columns and values are lists of cell-wise values.
         use_generator:
             If 'True', use generator for tokenization, else dict.
+        add_pos_tokens:
+            If 'True', add positional cell and gene tokens.
         keep_original_gene_tokens:
             If 'True', keep original gene tokens in Hugging Face dataset (before padding/truncation and addition of
             special tokens).
@@ -456,15 +432,18 @@ class CellNeighborhoodRankTokenizer:
 
         print("Creating Hugging Face dataset...")
         # Create dict for Hugging Face dataset creation
-        dataset_dict = {"gene_tokens_cell": gene_tokens_cell,
-                        "gene_tokens_neighborhood": gene_tokens_neighborhood}
+        dataset_dict = {"gene_tokens": gene_tokens}
         if self.custom_attr_name_dict is not None:
             dataset_dict.update(cell_metadata)
+
+        if add_pos_tokens:
+            dataset_dict["cell_pos_tokens"] = cell_pos_tokens
+            dataset_dict["gene_pos_tokens"] = gene_pos_tokens
 
         # Create Hugging Face dataset
         if use_generator:
             def dict_generator():
-                for i in range(len(gene_tokens_cell)):
+                for i in range(len(gene_tokens)):
                     yield {k: dataset_dict[k][i] for k in dataset_dict.keys()}
 
             dataset = Dataset.from_generator(dict_generator, num_proc=self.nproc)
@@ -474,25 +453,14 @@ class CellNeighborhoodRankTokenizer:
         def format_gene_tokens(example):
             if keep_original_gene_tokens:
                 # Store original gene tokens in separate features
-                example["gene_tokens_cell_original"] = example["gene_tokens_cell"]
-                example["gene_tokens_cell_original_length"] = len(example["gene_tokens_cell"])
-                example["gene_tokens_neighborhood_original"] = example["gene_tokens_neighborhood"]
-                example["gene_tokens_neighborhood_original_length"] = len(example["gene_tokens_neighborhood"])
+                example["gene_tokens_original"] = example["gene_tokens"]
+                example["gene_tokens_original_length"] = len(example["gene_tokens"])
 
-            example["gene_tokens_cell"] = process_gene_tokens(example["gene_tokens_cell"],
-                                                              int(self.model_input_size / 2),
-                                                              self.token_dict,
-                                                              self.cell_special_tokens,
-                                                              self.cell_special_tokens_idx)
-
-            example["gene_tokens_neighborhood"] = process_gene_tokens(example["gene_tokens_neighborhood"],
-                                                                      int(self.model_input_size / 2),
-                                                                      self.token_dict,
-                                                                      self.neighborhood_special_tokens,
-                                                                      self.neighborhood_special_tokens_idx)
-
-            example["input_ids"] = np.concatenate((example["gene_tokens_cell"],
-                                                   example["gene_tokens_neighborhood"]))
+            example["input_ids"] = process_gene_tokens(example["gene_tokens"],
+                                                       self.model_input_size,
+                                                       self.token_dict,
+                                                       self.special_tokens,
+                                                       self.special_tokens_idx)
 
             return example
 
@@ -500,3 +468,4 @@ class CellNeighborhoodRankTokenizer:
             format_gene_tokens, num_proc=self.nproc)
         
         return formatted_dataset
+    
