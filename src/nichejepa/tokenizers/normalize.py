@@ -210,8 +210,7 @@ def non_zero_median(x: scipy.sparse.csr_matrix,
     return y
 
 
-def shifted_log(x: scipy.sparse.csr_matrix,
-                     probed_genes: np.ndarray) -> scipy.sparse.csr_matrix:
+def shifted_log(x: scipy.sparse.csr_matrix) -> scipy.sparse.csr_matrix:
     """
     Normalize by shifted log.
 
