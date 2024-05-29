@@ -1,9 +1,9 @@
 import numpy as np
 
-from nichejepa.normalizers import mean_normalize
+from nichejepa.normalizers import mean_normalize_by_gene
 
 
-def test_mean_normalize():
+def test_mean_normalize_by_gene():
     """Check mean_normalize works with a simple example"""
 
     x = np.array([
@@ -22,12 +22,12 @@ def test_mean_normalize():
         [8 / 2.4, 0, 0],
     ])
 
-    x_normalized = mean_normalize(x)
+    x_normalized = mean_normalize_by_gene(x)
 
     np.testing.assert_array_equal(x_expected, x_normalized)
 
 
-def test_mean_normalize_zero_sum():
+def test_mean_normalize_by_gene_zero_sum():
     """Check mean_normalize works where the mean for a gene is zero"""
 
     x = np.array([
@@ -46,6 +46,6 @@ def test_mean_normalize_zero_sum():
         [np.NaN, 0],
     ])
 
-    x_normalized = mean_normalize(x)
+    x_normalized = mean_normalize_by_gene(x)
 
     np.testing.assert_array_equal(x_expected, x_normalized)

@@ -7,7 +7,7 @@ import numpy as np
 import scipy
 
 
-def mean_normalize(x: scipy.sparse.csr_matrix) -> scipy.sparse.csr_matrix:
+def mean_normalize_by_gene(x: scipy.sparse.csr_matrix) -> scipy.sparse.csr_matrix:
     """
     Normalize gene counts per gene by mean expression.
 
