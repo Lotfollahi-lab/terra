@@ -30,8 +30,8 @@ def normalize_by_seurat(x: sp.csr_matrix) -> sp.csr_matrix:
         A sparse matrix containing the normalized features.
     """
 
-    gene_means = np.mean(x.toarray(), axis=0)
-    gene_vars = np.var(x.toarray(), axis=0)
+    gene_means = np.mean(x, axis=0)
+    gene_vars = np.var(x, axis=0)
 
     not_const = gene_vars > 0
 

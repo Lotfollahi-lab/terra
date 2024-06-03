@@ -1,14 +1,14 @@
 from .cell_graph_rank_tokenizer import CellGraphRankTokenizer
 from .cell_neighborhood_rank_tokenizer import CellNeighborhoodRankTokenizer
-from ..aggregators.aggregate_by_neighbors import aggregate_by_neighbors
-from ..normalizers.shifted_log_mean import shifted_log_mean
-from ..normalizers.shifted_log import shifted_log
-from ..normalizers.non_zero_median import non_zero_median
-from ..normalizers.mean_normalize_by_gene import mean_normalize_by_gene
-from ..normalizers.seurat import seurat_v3
-from ..normalizers.cell_area import cell_area
-from ..normalizers.read_depth import read_depth
-from ..normalizers.analytic_pearson_residuals import analytic_pearson_residuals
+from ..aggregators.aggregate_neighbors import aggregate_neighbors
+from ..normalizers.normalize_by_analytic_pearson_residuals import normalize_by_analytic_pearson_residuals
+from ..normalizers.normalize_by_cell_area import normalize_by_cell_area
+from ..normalizers.normalize_by_mean import normalize_by_mean
+from ..normalizers.normalize_by_nonzero_median import normalize_by_nonzero_median
+from ..normalizers.normalize_by_read_depth import normalize_by_read_depth
+from ..normalizers.normalize_by_seurat import normalize_by_seurat
+from ..normalizers.normalize_by_shifted_log_mean import normalize_by_shifted_log_mean
+from ..normalizers.normalize_by_shifted_log import normalize_by_shifted_log
 from ..preprocessors.filter_poor_quality_cells import filter_poor_quality_cells
 from .tokenize import process_gene_tokens, rank_gene_tokens
 
