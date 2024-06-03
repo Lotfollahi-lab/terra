@@ -1,1 +1,1 @@
-from .aggregate_by_sum_of_neighbours import *
+from .aggregate_neighbors import aggregate_neighbors

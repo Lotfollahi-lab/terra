@@ -56,14 +56,14 @@ import scipy.sparse as sp
 import squidpy as sq
 from datasets import Dataset
 
-from ..normalizers.shifted_log_mean import shifted_log_mean
-from ..normalizers.shifted_log import shifted_log
-from ..normalizers.non_zero_median import non_zero_median
-from ..normalizers.mean_normalize import mean_normalize
-from ..normalizers.seurat import seurat_v3
-from ..normalizers.cell_area import cell_area
-from ..normalizers.read_depth import read_depth
-from ..normalizers.analytic_pearson_residuals import analytic_pearson_residuals
+from ..normalizers.normalize_by_analytic_pearson_residuals import normalize_by_analytic_pearson_residuals
+from ..normalizers.normalize_by_cell_area import normalize_by_cell_area
+from ..normalizers.normalize_by_mean import normalize_by_mean
+from ..normalizers.normalize_by_nonzero_median import normalize_by_nonzero_median
+from ..normalizers.normalize_by_read_depth import normalize_by_read_depth
+from ..normalizers.normalize_by_seurat import normalize_by_seurat
+from ..normalizers.normalize_by_shifted_log_mean import normalize_by_shifted_log_mean
+from ..normalizers.normalize_by_shifted_log import normalize_by_shifted_log
 from ..preprocessors.filter_poor_quality_cells import filter_poor_quality_cells
 from .tokenize import process_gene_tokens, rank_gene_tokens
 
@@ -72,9 +72,7 @@ warnings.filterwarnings("ignore", message=".*The 'nopython' keyword.*") # noqa
 
 logger = logging.getLogger(__name__)
 
-
 GENE_MEANS_FILE = Path(__file__).parent.parent.parent.parent / "cell_gene_means_dictionary.pkl"
-GENE_REG_STDS_FILE = Path(__file__).parent.parent.parent.parent / "cell_gene_reg_stds_dictionary.pkl"
 GENE_NZMEDIANS_FILE = Path(__file__).parent.parent.parent.parent / "cell_gene_nzmedians_dictionary.pkl"
 GENE_LOGMEANS_FILE = Path(__file__).parent.parent.parent.parent / "cell_gene_logmeans_dictionary.pkl"
 TOKEN_DICTIONARY_FILE = Path(__file__).parent.parent.parent.parent / "token_dictionary.pkl"
@@ -88,13 +86,13 @@ class CellGraphRankTokenizer:
                  model_input_size: int = 2048,
                  tokens_per_cell: int = 64,
                  norm_method: Literal["analytic_pearson_residuals",
-                                      "seurat_v3",
                                       "mean",
                                       "nzmedian",
-                                      "shifted_log"]="analytic_pearson_residuals",
+                                      "seurat_v3",
+                                      "shifted_log_mean"
+                                      "shifted_log"]="seurat_v3",
                  norm_factor: Optional[Literal["read_depth", "cell_area"]]=None,
                  gene_means_file: Path | str = GENE_MEANS_FILE,
-                 gene_reg_stds_file: Path | str = GENE_REG_STDS_FILE,
                  gene_nzmedians_file: Path | str = GENE_NZMEDIANS_FILE,
                  gene_logmeans_file: Path | str = GENE_LOGMEANS_FILE,
                  token_dictionary_file: Path | str = TOKEN_DICTIONARY_FILE,
@@ -116,34 +114,12 @@ class CellGraphRankTokenizer:
             Max input size of the model to truncate input to.
         norm_method:
             Normalization method used for count normalization before ranking.
-            'analytic_pearson_residuals': Normalization as per Lause, J., Berens, P. & Kobak, D. Analytic Pearson
-            residuals for normalization of single-cell RNA-seq UMI data. Genome Biol. 22, 258 (2021). The residuals are
-            based on a negative binomial offset model with overdispersion 'theta' shared across genes. Residuals are
-            clipped to 'sqrt(n_obs)' and overdispersion 'theta=100' is used. Negative residuals for a cell and gene
-            indicate that less counts are observed than expected compared to the gene’s average expression and cellular
-            sequencing depth. Positive residuals indicate more counts than expected. The implementation is based on
-            https://github.com/scverse/scanpy/blob/4642cf8e2e51b257371792cb4fcb9611c0a81123/scanpy/experimental/pp/_normalization.py#L36
-            (03.05.2024).
-            'seurat_v3': Normalization as per Stuart, T. et al. Comprehensive Integration of Single-Cell Data. Cell 177,
-            1888–1902.e21 (2019). Feature counts are normalized by 'norm_factor', subsequent subtraction of means and
-            division by expected standard deviations derived from learned global mean-variance relationships. The
-            implementation is based on
-            https://github.com/scverse/scanpy/blob/4642cf8e2e51b257371792cb4fcb9611c0a81123/scanpy/preprocessing/_highly_variable_genes.py#L26
-            (29.04.2024).
-            'mean': Normalization by 'norm_factor' followed by normalization by corpus gene means.
-            'nzmedian': Normalization by 'norm_factor' followed by normalization by corpus gene non-zero medians.
-            'shifted_log': Normalization by 'norm_factor' followed by shifted log transformation.
         norm_factor:
-            Norm factor for cellular normalization to adjust for cell size differences. Has to match norm factor used
-            for computation of means and regularized stds. Is not used if 'norm_method' is 'analytic_pearson_residuals'.
+            Normalization factor for cellular normalization to adjust for cell size differences.
+            Is not used if 'norm_method' is 'analytic_pearson_residuals'.
         gene_means_file:
             Path to pickle file containing dictionary of mean gene expression of cells across STcorpus (for each gene).
-            Only relevant if 'norm_method' in ['seurat_v3', 'mean'].
-        gene_reg_stds_file:
-            Path to pickle file containing dictionary of regularizing standard deviations of gene expression of cells
-            across STcorpus (for each gene). Regularizing standard deviations are expected standard deviations based
-            on means and are used for normalization to stabilize variances and only keep 'unexpected' variation.
-            Only relevant if 'norm_method' in ['seurat_v3'].
+            Only relevant if 'norm_method' in ['mean'].
         gene_nzmedians_file:
             Path to pickle file containing dictionary of non-zero median gene expression of cells across STcorpus (for
             each gene).
@@ -151,7 +127,7 @@ class CellGraphRankTokenizer:
         gene_logmeans_file:
             Path to pickle file containing dictionary of log mean gene expression of cells across STcorpus (for each
             gene).
-            Only relevant if 'norm_method' in ['log_shifted'].
+            Only relevant if 'norm_method' in ['shifted_logmean'].
         token_dictionary_file:
             Path to pickle file containing token dictionary (gene tokens are Ensembl IDs).
         special_tokens:
@@ -168,7 +144,6 @@ class CellGraphRankTokenizer:
         self.norm_method = norm_method
         self.norm_factor = norm_factor
         self.gene_means_file = gene_means_file
-        self.gene_reg_stds_file = gene_reg_stds_file
         self.gene_nzmedians_file = gene_nzmedians_file
         self.gene_logmeans_file = gene_logmeans_file
         self.special_tokens = special_tokens
@@ -310,38 +285,32 @@ class CellGraphRankTokenizer:
                                 spatial_key="spatial",
                                 radius=27.5)
 
-        print("Normalizing counts.")
+        print("Normalizing gene expression counts.")
         # Normalize counts before gene ranking
         if self.norm_method == "analytic_pearson_residuals":
-            adata.X = analytic_pearson_residuals(adata.X)
+            adata.X = normalize_by_analytic_pearson_residuals(adata.X)
         elif self.norm_factor == "read_depth":
-            adata.X = read_depth(adata.X)
+            adata.X = normalize_by_read_depth(adata.X)
         elif self.norm_factor == "cell_area":
-            adata.X = cell_area(adata.X,
-                                cell_areas=adata.obs["cell_area"])
+            adata.X = normalize_by_cell_area(adata.X,
+                                             cell_areas=adata.obs["cell_area"])
 
         if self.norm_method == "seurat_v3":
-            adata.X = seurat_v3(adata.X,
-                                gene_means_file=self.gene_means_file,
-                                gene_reg_stds_file=self.gene_reg_stds_file,
-                                probed_genes=adata.var["ensembl_id"])
-
-        if self.norm_method == "mean":
-            adata.X = mean_normalize(adata.X,
-                                     gene_means_file=self.gene_means_file,
-                                     probed_genes=adata.var["ensembl_id"])
-
-        if self.norm_method == "nzmedian":
-            adata.X = non_zero_median(adata.X,
-                                      gene_nzmedians_file=self.gene_nzmedians_file,
-                                      probed_genes=adata.var["ensembl_id"])
-        if self.norm_method == "shifted_log_mean":
-            adata.X = shifted_log_mean(adata.X,
-                                       gene_logmeans_file=self.gene_logmeans_file,
-                                       probed_genes=adata.var["ensembl_id"])
-
-        if self.norm_method == "shifted_log":
-            adata.X = shifted_log(adata.X)
+            adata.X = normalize_by_seurat(adata.X)
+        elif self.norm_method == "mean":
+            adata.X = normalize_by_mean(adata.X,
+                                        gene_means_file=self.gene_means_file,
+                                        probed_genes=adata.var["ensembl_id"])
+        elif self.norm_method == "nzmedian":
+            adata.X = normalize_by_nonzero_median(adata.X,
+                                                  gene_nzmedians_file=self.gene_nzmedians_file,
+                                                  probed_genes=adata.var["ensembl_id"])
+        elif self.norm_method == "shifted_logmean":
+            adata.X = normalize_by_shifted_log_mean(adata.X,
+                                                    gene_logmeans_file=self.gene_logmeans_file,
+                                                    probed_genes=adata.var["ensembl_id"])
+        elif self.norm_method == "shifted_log":
+            adata.X = normalize_by_shifted_log(adata.X)
 
         # Initialize cell metadata
         if self.custom_attr_name_dict is not None:

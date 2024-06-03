@@ -1,6 +1,6 @@
 from .cell_graph_rank_tokenizer import CellGraphRankTokenizer
 from .cell_neighborhood_rank_tokenizer import CellNeighborhoodRankTokenizer
-from ..aggregators.aggregate_by_sum_of_neighbours import aggregate_by_sum_of_neighbours
+from ..aggregators.aggregate_by_neighbors import aggregate_by_neighbors
 from ..normalizers.shifted_log_mean import shifted_log_mean
 from ..normalizers.shifted_log import shifted_log
 from ..normalizers.non_zero_median import non_zero_median

@@ -1,12 +1,10 @@
-from __future__ import annotations
-
 import numpy as np
-import scipy
+import scipy.sparse as sp
 
 
-def analytic_pearson_residuals(x: scipy.sparse.csr_matrix, theta: float = 100) -> scipy.sparse.csr_matrix:
+def normalize_by_analytic_pearson_residuals(x: sp.csr_matrix, theta: float = 100) -> sp.csr_matrix:
     """
-    Normalize gene counts per gene and cell using analytic pearson residuals.
+    Normalize gene expression counts per gene (within the dataset) and cell using analytic pearson residuals.
 
     Implements normalization as described in "Lause, J., Berens, P. & Kobak, D. Analytic Pearson residuals for
     normalization of single-cell RNA-seq UMI data. Genome Biol. 22, 258 (2021)". Residuals are based on a negative
@@ -20,15 +18,15 @@ def analytic_pearson_residuals(x: scipy.sparse.csr_matrix, theta: float = 100) -
 
     Parameters
     ----------
-    x: scipy.sparse.csr_matrix
+    x: sp.csr_matrix
         A sparse matrix where each row represents an observation and each column represents a feature,
         containing raw counts as features (i.e. not scaled or normalized).
     theta: float
-        The overdispersion parameter, defaults to 100.
+        The overdispersion parameter, defaults to `100`.
 
     Returns
     ----------
-    y: scipy.sparse.csr_matrix
+    y: sp.csr_matrix
         A sparse matrix containing the normalized features.
     """
 

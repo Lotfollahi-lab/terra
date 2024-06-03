@@ -72,8 +72,7 @@ def rank_gene_tokens(gene_scores: np.ndarray,
     Returns
     ----------
     ranked_gene_tokens:
-        1D vector containing gene tokens ranked by gene scores.       
-        
+        1D vector containing gene tokens ranked by gene scores.
     """
     
     # Sort gene tokens by gene scores
