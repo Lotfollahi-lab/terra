@@ -10,8 +10,7 @@ import sys
 
 import torch
 
-import src.models.vision_transformer as vit
-import src.models.gene_transformer as vit_gene
+import src.nichejepa.models.gene_transformer as gt
 
 from src.utils.schedulers import (
     WarmupCosineSchedule,
@@ -67,55 +66,14 @@ def load_checkpoint(
     return encoder, predictor, target_encoder, opt, scaler, epoch
 
 
-def init_model(
-    device,
-    patch_size=16,
-    model_name='vit_base',
-    crop_size=224,
-    pred_depth=6,
-    pred_emb_dim=384
-):
-    encoder = vit.__dict__[model_name](
-        img_size=[crop_size],
-        patch_size=patch_size)
-    predictor = vit.__dict__['vit_predictor'](
-        num_patches=encoder.patch_embed.num_patches,
-        embed_dim=encoder.embed_dim,
-        predictor_embed_dim=pred_emb_dim,
-        depth=pred_depth,
-        num_heads=encoder.num_heads)
-
-    def init_weights(m):
-        if isinstance(m, torch.nn.Linear):
-            trunc_normal_(m.weight, std=0.02)
-            if m.bias is not None:
-                torch.nn.init.constant_(m.bias, 0)
-        elif isinstance(m, torch.nn.LayerNorm):
-            torch.nn.init.constant_(m.bias, 0)
-            torch.nn.init.constant_(m.weight, 1.0)
-
-    for m in encoder.modules():
-        init_weights(m)
-
-    for m in predictor.modules():
-        init_weights(m)
-
-    encoder.to(device)
-    predictor.to(device)
-    logger.info(encoder)
-    return encoder, predictor
-
-def init_model_gene(
-    device,
-    seq_len=580,
-    model_name='gene_base',
-    pred_depth=6,
-    pred_emb_dim=384
-):
-    encoder = vit_gene.__dict__[model_name](
-        seq_len=seq_len
-        )
-    predictor = vit_gene.__dict__['gene_predictor'](
+def init_model(device,
+               seq_len=20,
+               model_name="gt_base",
+               pred_depth=6,
+               pred_emb_dim=384):
+    encoder = gt.__dict__[model_name](
+        seq_len=seq_len)
+    predictor = gt.__dict__["gt_predictor"](
         seq_len=seq_len,
         embed_dim=encoder.embed_dim,
         predictor_embed_dim=pred_emb_dim,

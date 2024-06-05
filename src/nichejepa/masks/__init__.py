@@ -1,0 +1,1 @@
+from .multigene import MaskCollator

@@ -30,20 +30,20 @@ import torch.multiprocessing as mp
 import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel
 
-from src.masks.multigene import MaskCollator as MBMaskCollator
+from .masks.multigene import MaskCollator as MBMaskCollator
 
-from src.masks.utils import apply_masks
-from src.utils.distributed import (
+from .masks.utils import apply_masks
+from .utils.distributed import (
     init_distributed,
     AllReduce
 )
-from src.utils.logging import (
+from .utils.logging import (
     CSVLogger,
     gpu_timer,
     grad_logger,
     AverageMeter)
-from src.utils.tensors import repeat_interleave_batch
-from src.datasets.NicheDataset import make_Nichedataset 
+from .utils.tensors import repeat_interleave_batch
+from .datasets.cell_neighborhood_dataset import make_cell_neighborhood_dataset 
 
 from src.helper import (
     load_checkpoint,
@@ -161,12 +161,14 @@ def main(args, resume_preempt=False):
         ratio=0.7
         )
     # -- init data-loaders/samplers
-    dataset = load_from_disk('/lustre/scratch126/cellgen/team361/mv10/NicheJepa/nanostring_cosmx_human_brain_3.dataset', keep_in_memory=True)
-    dataset = dataset.train_test_split(test_size=0.10,seed=42)
+    data_path = 
+    dataset = load_from_disk(data_path, keep_in_memory=True)
+    dataset = dataset.train_test_split(test_size=0.10,
+                                       seed=42) # TODO: parameterize
     
-    _, unsupervised_loader, unsupervised_sampler = make_Nichedataset(
+    _, unsupervised_loader, unsupervised_sampler = make_cell_neighborhood_dataset(
             batch_size=batch_size,
-            data = dataset['train'],
+            data = dataset["train"],
             vocab_size = 963, 
             seq_len = 580,
             collator=mask_collator,
