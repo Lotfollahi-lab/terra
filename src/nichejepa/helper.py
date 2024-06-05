@@ -9,7 +9,7 @@ import sys
 
 import torch
 
-import models.gene_transformer as gt
+import nichejepa.models.gene_transformer as gt
 
 from .utils.schedulers import (WarmupCosineSchedule,
                                CosineWDSchedule)

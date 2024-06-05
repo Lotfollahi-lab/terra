@@ -69,7 +69,6 @@ def main(args, resume_preempt=False):
     model_name = args['meta']['model_name']
     load_model = args['meta']['load_checkpoint'] or resume_preempt
     r_file = args['meta']['read_checkpoint']
-    copy_data = args['meta']['copy_data']
     pred_depth = args['meta']['pred_depth']
     pred_emb_dim = args['meta']['pred_emb_dim']
     if not torch.cuda.is_available():
@@ -79,13 +78,15 @@ def main(args, resume_preempt=False):
         torch.cuda.set_device(device)
 
     # -- DATA
-    # --
     batch_size = args['data']['batch_size']
+    seq_len = args['data']['seq_len']
     pin_mem = args['data']['pin_mem']
     num_workers = args['data']['num_workers']
     # --
 
     # -- MASK
+    n_targets = args['mask']['n_targets']
+    n_contexts = args['mask']['n_contexts']
     # --
 
     # -- OPTIMIZATION
@@ -107,13 +108,13 @@ def main(args, resume_preempt=False):
     with open(dump, 'w') as f:
         yaml.dump(args, f)
     # ----------------------------------------------------------------------- #
-
+    
     try:
         mp.set_start_method('spawn')
     except Exception:
         pass
-
-    # -- init torch distributed backend
+    
+    # Initialize torch distributed backend
     world_size, rank = init_distributed()
     logger.info(f'Initialized (rank/world-size) {rank}/{world_size}')
     if rank > 0:
@@ -136,7 +137,7 @@ def main(args, resume_preempt=False):
                            ('%.5f', 'mask-B'),
                            ('%d', 'time (ms)'))
 
-    # -- init model
+    # Initialize encoder, predictor and target encoder
     encoder, predictor = init_model(
         device=device,
         pred_depth=pred_depth,
@@ -144,13 +145,13 @@ def main(args, resume_preempt=False):
         model_name=model_name)
     target_encoder = copy.deepcopy(encoder)
 
-    # -- make data transforms
-    mask_collator = MaskCollator(seq_len=10,
-                                 n_targets=2,
-                                 n_contexts=1)
+    # Initialize mask collator
+    mask_collator = MaskCollator(seq_len=seq_len,
+                                 n_targets=n_targets,
+                                 n_contexts=n_contexts)
     
-    # -- init data-loaders/samplers
-    data_path = '../datasets/st_data/gold/cell_neighborhood_tokenizer/nanostring_cosmx_human_brain/nanostring_cosmx_human_brain_read_depth_shifted_log_2048.dataset' # TODO: change
+    # Initialize dataloader and -sampler
+    data_path = '/home/aih/sebastian.birk/workspace/projects/nichejepa-reproducibility/datasets/st_data/gold/cell_neighborhood_tokenizer/nanostring_cosmx_human_brain/nanostring_cosmx_human_brain_read_depth_shifted_log_2048.dataset' # TODO: change
     dataset = load_from_disk(data_path, keep_in_memory=True)
     dataset = dataset.train_test_split(test_size=0.10,
                                        seed=42) # TODO: parameterize
@@ -159,7 +160,7 @@ def main(args, resume_preempt=False):
             batch_size=batch_size,
             data=dataset["train"],
             vocab_size=6031, 
-            seq_len=20,
+            seq_len=seq_len,
             collator=mask_collator,
             pin_mem=pin_mem,
             training=True,
@@ -194,7 +195,7 @@ def main(args, resume_preempt=False):
                           for i in range(int(ipe*num_epochs*ipe_scale)+1))
 
     start_epoch = 0
-    # -- load training checkpoint
+    # Load training checkpoint
     if load_model:
         encoder, predictor, target_encoder, optimizer, scaler, start_epoch = load_checkpoint(
             device=device,
@@ -228,9 +229,9 @@ def main(args, resume_preempt=False):
             if (epoch + 1) % checkpoint_freq == 0:
                 torch.save(save_dict, save_path.format(epoch=f'{epoch + 1}'))
 
-    # -- TRAINING LOOP
+    # Run training loop
     for epoch in range(start_epoch, num_epochs):
-        logger.info('Epoch %d' % (epoch + 1))
+        logger.info(f"Epoch {epoch + 1}")
 
         # -- update distributed-data-loader epoch
         unsupervised_sampler.set_epoch(epoch)
@@ -241,13 +242,13 @@ def main(args, resume_preempt=False):
         time_meter = AverageMeter()
 
         for itr, (udata, masks_enc, masks_pred) in enumerate(unsupervised_loader):
-            def load_genes():
+            def load_cell_neighborhoods():
                 # -- unsupervised imgs
-                genes = udata.to(device, non_blocking=True)
+                cell_neighborhood_tokens = udata.to(device, non_blocking=True)
                 masks_1 = [u.to(device, non_blocking=True) for u in masks_enc]
                 masks_2 = [u.to(device, non_blocking=True) for u in masks_pred]
-                return (genes, masks_1, masks_2)
-            genes, masks_enc, masks_pred = load_genes()
+                return (cell_neighborhood_tokens, masks_1, masks_2)
+            cell_neighborhood_tokens, masks_enc, masks_pred = load_cell_neighborhoods()
             maskA_meter.update(len(masks_enc[0][0]))
             maskB_meter.update(len(masks_pred[0][0]))
 
@@ -258,7 +259,7 @@ def main(args, resume_preempt=False):
 
                 def forward_target():
                     with torch.no_grad():
-                        h = target_encoder(genes)
+                        h = target_encoder(cell_neighborhood_tokens)
                         h = F.layer_norm(h, (h.size(-1),))  # normalize over feature-dim
                         B = len(h)
                         # -- create targets (masked regions of h)
@@ -267,7 +268,7 @@ def main(args, resume_preempt=False):
                         return h
 
                 def forward_context():
-                    z = encoder(genes, masks_enc)
+                    z = encoder(cell_neighborhood_tokens, masks_enc)
                     z = predictor(z, masks_enc, masks_pred)
                     return z
 

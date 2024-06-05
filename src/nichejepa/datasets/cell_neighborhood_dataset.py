@@ -73,7 +73,6 @@ class CellNeighborhoodDataset(Dataset):
         
         return self.len
     def __getitem__(self, item):
-        
-        return torch.tensor(self.dataset[item]["input_ids"][1:11]) # TODO: change to entire sequence
+        return torch.tensor(self.dataset[item]["input_ids"][1:1+self.seq_len]) # TODO: change to entire sequence and modify CLS token
 
 

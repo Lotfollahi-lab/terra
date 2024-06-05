@@ -56,7 +56,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     num_gpus = len(args.devices)
-    mp.set_start_method('spawn')
+    #mp.set_start_method('spawn') # TODO: uncomment
 
     for rank in range(num_gpus):
         '''

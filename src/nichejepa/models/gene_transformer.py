@@ -146,7 +146,7 @@ class GeneTransformerPredictor(nn.Module):
     def __init__(
         self,
         embed_dim=768,
-        seq_len = 580,
+        seq_len=10,
         predictor_embed_dim=384,
         depth=6,
         num_heads=8,
@@ -367,42 +367,42 @@ def gt_predictor(**kwargs):
     return model
 
 
-def gt_tiny(seq_len=580, **kwargs):
+def gt_tiny(seq_len=10, **kwargs):
     model = GeneTransformerEncoder(
         seq_len=seq_len, embed_dim=192, depth=12, num_heads=3, mlp_ratio=4,
         qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     return model
 
 
-def gt_small(seq_len=580, **kwargs):
+def gt_small(seq_len=10, **kwargs):
     model = GeneTransformerEncoder(
         seq_len=seq_len, embed_dim=384, depth=12, num_heads=6, mlp_ratio=4,
         qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     return model
 
 
-def gt_base(seq_len=580, **kwargs):
+def gt_base(seq_len=10, **kwargs):
     model = GeneTransformerEncoder(
         seq_len=seq_len, embed_dim=768, depth=6, num_heads=8, mlp_ratio=4,
         qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     return model
 
 
-def gt_large(seq_len=580, **kwargs):
+def gt_large(seq_len=10, **kwargs):
     model = GeneTransformerEncoder(
         seq_len=seq_len, embed_dim=1024, depth=24, num_heads=16, mlp_ratio=4,
         qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     return model
 
 
-def gt_huge(seq_len=580, **kwargs):
+def gt_huge(seq_len=10, **kwargs):
     model = GeneTransformerEncoder(
         seq_len=seq_len, embed_dim=1280, depth=32, num_heads=16, mlp_ratio=4,
         qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     return model
 
 
-def gt_giant(seq_len=580, **kwargs):
+def gt_giant(seq_len=10, **kwargs):
     model = GeneTransformerEncoder(
         seq_len=seq_len, embed_dim=1408, depth=40, num_heads=16, mlp_ratio=48/11,
         qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)

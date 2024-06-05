@@ -1,31 +1,27 @@
 data:
-  batch_size: 224
+  batch_size: 448
+  seq_len: 10
   num_workers: 1
   pin_mem: true
 logging:
-  folder: log/vith14.224-bs.2048-ep.300/
+  folder: logs/cnd_gtb10_ep300/
   write_tag: jepa
 mask:
-  allow_overlap: false
-  aspect_ratio:
-  - 0.75
-  - 1.5
-  min_keep: 10
-  num_enc_masks: 1
-  num_pred_masks: 4
+  n_targets: 2
+  n_contexts: 1
 meta:
   copy_data: false
   load_checkpoint: false
-  model_name: gene_base
-  pred_depth: 3
-  pred_emb_dim: 384
+  model_name: gt_base
+  pred_depth: 2
+  pred_emb_dim: 192
   read_checkpoint: null
   use_bfloat16: false
 optimization:
   ema:
   - 0.996
   - 1.0
-  epochs: 300
+  epochs: 30
   final_lr: 1.0e-06
   final_weight_decay: 0.4
   ipe_scale: 1.0
