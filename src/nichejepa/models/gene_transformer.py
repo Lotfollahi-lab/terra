@@ -253,7 +253,7 @@ class GeneTransformerPredictor(nn.Module):
 class GeneTransformerEncoder(nn.Module):
     def __init__(
         self,
-        vocab_size=6029,
+        vocab_size=6034,
         embed_dim=768,
         seq_len=10,
         predictor_embed_dim=384,
