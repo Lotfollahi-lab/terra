@@ -15,14 +15,17 @@ _GLOBAL_SEED = 0
 logger = getLogger()
 
 
-class MaskCollator(object):
+class MaskCollator():
     def __init__(self,
                  seq_len=10,
                  n_targets=2,
+                 target_mask_size=2,
+                 context_mask_size=10,
                  n_contexts=1):
-        super(MaskCollator, self).__init__()
         self.seq_len = seq_len
         self.n_targets = n_targets
+        self.target_mask_size = target_mask_size
+        self.context_mask_size = context_mask_size
         self.n_contexts = n_contexts
         self._itr_counter = Value('i', -1)  # collator is shared across worker processes
 
@@ -79,8 +82,6 @@ class MaskCollator(object):
         g.manual_seed(seed)
 
         collated_masks_context, collated_masks_target = [], []
-        target_mask_size = 2 # TODO change
-        context_mask_size = 10 # TODO change
 
         keep_tokens_target = self.seq_len
         keep_tokens_context = self.seq_len
@@ -94,7 +95,7 @@ class MaskCollator(object):
             for _ in range(self.n_targets):
                 mask_target, mask_target_complement = self._sample_gene_mask(
                     non_zero_seq_len,
-                    target_mask_size)
+                    self.target_mask_size)
                 masks_target.append(mask_target)
                 masks_target_complement.append(mask_target_complement)
                 keep_tokens_target = min(keep_tokens_target, len(mask_target))
@@ -102,7 +103,7 @@ class MaskCollator(object):
             for _ in range(self.n_contexts):
                 mask_context, _ = self._sample_gene_mask(
                     non_zero_seq_len,
-                    context_mask_size,
+                    self.context_mask_size,
                     valid_token_masks=masks_target_complement)
                 masks_context.append(mask_context)
                 keep_tokens_context = min(keep_tokens_context, len(mask_context))

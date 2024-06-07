@@ -80,6 +80,7 @@ def main(args, resume_preempt=False):
     # -- DATA
     batch_size = args['data']['batch_size']
     seq_len = args['data']['seq_len']
+    vocab_size = args['data']['vocab_size']
     pin_mem = args['data']['pin_mem']
     num_workers = args['data']['num_workers']
     # --
@@ -160,7 +161,7 @@ def main(args, resume_preempt=False):
     _, unsupervised_loader, unsupervised_sampler = make_cell_neighborhood_dataset(
             batch_size=batch_size,
             data=dataset["train"],
-            vocab_size=6034, 
+            vocab_size=vocab_size, 
             seq_len=seq_len,
             collator=mask_collator,
             pin_mem=pin_mem,
@@ -260,17 +261,21 @@ def main(args, resume_preempt=False):
 
                 def forward_target():
                     with torch.no_grad():
-                        h = target_encoder(cell_neighborhood_tokens)
-                        h = F.layer_norm(h, (h.size(-1),))  # normalize over feature-dim
+                        # Encode all cell neighborhood tokens
+                        h = target_encoder(cell_neighborhood_tokens) # output (B, seq_len, emb_size)
+                        # Normalize over feature dim
+                        h = F.layer_norm(h, (h.size(-1),)) # output (B, seq_len, emb_size)
+                        # Only keep encoded targets (masked genes of h)
+                        h = apply_masks(h, masks_pred) # output (B * n_targets, target_size, emb_size)
                         B = len(h)
-                        # -- create targets (masked regions of h)
-                        h = apply_masks(h, masks_pred)
-                        h = repeat_interleave_batch(h, B, repeat=len(masks_enc))
+                        # Repeat targets if multiple contexts
+                        h = repeat_interleave_batch(h, B, repeat=len(masks_enc)) # output (B * n_targets * n_contexts, target_size, emb_size)
                         return h
 
                 def forward_context():
-                    z = encoder(cell_neighborhood_tokens, masks_enc)
-                    z = predictor(z, masks_enc, masks_pred)
+                    # Encode only context cell neighborhood tokens
+                    z = encoder(cell_neighborhood_tokens, masks_enc) # output (B, min_context_size, emb_size) where min_context size is minmum context size in the batch after removal of overlapping targets
+                    z = predictor(z, masks_enc, masks_pred) # output (B * n_targets, target_size, emb_size)
                     return z
 
                 def loss_fn(z, h):
