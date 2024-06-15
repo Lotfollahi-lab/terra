@@ -275,6 +275,8 @@ class GeneTransformerEncoder(nn.Module):
         self.num_heads = num_heads
         # --
         self.gene_embed = nn.Embedding(vocab_size, embed_dim, padding_idx=0)
+        self.seg_embed = nn.Embedding(3, embed_dim, padding_idx=0)
+
         #add here the lenght
         self.seq_len = seq_len
         # --
@@ -317,19 +319,18 @@ class GeneTransformerEncoder(nn.Module):
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
 
-    def forward(self, x, masks=None):
+    def forward(self, x, seg_label, masks=None):
         if masks is not None:
             if not isinstance(masks, list):
                 masks = [masks]
 
         # -- get gene embeddings from sequence of gene tokens
-        print(torch.max(x))
         x = self.gene_embed(x)
         B, N, D = x.shape
         
         # -- add positional embedding to x
         pos_embed = self.interpolate_pos_encoding(x, self.pos_embed)
-        x = x + pos_embed
+        x = x + pos_embed + self.seg_embed(seg_label)
 
         # -- mask x
         if masks is not None:
@@ -347,8 +348,6 @@ class GeneTransformerEncoder(nn.Module):
     def interpolate_pos_encoding(self, x, pos_embed):
         npatch = x.shape[1] - 1
         N = pos_embed.shape[1] - 1
-        print(npatch)
-        print(N)
         if npatch == N:
             return pos_embed
         class_emb = pos_embed[:, 0]

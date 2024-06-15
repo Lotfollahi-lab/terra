@@ -90,7 +90,7 @@ class MaskCollator():
             masks_target = []
             masks_context = []
 
-            non_zero_seq_len = torch.nonzero(batch[i]).size(0)
+            non_zero_seq_len = torch.nonzero(batch[i][0]).size(0)
 
             for _ in range(self.n_targets):
                 mask_target, mask_target_complement = self._sample_gene_mask(

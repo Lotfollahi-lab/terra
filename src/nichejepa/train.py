@@ -153,7 +153,7 @@ def main(args, resume_preempt=False):
                                  n_contexts=n_contexts)
     
     # Initialize dataloader and -sampler
-    data_path = '/home/aih/sebastian.birk/workspace/projects/nichejepa-reproducibility/datasets/st_data/gold/cell_neighborhood_tokenizer/nanostring_cosmx_human_brain/nanostring_cosmx_human_brain_read_depth_shifted_log_2048.dataset' # TODO: change
+    data_path = '/lustre/scratch126/cellgen/team361/mv10/NicheJepa/cell_neighborhood_tokenizer.dataset' # TODO: change
     dataset = load_from_disk(data_path, keep_in_memory=True)
     dataset = dataset.train_test_split(test_size=0.10,
                                        seed=42) # TODO: parameterize
@@ -249,11 +249,13 @@ def main(args, resume_preempt=False):
         for itr, (udata, masks_enc, masks_pred) in enumerate(unsupervised_loader):
             def load_cell_neighborhoods():
                 # -- unsupervised imgs
-                cell_neighborhood_tokens = udata.to(device, non_blocking=True)
+                cell_neighborhood_tokens = udata[0].to(device, non_blocking=True)
+                seg_label = udata[1].to(device, non_blocking=True)                 
+                niche_label = udata[2]
                 masks_1 = [u.to(device, non_blocking=True) for u in masks_enc]
                 masks_2 = [u.to(device, non_blocking=True) for u in masks_pred]
-                return (cell_neighborhood_tokens, masks_1, masks_2)
-            cell_neighborhood_tokens, masks_enc, masks_pred = load_cell_neighborhoods()
+                return (cell_neighborhood_tokens, seg_label, niche_label,  masks_1, masks_2)
+            cell_neighborhood_tokens, seg_label, niche_label, masks_enc, masks_pred = load_cell_neighborhoods()
             maskA_meter.update(len(masks_enc[0][0]))
             maskB_meter.update(len(masks_pred[0][0]))
 
@@ -264,7 +266,7 @@ def main(args, resume_preempt=False):
                 def forward_target():
                     with torch.no_grad(): # no backward pass for target encoder
                         # Encode all cell neighborhood tokens
-                        h = target_encoder(cell_neighborhood_tokens) # output (B, seq_len, emb_size)
+                        h = target_encoder(cell_neighborhood_tokens, seg_label) # output (B, seq_len, emb_size)
                         # Normalize over feature dim
                         h = F.layer_norm(h, (h.size(-1),)) # output (B, seq_len, emb_size)
                         # Only keep encoded targets (masked genes of h)
@@ -276,7 +278,7 @@ def main(args, resume_preempt=False):
 
                 def forward_context():
                     # Encode only context cell neighborhood tokens
-                    z = encoder(cell_neighborhood_tokens, masks_enc) # output (B, min_context_size, emb_size) where min_context size is minmum context size in the batch after removal of overlapping targets
+                    z = encoder(cell_neighborhood_tokens, seg_label, masks_enc) # output (B, min_context_size, emb_size) where min_context size is minmum context size in the batch after removal of overlapping targets
                     z = predictor(z, masks_enc, masks_pred) # output (B * n_targets, target_size, emb_size)
                     return z
 

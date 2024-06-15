@@ -11,9 +11,12 @@ requires-python = ">=3.10"
 license = {file = "LICENSE"}
 authors = [
     {name = "Sebastian Birk"},
+    {name = "Mohammad Vali Sanian"},
 ]
 maintainers = [
     {name = "Sebastian Birk", email = "sebastian.birk@helmholtz-munich.de"},
+    {name = "Mohammad Vali Sanian", email = "mohammad.sanian@helsinki.fi"},
+
 ]
 urls.Documentation = "https://niche-jepa.readthedocs.io/"
 urls.Source = "https://github.com/Lotfollahi-lab/niche-jepa"
