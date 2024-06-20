@@ -1,0 +1,42 @@
+data:
+  batch_size: 500
+  seq_len: 512
+  vocab_size: 1356
+  num_workers: 12
+  pin_mem: true
+  data_path: /lustre/scratch126/cellgen/team361/mv10/jepa/nichejepa/simulated.dataset
+  split: 0.2
+logging:
+  folder: logs/sim_ema0.8_100_200_40_1_1_seed
+  save_folder: out_put/sim_data/cell_neighborhood_token
+  write_tag: jepa
+mask:
+  n_targets: 1
+  n_contexts: 1
+  target_mask_size: 100
+  context_mask_size: 200
+  top_niche: 266
+  top_cell_type: 10  
+
+meta:
+  copy_data: false
+  load_checkpoint: true
+  model_name: gt_base
+  pred_depth: 1
+  pred_emb_dim: 192
+  enc_depth : 1
+  enc_emb_dim : 192
+  read_checkpoint: null
+  use_bfloat16: false
+optimization:
+  ema:
+  - 0.8
+  - 1.0
+  epochs: 40
+  final_lr: 1.0e-06
+  final_weight_decay: 0.4
+  ipe_scale: 1.0
+  lr: 0.001
+  start_lr: 0.0002
+  warmup: 40
+  weight_decay: 0.04
