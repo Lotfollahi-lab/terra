@@ -48,11 +48,12 @@ def load_checkpoint(device,
             logger.info(f'loaded pretrained encoder from epoch {epoch} with msg: {msg}')
 
         # -- loading optimizer
-        opt.load_state_dict(checkpoint['opt'])
-        if scaler is not None:
+        if opt is not None:
+          opt.load_state_dict(checkpoint['opt'])
+          if scaler is not None:
             scaler.load_state_dict(checkpoint['scaler'])
-        logger.info(f'loaded optimizers from epoch {epoch}')
-        logger.info(f'read-path: {r_path}')
+          logger.info(f'loaded optimizers from epoch {epoch}')
+          logger.info(f'read-path: {r_path}')
         del checkpoint
 
     except Exception as e:

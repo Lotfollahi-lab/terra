@@ -108,7 +108,9 @@ def main(args, resume_preempt=False):
     final_lr = args['optimization']['final_lr']
 
     # -- LOGGING
-    folder = args['logging']['folder']
+    seed = args['seed']
+    folder = args['logging']['folder']+str(seed)+'/'
+    os.makedirs(folder, exist_ok=True)
     tag = args['logging']['write_tag']
 
     dump = os.path.join(folder, 'params-ijepa.yaml')
@@ -164,10 +166,10 @@ def main(args, resume_preempt=False):
                                  n_contexts=n_contexts)
     
     # Initialize dataloader and -sampler
-    data_path = '/lustre/scratch126/cellgen/team361/mv10/NicheJepa/cell_neighborhood_tokenizer.dataset' # TODO: change
-    dataset = load_from_disk(data_path, keep_in_memory=True)
-    dataset = dataset.train_test_split(test_size=0.10,
-                                       seed=42) # TODO: parameterize
+    data_path=args['data']['data_path']
+    dataset = load_from_disk(args['data']['data_path'], keep_in_memory=True)
+    dataset = dataset.train_test_split(test_size=args['data']['split'],
+                                       seed=args['seed']) # TODO: parameterize
     
     _, unsupervised_loader, unsupervised_sampler = make_cell_neighborhood_dataset(
             batch_size=batch_size,
@@ -198,7 +200,7 @@ def main(args, resume_preempt=False):
         ipe_scale=ipe_scale,
         use_bfloat16=use_bfloat16)
     # -- wandb init
-    wandb.init(project="nichejepa",
+    wandb.init(project="nichejepa-benchmark",
        config={
                     'num_epochs': num_epochs,
                     'ema' : str(ema[0])+'__'+str(ema[1]),
@@ -209,6 +211,12 @@ def main(args, resume_preempt=False):
                     'encoder_depth':enc_depth,
                     'save_path':save_path,
                     'batch_size': batch_size,
+                    'target_mask_size':  target_mask_size,
+                    'context_mask_size' : context_mask_size,
+                    'n_targets' : n_targets,
+                    'n_contexts' : n_contexts,
+                    'dataset' : args['data']['data_path'],
+                    'seed' : args['seed']
                  }
             )
     encoder = DistributedDataParallel(encoder, static_graph=True)
@@ -369,6 +377,7 @@ def main(args, resume_preempt=False):
                         wandb.log({'epoch': epoch + 1,
                                    'iteration': itr,
                                    'loss': loss,
+                                   'loss_avg':loss_meter.avg,
                                    'mask_context': maskA_meter.avg,
                                    'mask_target': maskB_meter.avg,
                                    'weight_decay': _new_wd,

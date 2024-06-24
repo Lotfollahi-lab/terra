@@ -12,7 +12,7 @@ import pprint
 import yaml
 
 from src.nichejepa.utils.distributed import init_distributed
-from src.nichejepa.train import main as app_main
+from src.nichejepa.feature_extractor import main as app_main
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -22,11 +22,9 @@ parser.add_argument(
 parser.add_argument(
     '--devices', type=str, nargs='+', default=['cuda:0'],
     help='which devices to use on local machine')
-parser.add_argument(
-       '--seed', type=int,
-        help='seed value for random initialization')
 
-def process_main(rank, args, world_size, devices):
+
+def process_main(rank, fname, world_size, devices):
     import os
     os.environ['CUDA_VISIBLE_DEVICES'] = str(devices[rank].split(':')[-1])
 
@@ -38,16 +36,16 @@ def process_main(rank, args, world_size, devices):
     else:
         logger.setLevel(logging.ERROR)
 
-    logger.info(f'called-params {args.fname}')
+    logger.info(f'called-params {fname}')
 
     # -- load script params
     params = None
-    with open(args.fname, 'r') as y_file:
+    with open(fname, 'r') as y_file:
         params = yaml.load(y_file, Loader=yaml.FullLoader)
         logger.info('loaded params...')
         pp = pprint.PrettyPrinter(indent=4)
         pp.pprint(params)
-    params['seed'] = args.seed
+
     world_size, rank = init_distributed(rank_and_world_size=(rank, world_size))
     logger.info(f'Running... (rank: {rank}/{world_size})')
     app_main(args=params)
@@ -67,4 +65,4 @@ if __name__ == '__main__':
             args=(rank, args.fname, num_gpus, args.devices)
         ).start()
         '''
-        process_main(rank, args, num_gpus, args.devices)
+        process_main(rank, args.fname, num_gpus, args.devices)
