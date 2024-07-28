@@ -1,29 +1,34 @@
 data:
-  batch_size: 30
+  batch_size: 10
   #data_path: /lustre/scratch126/cellgen/team361/mv10/jepa/nichejepa/scGPT.dataset
-  data_path: /lustre/scratch126/cellgen/team361/mv10/jepa/nichejepa/nichecompass.dataset 
-  num_workers: 12
+  #data_path: /lustre/scratch126/cellgen/team361/mv10/jepa/nichejepa/nichecompass.dataset 
+  data_path: /lustre/scratch126/cellgen/team361/mv10/nichejepa-reproducibility/nichejepa-reproducibility/datasets/st_data/gold/cell_neighborhood_tokenizer/merfish_mouse_brain_subset/merfish_mouse_brain_subset_read_depth_shifted_log_2170.dataset/
+  num_workers: 18
   pin_mem: true
   #seq_len: 1461
   seq_len: 361
   split: 0.2
   #vocab_size: 2781
-  vocab_size: 1107
+  #vocab_size: 1107
+  vocab_size: 1087
   just_cell: False
   just_neighborhood: True
-  seq_len_cell: 361
-  seq_len_neighborhood: 1091
+  #seq_len_cell: 361
+  seq_len_cell: 457
+  #seq_len_neighborhood: 1091
+  seq_len_neighborhood: 786
   has_cls: False
-  weighted_average: True
-  get_topk: False
+  weighted_average: False
+  get_topk: True
+  sample_size: 100k
 logging:
-  folder: logs/nichecompass.dataset_ema0.8_target20_context134_epoch10_encoder2_target1_emb384_numtarget4_numcon1_learn_split0.6_benchmark_seed
+  folder: logs/merfish_200
   write_tag: jepa
 mask:
   context_mask_size: 200
   n_contexts: 1
   n_targets: 4
-  target_mask_size: 14
+  target_mask_size: 18
   top_niche: -1
   top_cell_type: 361
 
@@ -36,7 +41,7 @@ meta:
   pred_depth: 1
   pred_emb_dim: 384
   read_checkpoint: null
-  use_bfloat16: false
+  use_bfloat16: True
 optimization:
   ema:
   - 0.8
@@ -47,5 +52,5 @@ optimization:
   ipe_scale: 1.0
   lr: 0.0001
   start_lr: 5.0e-05
-  warmup: 5
+  warmup: 10
   weight_decay: 0.04

@@ -299,7 +299,7 @@ class CellNeighborhoodRankTokenizer:
         cell_metadata:
             Dictionary of cell metadata where keys are metadata columns and values are lists of cell-wise values.
         """
-
+        #print(adata_file_path)
         adata = ad.read_h5ad(adata_file_path)
 
         print("Filtering cells.")
@@ -453,7 +453,7 @@ class CellNeighborhoodRankTokenizer:
 
             dataset = Dataset.from_generator(dict_generator, num_proc=self.nproc,keep_in_memory=True)
         else:
-            dataset = Dataset.from_dict(dataset_dicti,keep_in_memory=True)
+            dataset = Dataset.from_dict(dataset_dict)
 
         def format_gene_tokens(example):
             if keep_original_gene_tokens:
@@ -475,9 +475,12 @@ class CellNeighborhoodRankTokenizer:
                                                                       self.neighborhood_special_tokens,
                                                                       self.neighborhood_special_tokens_idx)
 
-            example["gene_tokens_cell"] = example["gene_tokens_cell"].astype(np.int64)
-            example["gene_tokens_neighborhood"] = example["gene_tokens_neighborhood"].astype(np.int64)
-
+            #example["gene_tokens_cell"] = example["gene_tokens_cell"].astype(np.int64)
+            #example["gene_tokens_neighborhood"] = example["gene_tokens_neighborhood"].astype(np.int64)
+            #if not isinstance(example["gene_tokens_neighborhood"], np.int64):
+            #    print(example["gene_tokens_neighborhood"])
+            #if not isinstance(example["gene_tokens_cell"], np.int64):
+            #    print(example["gene_tokens_cell"])
             example["input_ids"] = np.concatenate((example["gene_tokens_cell"], example["gene_tokens_neighborhood"]))
 
             #example["input_ids"] = np.concatenate((example["gene_tokens_cell"],

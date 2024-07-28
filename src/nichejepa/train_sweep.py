@@ -15,7 +15,7 @@ try:
     os.environ['CUDA_VISIBLE_DEVICES'] = os.environ['SLURM_LOCALID']
 except Exception:
     pass
-
+import random
 import copy
 import logging
 import sys
@@ -57,7 +57,7 @@ from src.nichejepa.nmi_ari import compute_nmi_ari
 # --
 log_timings = True
 log_freq = 10
-checkpoint_freq = 10
+checkpoint_freq = 50
 # --
 
 _GLOBAL_SEED = 0
@@ -84,7 +84,7 @@ def main(args, resume_preempt=False,data=None):
     pred_emb_dim = config.enc_emb_dim
     enc_depth = int( config.pred_enc_depth // 10)
     enc_emb_dim= config.enc_emb_dim
-
+    top_layer=config.top_layer
     if not torch.cuda.is_available():
         device = torch.device('cpu')
     else:
@@ -95,11 +95,13 @@ def main(args, resume_preempt=False,data=None):
     batch_size = args['data']['batch_size']
     weighted_average = args['data']['weighted_average']
     if config.pred_enc_depth < 41:
-        batch_size=30 
+        batch_size=130 
     elif config.pred_enc_depth <51:
-        batch_size=20
+        batch_size=100
     else:
-        batch_size=10
+        batch_size=30
+    if config.epochs==0:
+        batch_size=1000
     seq_len = args['data']['seq_len']
     seq_len_cell = args['data']['seq_len_cell']
     seq_len_neighborhood = args['data']['seq_len_neighborhood']
@@ -215,7 +217,19 @@ def main(args, resume_preempt=False,data=None):
     
     # Initialize dataloader and -sampler
     data_path=args['data']['data_path']
-    dataset = load_from_disk(args['data']['data_path'], keep_in_memory=True)
+    sample_size = args['data']['sample_size']
+    dataset = load_from_disk(args['data']['data_path'])
+    total_size = len(dataset)
+    if sample_size == '100k':
+            sample_size = min(100000, total_size)
+    elif sample_size == '300k':
+            sample_size = min(300000, total_size)
+    else:
+            sample_size = total_size
+    random_state = 1
+    rng = random.Random(random_state)
+    sampled_indices = rng.sample(range(total_size), sample_size)
+    dataset = dataset.select(sampled_indices)
     labels = dataset['cell_types']
     #train_indices, test_indices = train_test_split(range(len(dataset)), 
     #                                               test_size=args['data']['split'], 
@@ -440,10 +454,11 @@ def main(args, resume_preempt=False,data=None):
 
         # -- Save Checkpoint after every epoch
         logger.info('avg. loss %.3f' % loss_meter.avg)
-        #save_checkpoint(epoch+1)
+        save_checkpoint(epoch+1)
     if data==None:
         data=[]
-    #encoder.eval()
+    encoder.eval()
+    target_encoder.eval()
     def process_loader(loader, dataset_type,top_k=0):
         for itr, (udata, masks_enc, masks_pred) in tqdm(enumerate(loader)):
                 def load_cell_neighborhoods():
@@ -468,12 +483,12 @@ def main(args, resume_preempt=False,data=None):
                 def eval_step():
                     def forward_context(top_index, label_name, label_value):
                         # Encode all cell neighborhood tokens
-                        if num_epochs==0:
-                          z_list = [encoder(cell_neighborhood_tokens,seg_label,just_emb=True,multi_layer=True)]
+                        if num_epochs == 0:
+                           z_list = [target_encoder(cell_neighborhood_tokens,seg_label,just_emb=True,multi_layer=True)]
                         else:
-                          z_list = encoder(cell_neighborhood_tokens, seg_label,multi_layer=True)
+                           z_list = target_encoder(cell_neighborhood_tokens, seg_label,multi_layer=True)
                         average_features_list = []
-                        for z in z_list:
+                        for z in z_list[top_layer-1:]:
                           masks = (cell_neighborhood_tokens != 0).int()
                           if just_cell and just_neighborhood:
                             if label_name == "niche_type":
@@ -534,32 +549,33 @@ def main(args, resume_preempt=False,data=None):
                 eval_step()
     process_loader(train_loader, 'train')
     process_loader(test_loader, 'test')
-    '''
+    ''' 
     results_for_different_k = []
     nmi_for_different_k = []
     ari_for_different_k = []
-    for k in tqdm(range(1,1090)):
+    #786
+    for k in tqdm(range(1,786)):
        process_loader(train_loader, 'train',top_k=k)
        process_loader(test_loader, 'test',top_k=k)
        final_df = pd.DataFrame(list(data))
        print(final_df)
-       nmi_ari_out = compute_nmi_ari(final_df,config.enc_emb_dim)
-       #test_f1_cell, test_f1_niche = logistic_(final_df,num_features=config.enc_emb_dim)
+       nmi_ari_out = compute_nmi_ari(final_df,config.enc_emb_dim,'niche_type')
+       test_f1_cell, test_f1_niche = logistic_(final_df,num_features=config.enc_emb_dim)
        #print(test_f1_niche)
-       #results_for_different_k.append(test_f1_niche)
+       results_for_different_k.append(test_f1_niche)
        print(nmi_ari_out)
        nmi_for_different_k.append(nmi_ari_out.loc[0,'nmi_score'])
        ari_for_different_k.append(nmi_ari_out.loc[0,'ari_score'])
        print(len(data))
        data=[]
     #print(results_for_different_k)
-    #with open('results_for_different_k.pkl', 'wb') as file:
-    #       pickle.dump(results_for_different_k, file)
+    with open('results_for_different_k_merfish.pkl', 'wb') as file:
+           pickle.dump(results_for_different_k, file)
     print(nmi_for_different_k)
     print(ari_for_different_k)
-    with open('nmi_for_different_k.pkl', 'wb') as file:
+    with open('nmi_for_different_k_merfish.pkl', 'wb') as file:
             pickle.dump(nmi_for_different_k, file)
-    with open('ari_for_different_k.pkl', 'wb') as file:
+    with open('ari_for_different_k_merfish.pkl', 'wb') as file:
             pickle.dump(ari_for_different_k, file)
     '''
 if __name__ == "__main__":

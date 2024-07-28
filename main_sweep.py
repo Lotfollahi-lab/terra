@@ -75,13 +75,14 @@ def sweep_func(args):
     processes = []
     if not args.do_sweep:
        config = {
-       'pred_enc_depth': 21,
+       'pred_enc_depth': 42,
        "learnable": 1,
-       "ema": 0.6715179701040991,
-       "context_mask_size": 1070,
-       'n_targets': 1,
+       "ema": 0.999,
+       "context_mask_size": 700,
+       'n_targets': 6,
        'epochs' : 0,
        'top_k' : 127,
+       'top_layer':1,
        'enc_emb_dim':768,
       }
        wandb.init(project="nichejepa-sweep",config=config)
@@ -104,12 +105,13 @@ def sweep_func(args):
     final_df = pd.DataFrame(list(data))
     print(final_df.shape)
     print(final_df)
-    final_df.to_csv("final_df.csv", index=False)
+    #final_df.to_csv("final_df.csv", index=False)
     if args.task == 'cell_type':
        print(final_df['cell_type'].value_counts())
+       df_nmi_ari = compute_nmi_ari(final_df,wandb.config.enc_emb_dim,'cell_type')
     elif args.task == 'niche_type':
         print(final_df['niche_type'].value_counts())
-    df_nmi_ari = compute_nmi_ari(final_df,wandb.config.enc_emb_dim)
+        df_nmi_ari = compute_nmi_ari(final_df,wandb.config.enc_emb_dim,'niche_type')
     test_f1_cell, test_f1_niche = logistic_(final_df,num_features=wandb.config.enc_emb_dim)
     if args.task == 'cell_type':    
         wandb.log({"f1_test": test_f1_cell, 'nmi_score':df_nmi_ari.loc[0,'nmi_score'], 'ari_score':df_nmi_ari.loc[0,'ari_score'], 'df_nmi_ari':df_nmi_ari})
@@ -123,30 +125,30 @@ if __name__ == '__main__':
     sweep_config = {
     'method': 'random',  # 'grid' or 'bayes' are other options
     'metric': {
-        'name': 'ari_score',
+        'name': 'nmi_score',
         'goal': 'maximize'
     },
     'parameters': {
         #'pred_enc_depth': {'values': [41,42,43,44,51,52,53,54,55,61,62,63,64,65,66]},
-        'pred_enc_depth': {'values': [11,21,22,31,32,33,41,42,43,44,51,52,53,54,55]},
+        'pred_enc_depth': {'values': [31]},
         #'pred_emb_dim': {'values': [192,384,768]},
         #'epochs': {'values': [0]},
         'learnable': {'values': [1]},
         'ema': {
             'distribution': 'uniform',
             "max": 1, "min": 0},
-        'enc_emb_dim': {'values': [704,712,768]},
+        'enc_emb_dim': {'values': [768]},
         #'enc_emb_dim': {'values': [384]},
         #'pred_emb_dim': {'values': [768]},
         'context_mask_size': {
             'distribution': 'int_uniform',
-            'min': 700,
-            'max': 1400
+            'min': 300,
+            'max': 786
             },
         'n_targets': {
             'distribution': 'int_uniform',
             'min': 1,
-            'max': 12
+            'max': 9
         },
         'target_mask_size': {
             'distribution': 'int_uniform',
@@ -155,14 +157,14 @@ if __name__ == '__main__':
             },
         'epochs': {
             'distribution': 'int_uniform',
-            'min': 6,
-            'max': 15
+            'min': 20,
+            'max': 40
         },
-        'top_k': {
+        'top_layer': {
             'distribution': 'int_uniform',
             'min': 1,
-            'max': 500
-            }
+            'max': 3
+        }
     }}
     if args.do_sweep:
       sweep_id = wandb.sweep(sweep_config, project="nichejepa-sweep")
