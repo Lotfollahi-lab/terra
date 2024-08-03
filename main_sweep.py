@@ -15,6 +15,7 @@ from src.nichejepa.utils.distributed import init_distributed
 from src.nichejepa.train_sweep import main as app_main
 import wandb
 from src.nichejepa.logistic_reg import logistic_
+from src.nichejepa.logistic_knn import logistic_and_knn
 import pandas as pd
 from src.nichejepa.nmi_ari import compute_nmi_ari
 
@@ -64,9 +65,9 @@ def process_main(rank, args, world_size, devices,data):
         pp = pprint.PrettyPrinter(indent=4)
         pp.pprint(params)
     params['seed'] = args.seed
-    world_size, rank = init_distributed(rank_and_world_size=(rank, world_size),port=40313)
+    world_size, rank = init_distributed(rank_and_world_size=(rank, world_size),port=40314)
     logger.info(f'Running... (rank: {rank}/{world_size})')
-    app_main(args=params,data=data)
+    app_main(args=params,data=data,rank=rank)
 
 def sweep_func(args):
     num_gpus = len(args.devices)
@@ -75,12 +76,12 @@ def sweep_func(args):
     processes = []
     if not args.do_sweep:
        config = {
-       'pred_enc_depth': 42,
+       'pred_enc_depth': 43,
        "learnable": 1,
        "ema": 0.999,
-       "context_mask_size": 700,
-       'n_targets': 6,
-       'epochs' : 0,
+       "context_mask_size": 1100,
+       'n_targets': 4,
+       'epochs' : 10,
        'top_k' : 127,
        'top_layer':1,
        'enc_emb_dim':768,
@@ -112,7 +113,7 @@ def sweep_func(args):
     elif args.task == 'niche_type':
         print(final_df['niche_type'].value_counts())
         df_nmi_ari = compute_nmi_ari(final_df,wandb.config.enc_emb_dim,'niche_type')
-    test_f1_cell, test_f1_niche = logistic_(final_df,num_features=wandb.config.enc_emb_dim)
+    test_f1_cell, test_f1_niche = logistic_and_knn(final_df,num_features=wandb.config.enc_emb_dim)
     if args.task == 'cell_type':    
         wandb.log({"f1_test": test_f1_cell, 'nmi_score':df_nmi_ari.loc[0,'nmi_score'], 'ari_score':df_nmi_ari.loc[0,'ari_score'], 'df_nmi_ari':df_nmi_ari})
     elif args.task == 'niche_type': 

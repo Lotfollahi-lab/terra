@@ -2,25 +2,28 @@ data:
   batch_size: 10
   #data_path: /lustre/scratch126/cellgen/team361/mv10/jepa/nichejepa/scGPT.dataset
   #data_path: /lustre/scratch126/cellgen/team361/mv10/jepa/nichejepa/nichecompass.dataset 
-  data_path: /lustre/scratch126/cellgen/team361/mv10/nichejepa-reproducibility/nichejepa-reproducibility/datasets/st_data/gold/cell_neighborhood_tokenizer/merfish_mouse_brain_subset/merfish_mouse_brain_subset_read_depth_shifted_log_2170.dataset/
+  data_path: ../../nichejepa-reproducibility/nichejepa-reproducibility/datasets/st_data/gold/cell_neighborhood_tokenizer/sim1_1105fts_10000locs/sim1_1105fts_10000locs_read_depth_shifted_log_2210.dataset
+  #data_path: /lustre/scratch126/cellgen/team361/mv10/nichejepa-reproducibility/nichejepa-reproducibility/datasets/st_data/gold/cell_neighborhood_tokenizer/merfish_mouse_brain_subset/merfish_mouse_brain_subset_read_depth_shifted_log_2170.dataset/
   num_workers: 18
   pin_mem: true
   #seq_len: 1461
   seq_len: 361
   split: 0.2
   #vocab_size: 2781
-  #vocab_size: 1107
-  vocab_size: 1087
+  vocab_size: 1107
+  #vocab_size: 1087
   just_cell: False
   just_neighborhood: True
-  #seq_len_cell: 361
-  seq_len_cell: 457
-  #seq_len_neighborhood: 1091
-  seq_len_neighborhood: 786
+  seq_len_cell: 361
+  #seq_len_cell: 457
+  seq_len_neighborhood: 1091
+  #seq_len_neighborhood: 786
   has_cls: False
-  weighted_average: False
-  get_topk: True
-  sample_size: 100k
+  weighted_average: True
+  get_topk: False
+  sample_size: 0k
+  get_specefic_gene: False
+  gene_id: 592
 logging:
   folder: logs/merfish_200
   write_tag: jepa
@@ -28,7 +31,7 @@ mask:
   context_mask_size: 200
   n_contexts: 1
   n_targets: 4
-  target_mask_size: 18
+  target_mask_size: 19
   top_niche: -1
   top_cell_type: 361
 
@@ -46,11 +49,11 @@ optimization:
   ema:
   - 0.8
   - 1.0
-  epochs: 10
+  epochs: 20
   final_lr: 1.0e-06
   final_weight_decay: 0.4
   ipe_scale: 1.0
-  lr: 0.0001
+  lr: 0.000001
   start_lr: 5.0e-05
-  warmup: 10
+  warmup: 5
   weight_decay: 0.04

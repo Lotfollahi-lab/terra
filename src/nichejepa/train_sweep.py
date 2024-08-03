@@ -69,7 +69,7 @@ logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logger = logging.getLogger()
 
 
-def main(args, resume_preempt=False,data=None):
+def main(args, resume_preempt=False,data=None,rank=0):
 
     # ----------------------------------------------------------------------- #
     #  PASSED IN PARAMS FROM CONFIG FILE
@@ -80,8 +80,10 @@ def main(args, resume_preempt=False,data=None):
     model_name = args['meta']['model_name']
     load_model = args['meta']['load_checkpoint'] or resume_preempt
     r_file = args['meta']['read_checkpoint']
+    get_specefic_gene = args['data']['get_specefic_gene']
     pred_depth = int(config.pred_enc_depth %  10)
     pred_emb_dim = config.enc_emb_dim
+    #pred_emb_dim = 384
     enc_depth = int( config.pred_enc_depth // 10)
     enc_emb_dim= config.enc_emb_dim
     top_layer=config.top_layer
@@ -95,11 +97,11 @@ def main(args, resume_preempt=False,data=None):
     batch_size = args['data']['batch_size']
     weighted_average = args['data']['weighted_average']
     if config.pred_enc_depth < 41:
-        batch_size=130 
+        batch_size=80 
     elif config.pred_enc_depth <51:
-        batch_size=100
+        batch_size=40
     else:
-        batch_size=30
+        batch_size=70
     if config.epochs==0:
         batch_size=1000
     seq_len = args['data']['seq_len']
@@ -227,17 +229,17 @@ def main(args, resume_preempt=False,data=None):
     else:
             sample_size = total_size
     random_state = 1
-    rng = random.Random(random_state)
-    sampled_indices = rng.sample(range(total_size), sample_size)
-    dataset = dataset.select(sampled_indices)
-    labels = dataset['cell_types']
+    #rng = random.Random(random_state)
+    #sampled_indices = rng.sample(range(total_size), sample_size)
+    #dataset = dataset.select(sampled_indices)
+    #labels = dataset['cell_types']
     #train_indices, test_indices = train_test_split(range(len(dataset)), 
     #                                               test_size=args['data']['split'], 
     #                                               stratify=labels,
     #                                               random_state=1)
     train_indices, test_indices = train_test_split(range(len(dataset)),
                                                    test_size=args['data']['split'],
-                                                   random_state=1)
+                                                   random_state=2)
 
     train_dataset = dataset.select(train_indices)
     test_dataset = dataset.select(test_indices)
@@ -459,7 +461,7 @@ def main(args, resume_preempt=False,data=None):
         data=[]
     encoder.eval()
     target_encoder.eval()
-    def process_loader(loader, dataset_type,top_k=0):
+    def process_loader(loader, dataset_type,top_k=0,gene_id=0):
         for itr, (udata, masks_enc, masks_pred) in tqdm(enumerate(loader)):
                 def load_cell_neighborhoods():
                     # -- unsupervised loader
@@ -481,15 +483,18 @@ def main(args, resume_preempt=False,data=None):
                 cell_neighborhood_tokens, seg_label, niche_label, cell_type, masks_enc, masks_pred = load_cell_neighborhoods()
 
                 def eval_step():
-                    def forward_context(top_index, label_name, label_value):
+                    def forward_context(top_index, label_name, label_value, layer_index=0, just_pos=False):
                         # Encode all cell neighborhood tokens
                         if num_epochs == 0:
-                           z_list = [target_encoder(cell_neighborhood_tokens,seg_label,just_emb=True,multi_layer=True)]
+                           z_list = target_encoder(cell_neighborhood_tokens,seg_label,just_pos=just_pos,just_emb=True)
                         else:
-                           z_list = target_encoder(cell_neighborhood_tokens, seg_label,multi_layer=True)
+                           z_list = target_encoder(cell_neighborhood_tokens, seg_label,just_pos=just_pos,multi_layer=True)
                         average_features_list = []
                         for z in z_list[top_layer-1:]:
-                          masks = (cell_neighborhood_tokens != 0).int()
+                          if get_specefic_gene:
+                               masks = (cell_neighborhood_tokens == gene_id).int()
+                          else:
+                                masks = (cell_neighborhood_tokens != 0).int()
                           if just_cell and just_neighborhood:
                             if label_name == "niche_type":
                                 masks[:, 0:seq_len_cell] = 0
@@ -534,7 +539,9 @@ def main(args, resume_preempt=False,data=None):
                                 'split': dataset_type,
                                 'label_name': label_name,
                                 'seed': seed,
-                                label_name: sample_label
+                                'just_pos':just_pos,
+                                label_name: sample_label,
+                                'layer_index':layer_index
                             }
                             for j, feature in enumerate(sample_features):
                                 data_dict[f'feature_{j}'] = feature
@@ -542,13 +549,34 @@ def main(args, resume_preempt=False,data=None):
 
                     with torch.no_grad():
                         if just_neighborhood:
-                           forward_context(seq_len, "niche_type", niche_label)
+                           #for layer_index in range(top_layer):
+                           #   forward_context(seq_len, "niche_type", niche_label, layer_index=layer_index)
+                           #forward_context(seq_len, "niche_type", niche_label,layer_index=0, just_pos=True)
+                            forward_context(seq_len, "niche_type", niche_label)
                         if just_cell:
+                           #for layer_index in range(top_layer):
+                           #   forward_context(seq_len_cell, "cell_type", cell_type, layer_index=layer_index)
+                           #forward_context(seq_len_cell, "cell_type", cell_type, layer_index=0, just_pos=True)
                            forward_context(seq_len_cell, "cell_type", cell_type)
 
                 eval_step()
-    process_loader(train_loader, 'train')
-    process_loader(test_loader, 'test')
+    #data=[]
+    process_loader(train_loader, 'train',gene_id=592)
+    process_loader(test_loader, 'test',gene_id=592)
+    '''
+    final_df = pd.DataFrame(list(data))
+    final_df.to_csv("592_niche_emb_model.csv", index=False)
+    data=[]
+    process_loader(train_loader, 'train',gene_id=682)
+    process_loader(test_loader, 'test',gene_id=682)
+    final_df = pd.DataFrame(list(data))
+    final_df.to_csv("682_niche_emb_model.csv", index=False)
+    data=[]
+    process_loader(train_loader, 'train',gene_id=145)
+    process_loader(test_loader, 'test',gene_id=145)
+    final_df = pd.DataFrame(list(data))
+    final_df.to_csv("145_niche_emb_model.csv", index=False)
+    '''
     ''' 
     results_for_different_k = []
     nmi_for_different_k = []
@@ -568,15 +596,15 @@ def main(args, resume_preempt=False,data=None):
        ari_for_different_k.append(nmi_ari_out.loc[0,'ari_score'])
        print(len(data))
        data=[]
-    #print(results_for_different_k)
-    with open('results_for_different_k_merfish.pkl', 'wb') as file:
+       print(results_for_different_k)
+       with open('results_for_different_k_merfish.pkl', 'wb') as file:
            pickle.dump(results_for_different_k, file)
-    print(nmi_for_different_k)
-    print(ari_for_different_k)
-    with open('nmi_for_different_k_merfish.pkl', 'wb') as file:
+       print(nmi_for_different_k)
+       print(ari_for_different_k)
+       with open('nmi_for_different_k_merfish.pkl', 'wb') as file:
             pickle.dump(nmi_for_different_k, file)
-    with open('ari_for_different_k_merfish.pkl', 'wb') as file:
+       with open('ari_for_different_k_merfish.pkl', 'wb') as file:
             pickle.dump(ari_for_different_k, file)
-    '''
+     '''
 if __name__ == "__main__":
     main()

@@ -335,10 +335,11 @@ class GeneTransformerEncoder(nn.Module):
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
 
-    def forward(self, x, seg_label, masks=None, just_emb=False, multi_layer=False):
+    def forward(self, x, seg_label, masks=None, just_pos=False, just_emb=False, multi_layer=False):
+        if just_pos:
+            return [self.interpolate_pos_encoding(x, self.pos_embed).repeat(x.shape[0], 1, 1)]
         if just_emb:
-            return self.gene_embed(x)
-        
+            return [self.gene_embed(x)]
         if masks is not None:
             if not isinstance(masks, list):
                 masks = [masks]
