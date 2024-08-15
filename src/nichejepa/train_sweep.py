@@ -71,18 +71,18 @@ def train_main(args, resume_preempt=False, rank=0):
     # ----------------------------------------------------------------------- #
     #  PASSED IN PARAMS FROM CONFIG FILE
     # ----------------------------------------------------------------------- #
-    config = wandb.config
     # -- META
     use_bfloat16 = args['meta']['use_bfloat16']
     model_name = args['meta']['model_name']
     load_model = args['meta']['load_checkpoint'] or resume_preempt
     r_file = args['meta']['read_checkpoint']
+    pred_depth = args['meta']['pred_depth']
     get_specefic_gene = args['data']['get_specefic_gene']
-    pred_depth = int(config.pred_enc_depth %  10)
-    pred_emb_dim = config.enc_emb_dim
-    enc_depth = int( config.pred_enc_depth // 10)
-    enc_emb_dim= config.enc_emb_dim
-    top_layer=config.top_layer
+    pred_emb_dim = args['meta']['enc_emb_dim']
+    enc_depth = args['meta']['enc_depth'] 
+    enc_emb_dim = args['meta']['enc_emb_dim']
+    top_layer = args['meta']['top_layer']
+    top_k = args['meta']['top_k'] 
     if not torch.cuda.is_available():
         device = torch.device('cpu')
     else:
@@ -92,14 +92,6 @@ def train_main(args, resume_preempt=False, rank=0):
     # -- DATA
     batch_size = args['data']['batch_size']
     weighted_average = args['data']['weighted_average']
-    if config.pred_enc_depth < 41:
-        batch_size=80 
-    elif config.pred_enc_depth <51:
-        batch_size=40
-    else:
-        batch_size=70
-    if config.epochs==0:
-        batch_size=1000
     seq_len_cell = args['data']['seq_len_cell']
     seq_len_neighborhood = args['data']['seq_len_neighborhood']
     just_cell = args['data']['just_cell']
@@ -107,9 +99,6 @@ def train_main(args, resume_preempt=False, rank=0):
     has_cls = args['data']['has_cls']
     get_topk = args['data']['get_topk']
     data_set_name = args['data']['data_set_name']
-    top_k = 0
-    if get_topk:
-       top_k = config.top_k
 
     seq_len = calculate_sequence_length(just_cell, just_neighborhood, seq_len_cell, seq_len_neighborhood, has_cls)
     vocab_size = args['data']['vocab_size']
@@ -118,10 +107,10 @@ def train_main(args, resume_preempt=False, rank=0):
     # --
 
     # -- MASK
-    n_targets = config.n_targets
+    n_targets = args['mask']['n_targets']
     n_contexts = args['mask']['n_contexts']
     target_mask_size = args['mask']['target_mask_size']
-    context_mask_size = config.context_mask_size
+    context_mask_size = args['mask']['context_mask_size']
     top_niche = args['mask']['top_niche']
     top_cell_type = args['mask']['top_cell_type']
 
@@ -129,11 +118,12 @@ def train_main(args, resume_preempt=False, rank=0):
 
     # -- OPTIMIZATION
     ema =[0,1]
-    ema[0] = config.ema
+    ema[0] = args['optimization']['ema']
+    learnable = params['optimization']['learnable']
     ipe_scale = args['optimization']['ipe_scale']  # scheduler scale factor (def: 1.0)
     wd = float(args['optimization']['weight_decay'])
     final_wd = float(args['optimization']['final_weight_decay'])
-    num_epochs = config.epochs
+    num_epochs = args['optimization']['epochs']
     warmup = args['optimization']['warmup']
     start_lr = args['optimization']['start_lr']
     lr = args['optimization']['lr']
@@ -191,7 +181,7 @@ def train_main(args, resume_preempt=False, rank=0):
         enc_depth=enc_depth,
         vocab_size =vocab_size,
         pred_depth=pred_depth,
-        pos_learnable=config.learnable,
+        pos_learnable=learnable,
         pred_emb_dim=pred_emb_dim,
         model_name=model_name,
         has_cls=args['data']['has_cls'])

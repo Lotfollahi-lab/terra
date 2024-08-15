@@ -17,9 +17,7 @@ import pandas as pd
 from src.nichejepa.utils.distributed import init_distributed
 from src.nichejepa.train_sweep import train_main
 from src.nichejepa.eval_sweep import eval_main
-from src.nichejepa.logistic_reg import logistic_
-from src.nichejepa.logistic_knn import logistic_and_knn
-from src.nichejepa.nmi_ari import compute_nmi_ari
+from src.nichejepa.utils.config_utils import create_params_from_YAML_wandb_config
 
 # Setup argument parsing
 def parse_arguments():
@@ -47,15 +45,8 @@ def process_main(rank, args, world_size, devices, data, train=True):
     logger = logging.getLogger()
     logger.setLevel(logging.INFO if rank == 0 else logging.ERROR)
     logger.info(f'Called with params from {args.fname}')
-
-    # Load parameters from YAML configuration file
-    with open(args.fname, 'r') as y_file:
-        params = yaml.load(y_file, Loader=yaml.FullLoader)
-        logger.info('Loaded parameters:')
-        pprint.pprint(params)
-
-    # Set random seed and initialize distributed training
-    params['seed'] = args.seed
+    
+    create_params_from_YAML_wandb_config(wandb.config, args, logger)
     world_size, rank = init_distributed(rank_and_world_size=(rank, world_size), port=40316)
     logger.info(f'Running... (rank: {rank}/{world_size})')
 
@@ -80,7 +71,7 @@ def sweep_func(args):
             "ema": 0.999,
             "context_mask_size": 1100,
             'n_targets': 4,
-            'epochs': 0,
+            'epochs': 2,
             'top_k': 127,
             'top_layer': 4,
             'enc_emb_dim': 768,
