@@ -9,7 +9,7 @@ pip install -e .
 ```
 
 ## Repository Structure
-
+It contains most important files.
 1. **`main_sweep.py`**  
    The main entry point for the project, which supports running training and evaluation sweeps. It includes command-line arguments for customization and handles multi-GPU setups.
 
@@ -30,6 +30,9 @@ pip install -e .
 
 7. **`src/nichejepa/utils/eval_utils.py`**  
    Includes helper functions to streamline the evaluation process, such as metrics calculations and data preparation.
+
+8. **`src/nichejepa/utils/config_utils.py`**  
+   Includes helper functions to setup the model and batch size params.
 
 ## Usage
 
