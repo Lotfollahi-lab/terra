@@ -5,9 +5,9 @@ nichejepa is a machine learning framework designed for gene transformer models, 
 
 ## Installation
 To install the necessary dependencies, run:
-```bash
-pip install -e .
-Repository Structure
+
+## Repository Structure
+
 1. main_sweep.py
 The main entry point for the project, which supports running training and evaluation sweeps. It includes command-line arguments for customization and handles multi-GPU setups.
 
@@ -29,7 +29,5 @@ Provides utility functions for handling and loading embeddings required by the m
 7. src/nichejepa/utils/eval_utils.py
 Includes helper functions to streamline the evaluation process, such as metrics calculations and data preparation.
 
-## Usage
-Running a Training Sweep
-To initiate a training sweep, use the following command:
+
 
