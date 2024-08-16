@@ -52,6 +52,8 @@ from src.nichejepa.logistic_reg import logistic_
 from src.nichejepa.nmi_ari import compute_nmi_ari
 from .eval_sweep import process_loader
 import anndata
+
+
 log_timings = True
 log_freq = 10
 checkpoint_freq = 50
@@ -66,7 +68,7 @@ logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logger = logging.getLogger()
 
 
-def train_main(args, resume_preempt=False, rank=0):
+def train(args, train_dataset, test_dataset, resume_preempt=False):
 
     # ----------------------------------------------------------------------- #
     #  PASSED IN PARAMS FROM CONFIG FILE
@@ -114,8 +116,10 @@ def train_main(args, resume_preempt=False, rank=0):
     # --
 
     # -- OPTIMIZATION
-    ema =[0,1]
-    ema[0] = args['optimization']['ema']
+    if isinstance(args['optimization']['ema'], list):
+       ema = args['optimization']['ema']
+    else:
+       ema = [args['optimization']['ema'], 1]
     learnable = args['optimization']['learnable']
     ipe_scale = args['optimization']['ipe_scale']  # scheduler scale factor (def: 1.0)
     wd = float(args['optimization']['weight_decay'])
@@ -127,7 +131,6 @@ def train_main(args, resume_preempt=False, rank=0):
     final_lr = args['optimization']['final_lr']
 
     # -- LOGGING
-    seed = args['seed']
     folder = (f"logs/{data_set_name}_"
                f"pred_depth_{pred_depth}_pred_emb_dim_{pred_emb_dim}_"
                f"enc_depth_{enc_depth}_n_targets_{n_targets}_"
@@ -193,34 +196,7 @@ def train_main(args, resume_preempt=False, rank=0):
                                  has_cls=has_cls)
     
     # Initialize dataloader and -sampler
-    data_path=args['data']['data_path']
-    sample_size = args['data']['sample_size']
-    dataset = load_from_disk(args['data']['data_path'])
-    total_size = len(dataset)
-    if sample_size == '100k':
-            sample_size = min(100000, total_size)
-    elif sample_size == '300k':
-            sample_size = min(300000, total_size)
-    else:
-            sample_size = total_size
-    random_state = 1
-    #rng = random.Random(random_state)
-    #sampled_indices = rng.sample(range(total_size), sample_size)
-    #dataset = dataset.select(sampled_indices)
-    #labels = dataset['cell_types']
-    #train_indices, test_indices = train_test_split(range(len(dataset)), 
-    #                                               test_size=args['data']['split'], 
-    #                                               stratify=labels,
-    #                                               random_state=1)
-    train_indices, test_indices = train_test_split(range(len(dataset)),
-                                                   test_size=args['data']['split'],
-                                                   random_state=4)
-
-    train_dataset = dataset.select(train_indices)
-    test_dataset = dataset.select(test_indices)
-    #dataset = dataset.train_test_split(test_size=args['data']['split'],
-    #                                   seed=0)
-    
+     
     _, train_loader, train__sampler = make_cell_neighborhood_dataset(
             batch_size=batch_size,
             data=train_dataset,

@@ -2,6 +2,7 @@ import torch
 import anndata
 import numpy as np
 import pandas as pd
+
 def compute_weight_based_ranks(tokens):
     """
     Compute rank-based weights for a 2D tensor of tokens.
@@ -188,9 +189,6 @@ def calculate_sequence_length(just_cell, just_neighborhood, seq_len_cell, seq_le
         seq_len += 1 if just_cell or just_neighborhood else 2
 
     return seq_len
-import numpy as np
-import pandas as pd
-import anndata
 
 def merge_and_save_anndata(all_features, all_obs, output_file='final_result.h5ad'):
     """

@@ -123,7 +123,7 @@ def eval_step(model, data_dict, dataset_type, args, top_layer):
         if args['data']['just_cell']:
             return forward_context(model, data_dict, "cell_type", data_dict["cell_type"], 0, False, args, dataset_type, top_layer)
 
-def process_loader(model, loader, args, dataset_type, top_k=0, gene_id=0, all_features=None, all_obs=None):
+def process_loader(model, loader, args, dataset_type, top_k=0, all_features=None, all_obs=None):
     """
     Process the data loader and evaluate the model on each batch.
 
@@ -133,7 +133,6 @@ def process_loader(model, loader, args, dataset_type, top_k=0, gene_id=0, all_fe
     args (dict): Dictionary of arguments.
     dataset_type (str): Type of the dataset.
     top_k (int): Top k layers to consider for feature extraction.
-    gene_id (int): ID of the specific gene to be used for selection mask creation.
     
     Returns:
     all_obs: The list of all obs computed from different batches, which should be merged and stored in the final AnnData.

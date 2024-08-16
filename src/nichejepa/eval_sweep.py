@@ -30,7 +30,7 @@ torch.backends.cudnn.benchmark = True
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logger = logging.getLogger()
 
-def eval_main(args, resume_preempt=False):
+def evaluation(args, train_dataset, test_dataset, resume_preempt=False):
     # -- META
     use_bfloat16 = args['meta']['use_bfloat16']
     model_name = args['meta']['model_name']
@@ -116,13 +116,9 @@ def eval_main(args, resume_preempt=False):
                                  n_contexts=n_contexts)
 
     # Initialize dataloader and -sampler
-    data_path = args['data']['data_path']
-    dataset = load_from_disk(data_path, keep_in_memory=True)
-    dataset = dataset.train_test_split(test_size=args['data']['split'], seed=0)
-
     _, train_loader = make_cell_neighborhood_dataset(
         batch_size=batch_size,
-        data=dataset["train"],
+        data=train_dataset,
         vocab_size=vocab_size,
         seq_len=seq_len,
         collator=mask_collator,
@@ -137,7 +133,7 @@ def eval_main(args, resume_preempt=False):
         distributed=False)
     _, test_loader = make_cell_neighborhood_dataset(
         batch_size=batch_size,
-        data=dataset["test"],
+        data=test_dataset,
         vocab_size=vocab_size,
         seq_len=seq_len,
         collator=mask_collator,
@@ -162,8 +158,8 @@ def eval_main(args, resume_preempt=False):
     target_encoder.eval()
     all_features = []
     all_obs = []
-    process_loader(target_encoder, train_loader, args, 'train', gene_id=592, all_features=all_features, all_obs=all_obs)
-    process_loader(target_encoder, test_loader, args, 'test', gene_id=592, all_features=all_features, all_obs=all_obs)
+    process_loader(target_encoder, train_loader, args, 'train', all_features=all_features, all_obs=all_obs)
+    process_loader(target_encoder, test_loader, args, 'test', all_features=all_features, all_obs=all_obs)
 
     merge_and_save_anndata(all_features, all_obs)
 

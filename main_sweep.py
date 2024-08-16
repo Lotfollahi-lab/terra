@@ -15,9 +15,9 @@ import wandb
 import pandas as pd
 
 from src.nichejepa.utils.distributed import init_distributed
-from src.nichejepa.train_sweep import train_main
-from src.nichejepa.eval_sweep import eval_main
-from src.nichejepa.utils.config_utils import create_params_from_YAML_wandb_config
+from src.nichejepa.train_sweep import train
+from src.nichejepa.eval_sweep import evaluation
+from src.nichejepa.utils.config_utils import create_params_from_YAML_wandb_config, prepare_dataset
 
 # Setup argument parsing
 def parse_arguments():
@@ -38,7 +38,7 @@ def parse_arguments():
     return parser.parse_args()
 
 # Main function to handle training or evaluation per process
-def process_main(rank, args, world_size, devices, data, is_training=True):
+def process_main(rank, args, world_size, devices, is_training=True):
     os.environ['CUDA_VISIBLE_DEVICES'] = str(devices[rank].split(':')[-1])
 
     logging.basicConfig()
@@ -51,45 +51,29 @@ def process_main(rank, args, world_size, devices, data, is_training=True):
     # Execute training or evaluation
     if is_training:
         logger.info(f'Called with params from {args.fname} and wandb')
-        params = create_params_from_YAML_wandb_config(wandb.config, args, logger)
-        train_main(args=params, rank=rank)
+        params = create_params_from_YAML_wandb_config(args.fname, logger, sweep_config=wandb.config, is_training=is_training)
+        train_dataset, test_dataset = prepare_dataset(params)
+        train(params, train_dataset, test_dataset)
     else:
         logger.info(f'Called with params from {args.fname} and wandb')
-        params = create_params_from_YAML_wandb_config(wandb.config, args, logger, is_training=is_training)
-        eval_main(params)
+        params = create_params_from_YAML_wandb_config(args.fname, logger, sweep_config=wandb.config, is_training=is_training)
+        train_dataset, test_dataset = prepare_dataset(params)
+        evaluation(params, train_dataset, test_dataset)
 
 # Function to manage sweeping process
 def sweep_func(args):
     num_gpus = len(args.devices)
-    manager = mp.Manager()
-    data = manager.list()
     processes = []
 
     # Initialize W&B for sweeping
-    if not args.do_sweep:
-        config = {
-            'enc_pred_depth': 43,
-            "learnable": 1,
-            "ema": 0.999,
-            "context_mask_size": 1100,
-            "target_mask_size": 20,
-            'n_targets': 4,
-            'epochs': 10,
-            'top_k': 127,
-            'top_layer': 4,
-            'enc_emb_dim': 768,
-        }
-        wandb.init(project="nichejepa-sweep", config=config)
-    else:
+    if args.do_sweep:
         wandb.init(project="nichejepa-sweep")
-
     # Run the process_main function in a single or multi-GPU setting
     if args.test:
-        data = []
-        process_main(0, args, num_gpus, args.devices, data)
+        process_main(0, args, num_gpus, args.devices)
     else:
         for rank in range(num_gpus):
-            p = mp.Process(target=process_main, args=(rank, args, num_gpus, args.devices, data))
+            p = mp.Process(target=process_main, args=(rank, args, num_gpus, args.devices))
             p.start()
             processes.append(p)
 
@@ -97,7 +81,7 @@ def sweep_func(args):
             p.join()
 
     # Final evaluation after sweeping
-    process_main(0, args, 1, [args.devices[0]], data, is_training=False)
+    process_main(0, args, 1, [args.devices[0]], is_training=False)
 
 # Entry point of the script
 if __name__ == '__main__':
