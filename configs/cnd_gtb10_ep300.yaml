@@ -58,7 +58,7 @@ optimization:
   - 0.999
   - 1.0
   learnable: 1
-  epochs: 1
+  epochs: 15
   final_lr: 1.0e-06
   final_weight_decay: 0.4
   ipe_scale: 1.0
