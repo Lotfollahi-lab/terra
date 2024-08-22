@@ -284,7 +284,7 @@ class GeneTransformerEncoder(nn.Module):
         self.has_cls = has_cls
         # --
         if self.has_cls:
-           self.gene_embed = nn.Embedding(vocab_size+2, embed_dim, padding_idx=0)
+           self.gene_embed = nn.Embedding(vocab_size+1, embed_dim, padding_idx=0)
         else:
            self.gene_embed = nn.Embedding(vocab_size, embed_dim, padding_idx=0)
         self.seg_embed = nn.Embedding(3, embed_dim, padding_idx=0)

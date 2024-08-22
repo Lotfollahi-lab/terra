@@ -304,11 +304,10 @@ def train(args, train_dataset, test_dataset, resume_preempt=False):
                 # -- unsupervised imgs
                 cell_neighborhood_tokens = udata[0].to(device, non_blocking=True)
                 seg_label = udata[1].to(device, non_blocking=True)                 
-                niche_label = udata[2]
                 masks_1 = [u.to(device, non_blocking=True) for u in masks_enc]
                 masks_2 = [u.to(device, non_blocking=True) for u in masks_pred]
-                return (cell_neighborhood_tokens, seg_label, niche_label,  masks_1, masks_2)
-            cell_neighborhood_tokens, seg_label, niche_label, masks_enc, masks_pred = load_cell_neighborhoods()
+                return (cell_neighborhood_tokens, seg_label,  masks_1, masks_2)
+            cell_neighborhood_tokens, seg_label, masks_enc, masks_pred = load_cell_neighborhoods()
             maskA_meter.update(len(masks_enc[0][0]))
             maskB_meter.update(len(masks_pred[0][0]))
 

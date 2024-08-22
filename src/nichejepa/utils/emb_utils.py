@@ -248,7 +248,7 @@ def calculate_sequence_length(just_cell, just_neighborhood, seq_len_cell, seq_le
 
     # Adjust sequence length if 'has_cls' is enabled.
     if has_cls:
-        seq_len += 1 if just_cell or just_neighborhood else 2
+        seq_len += 1
     return seq_len
 def create_and_save_anndata(all_features, all_obs, output_file='final_result.h5ad'):
     """
