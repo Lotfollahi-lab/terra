@@ -15,12 +15,12 @@ try:
     os.environ['CUDA_VISIBLE_DEVICES'] = os.environ['SLURM_LOCALID']
 except Exception:
     pass
-
+import random
 import copy
 import logging
 import sys
 import yaml
-
+import pickle
 import numpy as np
 import torch
 import torch.multiprocessing as mp
@@ -38,15 +38,22 @@ from .utils.logging import (CSVLogger,
                             grad_logger,
                             AverageMeter)
 from .utils.tensors import repeat_interleave_batch
+from .utils.emb_utils import calculate_sequence_length 
 from .datasets.cell_neighborhood_dataset import make_cell_neighborhood_dataset 
 from .helper import (load_checkpoint,
                      init_model,
                      init_opt)
+from tqdm import tqdm
+import pandas as pd
+import multiprocessing as mp
+from sklearn.model_selection import train_test_split
+from .eval_sweep import process_loader
+import anndata
 
-# --
+
 log_timings = True
 log_freq = 10
-checkpoint_freq = 1
+checkpoint_freq = 50
 # --
 
 _GLOBAL_SEED = 0
@@ -58,12 +65,11 @@ logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logger = logging.getLogger()
 
 
-def main(args, resume_preempt=False):
+def train(args, train_dataset, test_dataset, resume_preempt=False):
 
     # ----------------------------------------------------------------------- #
     #  PASSED IN PARAMS FROM CONFIG FILE
     # ----------------------------------------------------------------------- #
-
     # -- META
     use_bfloat16 = args['meta']['use_bfloat16']
     model_name = args['meta']['model_name']
@@ -71,9 +77,10 @@ def main(args, resume_preempt=False):
     r_file = args['meta']['read_checkpoint']
     pred_depth = args['meta']['pred_depth']
     pred_emb_dim = args['meta']['pred_emb_dim']
-    enc_depth = args['meta']['enc_depth']
-    enc_emb_dim= args['meta']['enc_emb_dim']
-
+    enc_depth = args['meta']['enc_depth'] 
+    enc_emb_dim = args['meta']['enc_emb_dim']
+    top_layer = args['meta']['top_layer']
+    top_k = args['meta']['top_k'] 
     if not torch.cuda.is_available():
         device = torch.device('cpu')
     else:
@@ -82,7 +89,14 @@ def main(args, resume_preempt=False):
 
     # -- DATA
     batch_size = args['data']['batch_size']
-    seq_len = args['data']['seq_len']
+    seq_len_cell = args['data']['seq_len_cell']
+    seq_len_neighborhood = args['data']['seq_len_neighborhood']
+    just_cell = args['data']['just_cell']
+    just_neighborhood = args['data']['just_neighborhood']
+    has_cls = args['data']['has_cls']
+    data_set_name = args['data']['data_set_name']
+
+    seq_len = calculate_sequence_length(just_cell, just_neighborhood, seq_len_cell, seq_len_neighborhood, has_cls)
     vocab_size = args['data']['vocab_size']
     pin_mem = args['data']['pin_mem']
     num_workers = args['data']['num_workers']
@@ -97,7 +111,11 @@ def main(args, resume_preempt=False):
     # --
 
     # -- OPTIMIZATION
-    ema = args['optimization']['ema']
+    if isinstance(args['optimization']['ema'], list):
+       ema = args['optimization']['ema']
+    else:
+       ema = [args['optimization']['ema'], 1]
+    learnable = args['optimization']['learnable']
     ipe_scale = args['optimization']['ipe_scale']  # scheduler scale factor (def: 1.0)
     wd = float(args['optimization']['weight_decay'])
     final_wd = float(args['optimization']['final_weight_decay'])
@@ -108,8 +126,12 @@ def main(args, resume_preempt=False):
     final_lr = args['optimization']['final_lr']
 
     # -- LOGGING
-    seed = args['seed']
-    folder = args['logging']['folder']+str(seed)+'/'
+    folder = (f"logs/{data_set_name}_"
+               f"pred_depth_{pred_depth}_pred_emb_dim_{pred_emb_dim}_"
+               f"enc_depth_{enc_depth}_n_targets_{n_targets}_"
+               f"n_contexts_{n_contexts}_target_mask_size_{target_mask_size}_"
+               f"context_mask_size_{context_mask_size}_num_epochs_{num_epochs}")
+
     os.makedirs(folder, exist_ok=True)
     tag = args['logging']['write_tag']
 
@@ -154,8 +176,10 @@ def main(args, resume_preempt=False):
         enc_depth=enc_depth,
         vocab_size =vocab_size,
         pred_depth=pred_depth,
+        pos_learnable=learnable,
         pred_emb_dim=pred_emb_dim,
-        model_name=model_name)
+        model_name=model_name,
+        has_cls=has_cls)
     target_encoder = copy.deepcopy(encoder)
 
     # Initialize mask collator
@@ -163,18 +187,15 @@ def main(args, resume_preempt=False):
                                  target_mask_size = target_mask_size,
                                  context_mask_size = context_mask_size,
                                  n_targets=n_targets,
-                                 n_contexts=n_contexts)
+                                 n_contexts=n_contexts,
+                                 has_cls=has_cls)
     
     # Initialize dataloader and -sampler
-    data_path=args['data']['data_path']
-    dataset = load_from_disk(args['data']['data_path'], keep_in_memory=True)
-    dataset = dataset.train_test_split(test_size=args['data']['split'],
-                                       seed=0)
-    
-    _, unsupervised_loader, unsupervised_sampler = make_cell_neighborhood_dataset(
+     
+    _, train_loader, train__sampler = make_cell_neighborhood_dataset(
             batch_size=batch_size,
-            data=dataset["train"],
-            vocab_size=vocab_size, 
+            data=train_dataset,
+            vocab_size=vocab_size,
             seq_len=seq_len,
             collator=mask_collator,
             pin_mem=pin_mem,
@@ -182,8 +203,32 @@ def main(args, resume_preempt=False):
             num_workers=num_workers,
             world_size=world_size,
             rank=rank,
-            drop_last=True)
-    ipe = len(unsupervised_loader)
+            drop_last=False,
+            just_cell=just_cell,
+            just_neighborhood=just_neighborhood,
+            seq_len_cell = seq_len_cell,
+            seq_len_neighborhood = seq_len_neighborhood,
+            has_cls = has_cls)
+
+    _, test_loader, test__sampler = make_cell_neighborhood_dataset(
+            batch_size=batch_size,
+            data=test_dataset,
+            vocab_size=vocab_size,
+            seq_len=seq_len,
+            collator=mask_collator,
+            pin_mem=pin_mem,
+            training=False,
+            num_workers=num_workers,
+            world_size=world_size,
+            rank=rank,
+            drop_last=False,
+            just_cell=just_cell,
+            just_neighborhood=just_neighborhood,
+            seq_len_cell = seq_len_cell,
+            seq_len_neighborhood = seq_len_neighborhood,
+            has_cls = has_cls)
+
+    ipe = len(train_loader)
 
     # -- init optimizer and scheduler
     optimizer, scaler, scheduler, wd_scheduler = init_opt(
@@ -199,26 +244,7 @@ def main(args, resume_preempt=False):
         num_epochs=num_epochs,
         ipe_scale=ipe_scale,
         use_bfloat16=use_bfloat16)
-    # -- wandb init
-    wandb.init(project="nichejepa-benchmark",
-       config={
-                    'num_epochs': num_epochs,
-                    'ema' : str(ema[0])+'__'+str(ema[1]),
-                    'lr':lr,
-                    'pred_depth':pred_depth,
-                    'pred_feature_size':pred_emb_dim,
-                    'encoder_feature_size':enc_emb_dim,
-                    'encoder_depth':enc_depth,
-                    'save_path':save_path,
-                    'batch_size': batch_size,
-                    'target_mask_size':  target_mask_size,
-                    'context_mask_size' : context_mask_size,
-                    'n_targets' : n_targets,
-                    'n_contexts' : n_contexts,
-                    'dataset' : args['data']['data_path'],
-                    'seed' : args['seed']
-                 }
-            )
+    
     encoder = DistributedDataParallel(encoder, static_graph=True)
     predictor = DistributedDataParallel(predictor, static_graph=True)
     target_encoder = DistributedDataParallel(target_encoder)
@@ -270,14 +296,14 @@ def main(args, resume_preempt=False):
         logger.info(f"Epoch {epoch + 1}")
 
         # Update distributed dataloader epoch
-        unsupervised_sampler.set_epoch(epoch)
+        train__sampler.set_epoch(epoch)
 
         loss_meter = AverageMeter()
         maskA_meter = AverageMeter()
         maskB_meter = AverageMeter()
         time_meter = AverageMeter()
 
-        for itr, (udata, masks_enc, masks_pred) in enumerate(unsupervised_loader):
+        for itr, (udata, masks_enc, masks_pred) in enumerate(train_loader):
             def load_cell_neighborhoods():
                 # -- unsupervised imgs
                 cell_neighborhood_tokens = udata[0].to(device, non_blocking=True)
@@ -371,28 +397,11 @@ def main(args, resume_preempt=False):
                                        grad_stats.last_layer,
                                        grad_stats.min,
                                        grad_stats.max))
-                    if (itr % log_freq == 0) or np.isnan(loss) or np.isinf(loss):
-                        
-                        # Log metrics to wandb
-                        wandb.log({'epoch': epoch + 1,
-                                   'iteration': itr,
-                                   'loss': loss,
-                                   'loss_avg':loss_meter.avg,
-                                   'mask_context': maskA_meter.avg,
-                                   'mask_target': maskB_meter.avg,
-                                   'weight_decay': _new_wd,
-                                   'learning_rate': _new_lr,
-                                   'memory_usage': torch.cuda.max_memory_allocated() / 1024.**2,
-                                   'time_per_iter': time_meter.avg})
-
             log_stats()
-
             assert not np.isnan(loss), 'loss is nan'
 
         # -- Save Checkpoint after every epoch
         logger.info('avg. loss %.3f' % loss_meter.avg)
         save_checkpoint(epoch+1)
-
-
 if __name__ == "__main__":
     main()
