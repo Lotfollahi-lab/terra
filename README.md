@@ -33,7 +33,11 @@ It contains most important files.
 
 8. **`src/nichejepa/utils/config_utils.py`**  
    Includes helper functions to setup the model and batch size params.
-9. **`tests`**  
+
+9. **`src/nichejepa/datasets/cell_neighborhood_dataset.py`**
+   Includes helper functions to create datasets.
+
+10. **`tests`**  
    Includes test cases for differnet functions.
 
 ## Usage
