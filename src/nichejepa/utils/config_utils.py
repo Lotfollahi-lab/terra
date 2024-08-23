@@ -152,14 +152,23 @@ def generate_output_name(args):
     name_parts = []
 
     # Add specific components to the name based on provided flags
-    if args['data']['just_cell'] and not args['data']['just_neighborhood']:
+    if args['emb']['retrieve_cell']:
         name_parts.append("cell_embedding")
 
-    if args['data']['just_neighborhood']:
+    if args['emb']['retrieve_niche']:
         name_parts.append("niche_embedding")
+
+    if args['emb']['retrieve_gene']:
+        name_parts.append("gene_embedding")
+        name_parts.append("gene_id")
+        name_parts.append(str(args['emb']['gene_id']))
 
     if args['emb']['weighted_average']:
         name_parts.append("weighted_average")
+
+    elif args['emb']['cls']:
+        name_parts.append("cls")
+
     else:
         name_parts.append("average")
 

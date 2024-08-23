@@ -18,7 +18,7 @@ data:
   #seq_len_cell: 457
   seq_len_neighborhood: 1091
   #seq_len_neighborhood: 786
-  has_cls: False
+  has_cls: True
   sample_size: 0k
   sample_subset: False
   random_state: 0
@@ -26,8 +26,8 @@ data:
   split: 0.2
 emb:
   weighted_average: False
-  average: True
-  cls: False
+  average: False
+  cls: True
   select_topk: False
   retrieve_gene: False
   retrieve_niche: False
@@ -65,7 +65,7 @@ optimization:
   - 0.999
   - 1.0
   learnable: 1
-  epochs: 15
+  epochs: 1
   final_lr: 1.0e-06
   final_weight_decay: 0.4
   ipe_scale: 1.0

@@ -139,8 +139,11 @@ def create_selection(cell_neighborhood_tokens, label_name, seq_len_cell, args, t
 
     Raises:
     AssertionError: If just_neighborhood is False and retrieve_label == 'retrieve_niche'
+    AssertionError: If just_cell is False and retrieve_label == 'retrieve_cell'
+    AssertionError: If args['data']['cls'] is True and args['emb']['retrieve_gene'] is True
+    AssertionError: If args['data']['has_cls'] is False and args['emb']['cls'] True
+    
     """
-
     # Ensure that if either just_neighborhood or just_cell is False, 
     # retrieve_label cannot be 'retrieve_niche' because 'retrieve_niche' is only meaningful 
     # when the data contains both cell and neighborhood sequences.
@@ -152,6 +155,27 @@ def create_selection(cell_neighborhood_tokens, label_name, seq_len_cell, args, t
     assert not (not just_cell and retrieve_label == 'retrieve_cell'), \
         "retrieve_label cannot be 'retrieve_cell' when just_cell is False."
 
+    # Assert that if the model has not been trained on CLS tokens (`has_cls` is False),
+    # then the `cls` argument cannot be True. This prevents the use of CLS tokens when
+    # the model wasn't designed to work with them.
+    assert not (not args['data']['has_cls'] and args['emb']['cls']), \
+        "The data has not been trained on CLS token, so 'cls' cannot be True when 'has_cls' is False."
+
+    # Assert that the `cls` argument and the `retrieve_gene` argument cannot both be True simultaneously.
+    # This is because the CLS token does not represent individual genes, making it meaningless to
+    # retrieve gene-specific embeddings when `cls` is being used.
+    assert not (args['emb']['cls'] and args['emb']['retrieve_gene']), \
+        "'cls' and 'retrieve_gene' cannot both be True, as CLS token does not have a meaningful representation for each gene."
+    
+    # If `cls` is enabled in `args['emb']`, create a selection mask focused on the CLS token.
+    if args['emb']['cls']:
+        # Create a zero tensor with the same shape as `cell_neighborhood_tokens`
+        selection = torch.zeros_like(cell_neighborhood_tokens)
+
+        # Select only the first token in each sequence by setting the first column to 1.
+        # This will be used to focus on the CLS token (or the first token) during embedding processing.
+        selection[:, 0] = 1
+        return selection
     # Initialize the selection mask based on the retrieve_label value
     # If retrieve_label is 'retrieve_gene', the mask will select only positions corresponding to the specified gene_id,
     # inside cell itself
@@ -162,7 +186,12 @@ def create_selection(cell_neighborhood_tokens, label_name, seq_len_cell, args, t
         return select
     else:
         select = (cell_neighborhood_tokens != 0).int()
-
+        # If the sequence contains a CLS token, exclude it from the selection. 
+        # Reaching this point implies that args['emb']['cls'] is False, 
+        # indicating that the selection is being created for either average or weighted_average computations, 
+        # and the CLS token should not be included in these calculations.
+        if args['data']['has_cls'] and not args['emb']['cls']:
+           select[:,0] = 0
     # Apply conditions based on retrieve_label
     if retrieve_label == "retrieve_niche":
         # If retrieve_label is 'retrieve_niche', mask the positions corresponding to the cell sequence.
@@ -187,7 +216,7 @@ def create_selection(cell_neighborhood_tokens, label_name, seq_len_cell, args, t
 
 def process_features(features_list,
          split, label_name, label_value, retrieve_label,
-         gene_count, retrieve_position_emb, retrieve_emb_from_layer):
+         retrieve_position_emb, retrieve_emb_from_layer, gene_count=None):
     """
     Process features from the provided features and metadata to make it ready for anndata
 
@@ -212,12 +241,15 @@ def process_features(features_list,
         'split': split,
         'label_name': label_name,
         'retrieve_label': retrieve_label,
-        'gene_count': gene_count.detach().cpu().numpy(),
         'retrieve_position_emb': retrieve_position_emb,
         'retrieve_emb_from_layer': retrieve_emb_from_layer,
         label_name: label_value
     }
-
+    # Handel if the emb is coming from cls
+    if gene_count==None:
+        obs_data['gene_count']=-1
+    else:
+        obs_data['gene_count']=gene_count.detach().cpu().numpy()
     obs = pd.DataFrame(obs_data, index=range(len(features)))
     return features, obs
 def calculate_sequence_length(just_cell, just_neighborhood, seq_len_cell, seq_len_neighborhood, has_cls):

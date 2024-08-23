@@ -98,6 +98,10 @@ def forward_context(model, data_dict, label_name,
 
     features_list = []  # Initialize a list to store processed features
 
+    # Ensure that exactly one of 'weighted_average', 'average', or 'cls' is True.
+    assert sum([args['emb']['weighted_average'], args['emb']['average'], args['emb']['cls']]) == 1, \
+        "Exactly one of 'weighted_average', 'average', or 'cls' must be True."
+
     # Iterate over the list of embeddings starting from the specified layer
     for emb in emb_list[retrieve_emb_from_layer:]:
         if args['emb']['weighted_average']:
@@ -115,17 +119,28 @@ def forward_context(model, data_dict, label_name,
             )
             # Calculate the mean of the non-padding embeddings based on the selection
             features, gene_count = mean_nonpadding_embs(emb, selection)
-        else:
-            # Raise an error if neither 'weighted_average' nor 'average' is specified
-            raise ValueError("Either 'weighted_average' or 'average' must be specified in args['emb'].")
-        
+        elif args['emb']['cls']:
+           # Create a selection mask to select cls
+           selection = create_selection(
+                cell_neighborhood_tokens, label_name,
+                args['data']['seq_len_cell'], args,
+                just_cell=args['data']['just_cell'],
+                just_neighborhood=args['data']['just_neighborhood']
+            )
+           # Calculate the mean of the non-padding embeddings based on the `selection` mask.
+           # This operation will compute the mean embedding where `selection` is 1, which in this case is the first token.
+           features, _ = mean_nonpadding_embs(emb, selection)
+           # Initialize `gene_count` as None. This may be used later in the code to store the count of selected genes.
+           # And for cls it should be None as we don't have any gene
+           gene_count = None
+
         # Convert the features to a NumPy array and add to the list of features
         features_list.append(features.cpu().numpy())
 
     # Further process the list of features for the final output
     features, obs = process_features(
         features_list, split, label_name, data_dict[label_name], retrieve_label,
-        gene_count, retrieve_position_emb, retrieve_emb_from_layer
+        retrieve_position_emb, retrieve_emb_from_layer, gene_count=gene_count
     )
 
 
