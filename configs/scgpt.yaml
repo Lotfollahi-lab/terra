@@ -5,7 +5,7 @@ data:
   #data_path: ../../nichejepa-reproducibility/nichejepa-reproducibility/datasets/st_data/gold/cell_neighborhood_tokenizer/sim1_1105fts_10000locs/sim1_1105fts_10000locs_read_depth_shifted_log_2210.dataset
   #data_path: /lustre/scratch126/cellgen/team361/mv10/nichejepa-reproducibility/nichejepa-reproducibility/datasets/st_data/gold/cell_neighborhood_tokenizer/merfish_mouse_brain_subset/merfish_mouse_brain_subset_read_depth_shifted_log_2170.dataset/
   data_set_name: 'scgpt'
-  num_workers: 18
+  num_workers: 0
   pin_mem: true
   #seq_len: 1461
   #seq_len: 361
@@ -39,7 +39,7 @@ logging:
   folder: logs/merfish_200
   write_tag: jepa
 mask:
-  context_mask_size: 958
+  context_mask_size: 365
   target_mask_size: 14
   n_contexts: 1
   n_targets: 2
