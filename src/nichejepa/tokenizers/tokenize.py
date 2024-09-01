@@ -40,6 +40,9 @@ def process_gene_tokens(gene_tokens: list,
     else:
         processed_gene_tokens = gene_tokens
 
+    # Convert to np.int64 to ensure all elements are of the same type. Should this be double?
+    processed_gene_tokens = np.array(processed_gene_tokens, dtype=np.int64)
+    
     pad_size = int(length - len(processed_gene_tokens))
     if pad_size < 0:
         # Truncate
