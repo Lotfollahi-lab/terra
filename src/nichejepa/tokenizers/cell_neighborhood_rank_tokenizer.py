@@ -205,7 +205,8 @@ class CellNeighborhoodRankTokenizer:
                       output_directory: Path | str,
                       output_file_prefix: str,
                       file_format: Literal["h5ad"] = "h5ad",
-                      use_generator: bool = False):
+                      use_generator: bool = False,
+                      cache_directory_path: Path | str = None):
         """
         Tokenize files in 'input_directory' and save as tokenized '.dataset' file in 'output_directory'.
 
@@ -221,6 +222,8 @@ class CellNeighborhoodRankTokenizer:
             Format of input files. Can be '.h5ad'.
         use_generator:
             If 'True', use generator for tokenization, else dict.
+        cache_directory_path:
+            If specified, cache directory path for dataset creation.
         """
 
         gene_tokens_cell, gene_tokens_neighborhood, cell_metadata = self.tokenize_files(
@@ -230,7 +233,8 @@ class CellNeighborhoodRankTokenizer:
         tokenized_dataset = self.create_dataset(gene_tokens_cell,
                                                 gene_tokens_neighborhood,
                                                 cell_metadata,
-                                                use_generator=use_generator)
+                                                use_generator=use_generator,
+                                                cache_directory_path=cache_directory_path)
 
         output_path = str((Path(output_directory) / output_file_prefix).with_suffix(".dataset"))
         tokenized_dataset.save_to_disk(output_path)
@@ -442,7 +446,8 @@ class CellNeighborhoodRankTokenizer:
                        gene_tokens_neighborhood: np.ndarray,
                        cell_metadata: dict,
                        use_generator: bool = False,
-                       keep_original_gene_tokens: bool = False) -> Dataset:
+                       keep_original_gene_tokens: bool = False,
+                       cache_directory_path: Path | str = None) -> Dataset:
         """
         Create a Hugging Face dataset based on tokenized cells.
 
@@ -459,6 +464,8 @@ class CellNeighborhoodRankTokenizer:
         keep_original_gene_tokens:
             If 'True', keep original gene tokens in Hugging Face dataset (before padding/truncation and addition of
             special tokens).
+        cache_directory_path:
+            If specified, cache directory path for dataset creation.
 
         Returns
         ----------
@@ -479,7 +486,10 @@ class CellNeighborhoodRankTokenizer:
                 for i in range(len(gene_tokens_cell)):
                     yield {k: dataset_dict[k][i] for k in dataset_dict.keys()}
             print("Using generator for dataset creation.")
-            dataset = Dataset.from_generator(dict_generator, num_proc=self.nproc,keep_in_memory=True)
+            dataset = Dataset.from_generator(dict_generator,
+                                             num_proc=self.nproc,
+                                             keep_in_memory=True,
+                                             cache_dir=cache_directory_path)
         else:
             print("Using dict for dataset creation.")
             dataset = Dataset.from_dict(dataset_dict)
@@ -504,12 +514,13 @@ class CellNeighborhoodRankTokenizer:
                                                                       self.neighborhood_special_tokens,
                                                                       self.neighborhood_special_tokens_idx)
 
-            #example["gene_tokens_cell"] = example["gene_tokens_cell"].astype(np.int64)
-            #example["gene_tokens_neighborhood"] = example["gene_tokens_neighborhood"].astype(np.int64)
-            #if not isinstance(example["gene_tokens_neighborhood"], np.int64):
-            #    print(example["gene_tokens_neighborhood"])
-            #if not isinstance(example["gene_tokens_cell"], np.int64):
-            #    print(example["gene_tokens_cell"])
+            # example["gene_tokens_cell"] = example["gene_tokens_cell"].astype(np.int64)
+            # example["gene_tokens_neighborhood"] = example["gene_tokens_neighborhood"].astype(np.int64)
+            # if not isinstance(example["gene_tokens_cell"], np.int64):
+            #    print("gene tokens cell after format_gene_tokens", example["gene_tokens_cell"])
+            # if not isinstance(example["gene_tokens_neighborhood"], np.int64):
+            #    print("gene tokens neighborhood after format_gene_tokens", example["gene_tokens_neighborhood"])
+               
             example["input_ids"] = np.concatenate((example["gene_tokens_cell"], example["gene_tokens_neighborhood"]))
 
             #example["input_ids"] = np.concatenate((example["gene_tokens_cell"],
@@ -519,6 +530,8 @@ class CellNeighborhoodRankTokenizer:
 
         print("Formatting gene tokens...")
         formatted_dataset = dataset.map(
-            format_gene_tokens, num_proc=self.nproc)
-
+            format_gene_tokens, 
+            num_proc=self.nproc,
+            cache_file_name=str(cache_directory_path / "formatted_dataset.cache"))
+                
         return formatted_dataset
