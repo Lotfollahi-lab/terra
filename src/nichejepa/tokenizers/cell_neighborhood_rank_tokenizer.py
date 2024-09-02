@@ -47,6 +47,7 @@ from __future__ import annotations
 import logging
 import pickle
 import warnings
+import concurrent
 from pathlib import Path
 from typing import Literal, Optional, Tuple
 
@@ -59,7 +60,7 @@ from ..aggregators.aggregate_neighbors import aggregate_neighbors
 from ..normalizers.normalize_by_analytic_pearson_residuals import normalize_by_analytic_pearson_residuals
 from ..normalizers.normalize_by_cell_area import normalize_by_cell_area
 from ..normalizers.normalize_by_mean import normalize_by_mean
-from ..normalizers.normalize_by_nonzero_median import normalize_by_nonzero_median
+from ..normalizers.normalize_by_nonzero_mean import normalize_by_nonzero_mean
 from ..normalizers.normalize_by_read_depth import normalize_by_read_depth
 from ..normalizers.normalize_by_seurat import normalize_by_seurat
 from ..normalizers.normalize_by_shifted_log_mean import normalize_by_shifted_log_mean
@@ -73,11 +74,11 @@ logger = logging.getLogger(__name__)
 
 
 CELL_GENE_MEANS_FILE = Path(__file__).parent.parent.parent.parent / "cell_gene_means_dictionary.pkl"
-CELL_GENE_NZMEDIANS_FILE = Path(__file__).parent.parent.parent.parent / "cell_gene_nzmedians_dictionary.pkl"
+CELL_GENE_NZMEANS_FILE = Path(__file__).parent.parent.parent.parent / "cell_gene_nzmeans_dictionary.pkl"
 CELL_GENE_LOGMEANS_FILE = Path(__file__).parent.parent.parent.parent / "cell_gene_logmeans_dictionary.pkl"
 NEIGHBORHOOD_GENE_MEANS_FILE = Path(__file__).parent.parent.parent.parent / "neighborhood_gene_means_dictionary.pkl"
-NEIGHBORHOOD_GENE_NZMEDIANS_FILE = Path(
-    __file__).parent.parent.parent.parent / "neighborhood_gene_nzmedians_dictionary.pkl"
+NEIGHBORHOOD_GENE_NZMEANS_FILE = Path(
+    __file__).parent.parent.parent.parent / "neighborhood_gene_nzmeans_dictionary.pkl"
 NEIGHBORHOOD_GENE_LOGMEANS_FILE = Path(
     __file__).parent.parent.parent.parent / "neighborhood_gene_logmeans_dictionary.pkl"
 TOKEN_DICTIONARY_FILE = Path(__file__).parent.parent.parent.parent / "token_dictionary.pkl"
@@ -87,23 +88,24 @@ class CellNeighborhoodRankTokenizer:
     def __init__(self,
                  custom_attr_name_dict: Optional[dict] = None,
                  nproc: int = 1,
+                 processing_mode: Optional[Literal["sequential", "parallel"]] = "sequential",
                  chunk_size: int = 512,
                  model_input_size: int = 2048,
                  norm_method: Literal["analytic_pearson_residuals",
                                       "mean",
-                                      "nzmedian",
+                                      "nzmean",
                                       "seurat_v3",
                                       "shifted_logmean"
                                       "shifted_log"]="seurat_v3",
                  norm_factor: Optional[Literal["read_depth", "cell_area"]]=None,
                  cell_gene_means_file: Path | str = CELL_GENE_MEANS_FILE,
-                 cell_gene_nzmedians_file: Path | str = CELL_GENE_NZMEDIANS_FILE,
+                 cell_gene_nzmeans_file: Path | str = CELL_GENE_NZMEANS_FILE,
                  cell_gene_logmeans_file: Path | str = CELL_GENE_LOGMEANS_FILE,
                  neighborhood_gene_means_file: Path | str = NEIGHBORHOOD_GENE_MEANS_FILE,
-                 neighborhood_gene_nzmedians_file: Path | str = NEIGHBORHOOD_GENE_NZMEDIANS_FILE,
+                 neighborhood_gene_nzmeans_file: Path | str = NEIGHBORHOOD_GENE_NZMEANS_FILE,
                  neighborhood_gene_logmeans_file: Path | str = NEIGHBORHOOD_GENE_LOGMEANS_FILE,
                  token_dictionary_file: Path | str = TOKEN_DICTIONARY_FILE,
-                 separate_cell_and_neighborhood_tokens: bool=False,
+                 use_separate_cell_and_neighborhood_tokens: bool=False,
                  cell_special_tokens: Optional[list[str]] = None, # ["<cls_cell>"],
                  cell_special_tokens_idx: Optional[list[int]] = None, # [0],
                  neighborhood_special_tokens: Optional[list[str]] = None, # ["<cls_neighborhood>"],
@@ -119,6 +121,8 @@ class CellNeighborhoodRankTokenizer:
             attributes in the '.h5ad' files. Values are the names of the attributes in the Hugging Face dataset.
         nproc
             Number of processes to use for dataset mapping.
+        processing_mode:
+            Processing mode for tokenizing '.h5ad' files. Can be 'sequential' or 'parallel'.
         chunk_size:
             Chunk size for adata tokenizer.
         model_input_size:
@@ -131,8 +135,8 @@ class CellNeighborhoodRankTokenizer:
         cell_gene_means_file:
             Path to pickle file containing dictionary of mean gene expression of cells across STcorpus (for each gene).
             Only relevant if 'norm_method' in ['mean'].
-        cell_gene_nzmedians_file:
-            Path to pickle file containing dictionary of non-zero median gene expression of cells across STcorpus (for
+        cell_gene_nzmeans_file:
+            Path to pickle file containing dictionary of non-zero mean gene expression of cells across STcorpus (for
             each gene).
             Only relevant if 'norm_method' in ['nzmean'].
         cell_gene_logmeans_file:
@@ -143,8 +147,8 @@ class CellNeighborhoodRankTokenizer:
             Path to pickle file containing dictionary of mean gene expression of neighborhoods across STcorpus (for each
             gene).
             Only relevant if 'norm_method' in ['mean'].
-        neighborhood_gene_nzmedians_file:
-            Path to pickle file containing dictionary of non-zero median gene expression of neighborhoods across
+        neighborhood_gene_nzmeans_file:
+            Path to pickle file containing dictionary of non-zero mean gene expression of neighborhoods across
             STcorpus (for each gene).
             Only relevant if 'norm_method' in ['nzmean'].
         neighborhood_gene_logmeans_file:
@@ -153,6 +157,8 @@ class CellNeighborhoodRankTokenizer:
             Only relevant if 'norm_method' in ['shifted_logmean'].
         token_dictionary_file:
             Path to pickle file containing token dictionary (gene tokens are Ensembl IDs + '_cell' or '_neighborhood').
+        use_separate_cell_and_neighborhood_tokens:
+            If 'True', separate cell and neighborhood gene tokens are used.
         cell_special_tokens:
             List with special tokens inserted into the gene token vector containing cell gene tokens.
         cell_special_tokens_idx:
@@ -165,17 +171,18 @@ class CellNeighborhoodRankTokenizer:
 
         self.custom_attr_name_dict = custom_attr_name_dict
         self.nproc = nproc
+        self.processing_mode = processing_mode
         self.chunk_size = chunk_size
         self.model_input_size = model_input_size
         self.norm_method = norm_method
         self.norm_factor = norm_factor
         self.cell_gene_means_file = cell_gene_means_file
-        self.cell_gene_nzmedians_file = cell_gene_nzmedians_file
+        self.cell_gene_nzmeans_file = cell_gene_nzmeans_file
         self.cell_gene_logmeans_file = cell_gene_logmeans_file
         self.neighborhood_gene_means_file = neighborhood_gene_means_file
-        self.neighborhood_gene_nzmedians_file = neighborhood_gene_nzmedians_file
+        self.neighborhood_gene_nzmeans_file = neighborhood_gene_nzmeans_file
         self.neighborhood_gene_logmeans_file = neighborhood_gene_logmeans_file
-        self.separate_cell_and_neighborhood_tokens = separate_cell_and_neighborhood_tokens
+        self.use_separate_cell_and_neighborhood_tokens = use_separate_cell_and_neighborhood_tokens
         self.cell_special_tokens = cell_special_tokens
         self.cell_special_tokens_idx = cell_special_tokens_idx
         self.neighborhood_special_tokens = neighborhood_special_tokens
@@ -187,7 +194,7 @@ class CellNeighborhoodRankTokenizer:
 
         # Get vocabulary and gene Ensembl IDs (protein-coding and miRNA genes)
         self.vocab = list(self.token_dict.keys())
-        if self.separate_cell_and_neighborhood_tokens:
+        if self.use_separate_cell_and_neighborhood_tokens:
             self.coding_miRNA_ids = [key.split("_")[0] for key in list(self.vocab) if "_cell" in key]
         else:
             self.coding_miRNA_ids = [key for key in list(self.vocab) if "ENS" in key]
@@ -198,7 +205,8 @@ class CellNeighborhoodRankTokenizer:
                       output_directory: Path | str,
                       output_file_prefix: str,
                       file_format: Literal["h5ad"] = "h5ad",
-                      use_generator: bool = False):
+                      use_generator: bool = False,
+                      cache_directory_path: Path | str = None):
         """
         Tokenize files in 'input_directory' and save as tokenized '.dataset' file in 'output_directory'.
 
@@ -214,6 +222,8 @@ class CellNeighborhoodRankTokenizer:
             Format of input files. Can be '.h5ad'.
         use_generator:
             If 'True', use generator for tokenization, else dict.
+        cache_directory_path:
+            If specified, cache directory path for dataset creation.
         """
 
         gene_tokens_cell, gene_tokens_neighborhood, cell_metadata = self.tokenize_files(
@@ -223,7 +233,8 @@ class CellNeighborhoodRankTokenizer:
         tokenized_dataset = self.create_dataset(gene_tokens_cell,
                                                 gene_tokens_neighborhood,
                                                 cell_metadata,
-                                                use_generator=use_generator)
+                                                use_generator=use_generator,
+                                                cache_directory_path=cache_directory_path)
 
         output_path = str((Path(output_directory) / output_file_prefix).with_suffix(".dataset"))
         tokenized_dataset.save_to_disk(output_path)
@@ -261,18 +272,38 @@ class CellNeighborhoodRankTokenizer:
 
         tokenize_file_fn = self.tokenize_adata
 
-        # Loop through data directory to tokenize '.h5ad' files
-        for file_path in data_directory.glob(f"*.{file_format}"):
-            file_found = 1
-            print(f"Tokenizing '{file_path}'...")
-            file_gene_tokens_cell, file_gene_tokens_neighborhood, file_cell_metadata = tokenize_file_fn(file_path)
-            gene_tokens_cell += file_gene_tokens_cell
-            gene_tokens_neighborhood += file_gene_tokens_neighborhood
-            if self.custom_attr_name_dict is not None:
-                for k in cell_attr:
-                    cell_metadata[self.custom_attr_name_dict[k]] += file_cell_metadata[k]
-            else:
-                cell_metadata = None
+        if self.processing_mode == "sequential":
+        # Loop through data directory to tokenize '.h5ad' files sequentially
+            print("Tokenizing files sequentially...")
+            for file_path in data_directory.glob(f"*.{file_format}"):
+                file_found = 1
+                print(f"Tokenizing '{file_path}'...")
+                file_gene_tokens_cell, file_gene_tokens_neighborhood, file_cell_metadata = tokenize_file_fn(file_path)
+                gene_tokens_cell += file_gene_tokens_cell
+                gene_tokens_neighborhood += file_gene_tokens_neighborhood
+                if self.custom_attr_name_dict is not None:
+                    for k in cell_attr:
+                        cell_metadata[self.custom_attr_name_dict[k]] += file_cell_metadata[k]
+                else:
+                    cell_metadata = None
+        elif self.processing_mode == "parallel":
+            print("Tokenizing files in parallel...")
+            with concurrent.futures.ProcessPoolExecutor(max_workers=self.nproc) as executor:
+                futures = []
+                for file_path in data_directory.glob(f"*.{file_format}"):
+                    file_found = 1
+                    print(f"Tokenizing '{file_path}'...")
+                    future = executor.submit(tokenize_file_fn, file_path)
+                    futures.append(future)
+                for future in concurrent.futures.as_completed(futures):
+                    file_gene_tokens_cell, file_gene_tokens_neighborhood, file_cell_metadata = future.result()
+                    gene_tokens_cell += file_gene_tokens_cell
+                    gene_tokens_neighborhood += file_gene_tokens_neighborhood
+                    if self.custom_attr_name_dict is not None:
+                        for k in cell_attr:
+                            cell_metadata[self.custom_attr_name_dict[k]] += file_cell_metadata[k]
+                    else:
+                        cell_metadata = None            
 
         if file_found == 0:
             logger.error(f"No '.{file_format}' files found in directory '{data_directory}'.")
@@ -316,6 +347,7 @@ class CellNeighborhoodRankTokenizer:
         if self.norm_method == "analytic_pearson_residuals":
             adata.X = normalize_by_analytic_pearson_residuals(adata.X)
             adata.layers["X_neighborhood"] = normalize_by_analytic_pearson_residuals(adata.layers["X_neighborhood"])
+        # if self.norm_method == "analytic_pearson_residuals", do not use norm_factor
         elif self.norm_factor == "read_depth":
             adata.X = normalize_by_read_depth(adata.X)
             adata.layers["X_neighborhood"] = normalize_by_read_depth(adata.layers["X_neighborhood"])
@@ -339,13 +371,13 @@ class CellNeighborhoodRankTokenizer:
                 adata.layers["X_neighborhood"],
                 gene_means_file=self.neighborhood_gene_means_file,
                 probed_genes=adata.var["ensembl_id"])
-        elif self.norm_method == "nzmedian":
-            adata.X = normalize_by_nonzero_median(adata.X,
-                                                  gene_nzmedians_file=self.cell_gene_nzmedians_file,
+        elif self.norm_method == "nzmean":
+            adata.X = normalize_by_nonzero_mean(adata.X,
+                                                  gene_nzmeans_file=self.cell_gene_nzmeans_file,
                                                   probed_genes=adata.var["ensembl_id"])
-            adata.layers["X_neighborhood"] = normalize_by_nonzero_median(
+            adata.layers["X_neighborhood"] = normalize_by_nonzero_mean(
                 adata.layers["X_neighborhood"],
-                gene_nzmedians_file=self.neighborhood_gene_nzmedians_file,
+                gene_nzmeans_file=self.neighborhood_gene_nzmeans_file,
                 probed_genes=adata.var["ensembl_id"])
         elif self.norm_method == "shifted_logmean":
             adata.X = normalize_by_shifted_log_mean(adata.X,
@@ -368,7 +400,7 @@ class CellNeighborhoodRankTokenizer:
             [self.coding_miRNA_dict.get(gene_id, False) for gene_id in adata.var["ensembl_id"]]
             )[0]
         coding_miRNA_ids = adata.var["ensembl_id"][coding_miRNA_idx]
-        if self.separate_cell_and_neighborhood_tokens:
+        if self.use_separate_cell_and_neighborhood_tokens:
             coding_miRNA_tokens_cell = np.array([self.token_dict[gene_id + "_cell"] for gene_id in coding_miRNA_ids])
             coding_miRNA_tokens_neighborhood = np.array(
                 [self.token_dict[gene_id + "_neighborhood"] for gene_id in coding_miRNA_ids])
@@ -414,7 +446,8 @@ class CellNeighborhoodRankTokenizer:
                        gene_tokens_neighborhood: np.ndarray,
                        cell_metadata: dict,
                        use_generator: bool = False,
-                       keep_original_gene_tokens: bool = False) -> Dataset:
+                       keep_original_gene_tokens: bool = False,
+                       cache_directory_path: Path | str = None) -> Dataset:
         """
         Create a Hugging Face dataset based on tokenized cells.
 
@@ -431,6 +464,8 @@ class CellNeighborhoodRankTokenizer:
         keep_original_gene_tokens:
             If 'True', keep original gene tokens in Hugging Face dataset (before padding/truncation and addition of
             special tokens).
+        cache_directory_path:
+            If specified, cache directory path for dataset creation.
 
         Returns
         ----------
@@ -450,9 +485,13 @@ class CellNeighborhoodRankTokenizer:
             def dict_generator():
                 for i in range(len(gene_tokens_cell)):
                     yield {k: dataset_dict[k][i] for k in dataset_dict.keys()}
-
-            dataset = Dataset.from_generator(dict_generator, num_proc=self.nproc,keep_in_memory=True)
+            print("Using generator for dataset creation.")
+            dataset = Dataset.from_generator(dict_generator,
+                                             num_proc=self.nproc,
+                                             keep_in_memory=True,
+                                             cache_dir=cache_directory_path)
         else:
+            print("Using dict for dataset creation.")
             dataset = Dataset.from_dict(dataset_dict)
 
         def format_gene_tokens(example):
@@ -475,12 +514,13 @@ class CellNeighborhoodRankTokenizer:
                                                                       self.neighborhood_special_tokens,
                                                                       self.neighborhood_special_tokens_idx)
 
-            #example["gene_tokens_cell"] = example["gene_tokens_cell"].astype(np.int64)
-            #example["gene_tokens_neighborhood"] = example["gene_tokens_neighborhood"].astype(np.int64)
-            #if not isinstance(example["gene_tokens_neighborhood"], np.int64):
-            #    print(example["gene_tokens_neighborhood"])
-            #if not isinstance(example["gene_tokens_cell"], np.int64):
-            #    print(example["gene_tokens_cell"])
+            # example["gene_tokens_cell"] = example["gene_tokens_cell"].astype(np.int64)
+            # example["gene_tokens_neighborhood"] = example["gene_tokens_neighborhood"].astype(np.int64)
+            # if not isinstance(example["gene_tokens_cell"], np.int64):
+            #    print("gene tokens cell after format_gene_tokens", example["gene_tokens_cell"])
+            # if not isinstance(example["gene_tokens_neighborhood"], np.int64):
+            #    print("gene tokens neighborhood after format_gene_tokens", example["gene_tokens_neighborhood"])
+               
             example["input_ids"] = np.concatenate((example["gene_tokens_cell"], example["gene_tokens_neighborhood"]))
 
             #example["input_ids"] = np.concatenate((example["gene_tokens_cell"],
@@ -488,7 +528,10 @@ class CellNeighborhoodRankTokenizer:
 
             return example
 
+        print("Formatting gene tokens...")
         formatted_dataset = dataset.map(
-            format_gene_tokens, num_proc=self.nproc)
-
+            format_gene_tokens, 
+            num_proc=self.nproc,
+            cache_file_name=str(cache_directory_path / "formatted_dataset.cache"))
+                
         return formatted_dataset

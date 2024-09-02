@@ -4,7 +4,7 @@ from ..aggregators.aggregate_neighbors import aggregate_neighbors
 from ..normalizers.normalize_by_analytic_pearson_residuals import normalize_by_analytic_pearson_residuals
 from ..normalizers.normalize_by_cell_area import normalize_by_cell_area
 from ..normalizers.normalize_by_mean import normalize_by_mean
-from ..normalizers.normalize_by_nonzero_median import normalize_by_nonzero_median
+from ..normalizers.normalize_by_nonzero_mean import normalize_by_nonzero_mean
 from ..normalizers.normalize_by_read_depth import normalize_by_read_depth
 from ..normalizers.normalize_by_seurat import normalize_by_seurat
 from ..normalizers.normalize_by_shifted_log_mean import normalize_by_shifted_log_mean
