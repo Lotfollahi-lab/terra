@@ -192,15 +192,16 @@ def train(args, train_dataset, test_dataset, resume_preempt=False):
     target_encoder = copy.deepcopy(encoder)
 
     # Initialize mask collator
-    mask_collator = MaskCollator(seq_len=seq_len,
-                                 target_mask_size = target_mask_size,
-                                 context_mask_size = context_mask_size,
-                                 n_targets=n_targets,
-                                 n_contexts=n_contexts,
-                                 has_cls=has_cls)
+    mask_collator = MaskCollator(
+        n_targets=n_targets,
+        n_contexts=n_contexts,
+        target_mask_size=target_mask_size,
+        context_mask_size=context_mask_size,
+        seq_len_cell=seq_len_cell,
+        seq_len_neighborhood=seq_len_neighborhood,
+        has_cls=has_cls)
     
     # Initialize dataloader and -sampler
-     
     _, train_loader, train__sampler = make_cell_neighborhood_dataset(
             batch_size=batch_size,
             data=train_dataset,
@@ -208,7 +209,6 @@ def train(args, train_dataset, test_dataset, resume_preempt=False):
             seq_len=seq_len,
             collator=mask_collator,
             pin_mem=pin_mem,
-            training=True,
             num_workers=num_workers,
             world_size=world_size,
             rank=rank,
@@ -226,16 +226,15 @@ def train(args, train_dataset, test_dataset, resume_preempt=False):
             seq_len=seq_len,
             collator=mask_collator,
             pin_mem=pin_mem,
-            training=False,
             num_workers=num_workers,
             world_size=world_size,
             rank=rank,
             drop_last=False,
             incl_cell_seq=incl_cell_seq,
             incl_neighborhood_seq=incl_neighborhood_seq,
-            seq_len_cell = seq_len_cell,
-            seq_len_neighborhood = seq_len_neighborhood,
-            has_cls = has_cls)
+            seq_len_cell=seq_len_cell,
+            seq_len_neighborhood=seq_len_neighborhood,
+            has_cls=has_cls)
 
     ipe = len(train_loader)
 

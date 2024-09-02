@@ -133,11 +133,13 @@ def evaluation(args: dict,
 
     # Initialize mask collator
     mask_collator = MaskCollator(
-        seq_len=seq_len,
+        n_targets=n_targets,
+        n_contexts=n_contexts,
         target_mask_size=target_mask_size,
         context_mask_size=context_mask_size,
-        n_targets=n_targets,
-        n_contexts=n_contexts)
+        seq_len_cell=seq_len_cell,
+        seq_len_neighborhood=seq_len_neighborhood,
+        has_cls=has_cls)
 
     # Initialize dataloader and -sampler
     _, train_loader = make_cell_neighborhood_dataset(
