@@ -1,6 +1,7 @@
 """
-Adapted from Assran, M. et al. Self-supervised learning from images with a Joint-Embedding Predictive Architecture.
-Proc. IEEE Comput. Soc. Conf. Comput. Vis. Pattern Recognit. 15619–15629 (2023);
+Adapted from Assran, M. et al. Self-supervised learning from images with a 
+Joint-Embedding Predictive Architecture. Proc. IEEE Comput. Soc. Conf. Comput.
+Vis. Pattern Recognit. 15619–15629 (2023);
 https://github.com/facebookresearch/ijepa/blob/main/src/train.py (05.06.2024).
 """
 
@@ -15,96 +16,97 @@ try:
     os.environ['CUDA_VISIBLE_DEVICES'] = os.environ['SLURM_LOCALID']
 except Exception:
     pass
-import random
+
 import copy
+import multiprocessing as mp
 import logging
+import pickle
+import random
 import sys
 import yaml
-import pickle
+
 import numpy as np
+import pandas as pd
 import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
 import wandb
 from datasets import load_from_disk
 from torch.nn.parallel import DistributedDataParallel
+from tqdm import tqdm
 
+from .datasets.cell_neighborhood_dataset import make_cell_neighborhood_dataset
+from .helper import (load_checkpoint,
+                     init_model,
+                     init_opt)
 from .masks.multigene import MaskCollator
 from .masks.utils import apply_masks
 from .utils.distributed import (init_distributed,
                                 AllReduce)
+from .utils.emb_utils import calculate_sequence_length
 from .utils.logging import (CSVLogger,
                             gpu_timer,
                             grad_logger,
                             AverageMeter)
 from .utils.tensors import repeat_interleave_batch
-from .utils.emb_utils import calculate_sequence_length 
-from .datasets.cell_neighborhood_dataset import make_cell_neighborhood_dataset 
-from .helper import (load_checkpoint,
-                     init_model,
-                     init_opt)
-from tqdm import tqdm
-import pandas as pd
-import multiprocessing as mp
+
 
 log_timings = True
 log_freq = 10
 checkpoint_freq = 50
-# --
+
 
 _GLOBAL_SEED = 0
 np.random.seed(_GLOBAL_SEED)
 torch.manual_seed(_GLOBAL_SEED)
 torch.backends.cudnn.benchmark = True
 
+
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logger = logging.getLogger()
 
 
-def train(args, train_dataset, test_dataset, resume_preempt=False):
+def train(args,
+          train_dataset,
+          test_dataset,
+          resume_preempt=False):
+    
+    # ----------------------------- #
+    #  Load params from config file
+    # ----------------------------- #
 
-    # ----------------------------------------------------------------------- #
-    #  PASSED IN PARAMS FROM CONFIG FILE
-    # ----------------------------------------------------------------------- #
-    # -- META
+    # Load meta params
     use_bfloat16 = args['meta']['use_bfloat16']
     model_name = args['meta']['model_name']
     load_model = args['meta']['load_checkpoint'] or resume_preempt
     r_file = args['meta']['read_checkpoint']
+    enc_depth = args['meta']['enc_depth'] 
+    enc_emb_dim = args['meta']['enc_emb_dim']    
     pred_depth = args['meta']['pred_depth']
     pred_emb_dim = args['meta']['pred_emb_dim']
-    enc_depth = args['meta']['enc_depth'] 
-    enc_emb_dim = args['meta']['enc_emb_dim']
     if not torch.cuda.is_available():
         device = torch.device('cpu')
     else:
         device = torch.device('cuda:0')
         torch.cuda.set_device(device)
 
-    # -- DATA
+    # Load data params
     batch_size = args['data']['batch_size']
-    seq_len_cell = args['data']['seq_len_cell']
-    seq_len_neighborhood = args['data']['seq_len_neighborhood']
-    incl_cell_seq = args['data']['incl_cell_seq']
-    incl_neighborhood_seq = args['data']['incl_neighborhood_seq']
-    has_cls = args['data']['has_cls']
-    data_set_name = args['data']['data_set_name']
-
-    seq_len = calculate_sequence_length(incl_cell_seq, incl_neighborhood_seq, seq_len_cell, seq_len_neighborhood, has_cls)
-    vocab_size = args['data']['vocab_size']
     pin_mem = args['data']['pin_mem']
     num_workers = args['data']['num_workers']
-    # --
+    seq_len_cell = args['data']['seq_len_cell']
+    seq_len_neighborhood = args['data']['seq_len_neighborhood']
+    has_cls = args['data']['has_cls']
+    data_set_name = args['data']['data_set_name']
+    vocab_size = args['data']['vocab_size']
 
-    # -- MASK
+    # Load mask params
     n_targets = args['mask']['n_targets']
     n_contexts = args['mask']['n_contexts']
     target_mask_size = args['mask']['target_mask_size']
     context_mask_size = args['mask']['context_mask_size']
 
-    # --
-
-    # -- OPTIMIZATION
+    # Load optimization params
     if isinstance(args['optimization']['ema'], list):
        ema = args['optimization']['ema']
     else:
@@ -119,19 +121,16 @@ def train(args, train_dataset, test_dataset, resume_preempt=False):
     lr = args['optimization']['lr']
     final_lr = args['optimization']['final_lr']
 
+    seq_len = (1 if has_cls else 0) + seq_len_cell + seq_len_neighborhood
+
     # -- LOGGING
     folder = (f"logs/{data_set_name}_"
                f"pred_depth_{pred_depth}_pred_emb_dim_{pred_emb_dim}_"
                f"enc_depth_{enc_depth}_n_targets_{n_targets}_"
                f"n_contexts_{n_contexts}_target_mask_size_{target_mask_size}_"
-               f"context_mask_size_{context_mask_size}_num_epochs_{num_epochs}")
-    # Append "incl_cell_seq" to the folder name if incl_cell_seq is True
-    if args['data']['incl_cell_seq']:
-       folder += "_incl_cell_seq"
-
-    # Append "incl_neighborhood_seq" to the folder name if incl_neighborhood_seq is True
-    if args['data']['incl_neighborhood_seq']:
-       folder += "_incl_neighborhood_seq"
+               f"context_mask_size_{context_mask_size}_num_epochs_{num_epochs}_"
+               f"seq_len_cell_{seq_len_cell}_"
+               f"seq_len_neighborhood_{seq_len_neighborhood}")
 
     # Append subset name based on specific_cell_types
     specific_cell_types = args['data'].get('specific_cell_types')
@@ -144,10 +143,10 @@ def train(args, train_dataset, test_dataset, resume_preempt=False):
     os.makedirs(folder, exist_ok=True)
     tag = args['logging']['write_tag']
 
-    dump = os.path.join(folder, 'params-ijepa.yaml')
+    dump = os.path.join(folder, 'params-nichejepa.yaml')
     with open(dump, 'w') as f:
         yaml.dump(args, f)
-    # ----------------------------------------------------------------------- #
+    # ----------------------------- #
     
     try:
         mp.set_start_method('spawn')
@@ -156,11 +155,11 @@ def train(args, train_dataset, test_dataset, resume_preempt=False):
     
     # Initialize torch distributed backend
     world_size, rank = init_distributed()
-    logger.info(f'Initialized (rank/world-size) {rank}/{world_size}')
+    logger.info(f'Initialized (rank/world-size) {rank}/{world_size}.')
     if rank > 0:
         logger.setLevel(logging.ERROR)
 
-    # -- log/checkpointing paths
+    # Define log/checkpointing paths
     log_file = os.path.join(folder, f'{tag}_r{rank}.csv')
     save_path = os.path.join(folder, f'{tag}' + '-ep{epoch}.pth.tar')
     latest_path = os.path.join(folder, f'{tag}-latest.pth.tar')
@@ -168,7 +167,7 @@ def train(args, train_dataset, test_dataset, resume_preempt=False):
     if load_model:
         load_path = os.path.join(folder, r_file) if r_file is not None else latest_path
 
-    # -- make csv_logger
+    # Initialize csv logger
     csv_logger = CSVLogger(log_file,
                            ('%d', 'epoch'),
                            ('%d', 'itr'),
@@ -183,7 +182,7 @@ def train(args, train_dataset, test_dataset, resume_preempt=False):
         seq_len=seq_len,
         enc_emb_dim=enc_emb_dim,
         enc_depth=enc_depth,
-        vocab_size =vocab_size,
+        vocab_size=vocab_size,
         pred_depth=pred_depth,
         pos_learnable=learnable,
         pred_emb_dim=pred_emb_dim,
@@ -238,7 +237,7 @@ def train(args, train_dataset, test_dataset, resume_preempt=False):
 
     ipe = len(train_loader)
 
-    # -- init optimizer and scheduler
+    # Initialize optimizer and scheduler
     optimizer, scaler, scheduler, wd_scheduler = init_opt(
         encoder=encoder,
         predictor=predictor,

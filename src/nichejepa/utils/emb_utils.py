@@ -267,41 +267,6 @@ def process_features(features_list: List,
     return features, obs
 
 
-def calculate_sequence_length(incl_cell_seq: bool,
-                              incl_neighborhood_seq: bool,
-                              seq_len_cell: int,
-                              seq_len_neighborhood: int,
-                              has_cls: bool):
-    """
-    Calculate the total sequence length (including cls token) based on the provided flags and sequence lengths.
-
-    Parameters
-    ----------
-        incl_cell_seq (bool): Flag indicating if only cell sequence length is used.
-        incl_neighborhood_seq (bool): Flag indicating if only neighborhood sequence length is used.
-        seq_len_cell (int): Sequence length for the cell.
-        seq_len_neighborhood (int): Sequence length for the neighborhood.
-        has_cls (bool): Flag indicating if the class token should be included.
-
-    Returns
-    ----------
-        int: The calculated sequence length.
-    """
-    if incl_cell_seq and incl_neighborhood_seq:
-        seq_len = seq_len_neighborhood + seq_len_cell
-    elif incl_cell_seq:
-        seq_len = seq_len_cell
-    elif incl_neighborhood_seq:
-        seq_len = seq_len_neighborhood
-    else:
-        raise ValueError("Both 'incl_cell_seq' and 'incl_neighborhood_seq' cannot be False.")
-
-    # Adjust sequence length if 'has_cls' is enabled.
-    if has_cls:
-        seq_len += 1
-    return seq_len
-
-
 def create_and_save_anndata(all_features: List[np.ndarray],
                             all_obs: List[np.ndarray],
                             output_file: str='final_result.h5ad') -> anndata.AnnData:
