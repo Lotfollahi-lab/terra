@@ -171,7 +171,8 @@ class CellGraphRankTokenizer:
                       file_format: Literal["h5ad"] = "h5ad",
                       use_generator: bool = False,
                       cache_directory_path: Path | str = None,
-                      keep_in_memory: bool = False):
+                      keep_in_memory: bool = False,
+                      num_shards: int = None):
         """
         Tokenize files in 'input_directory' and save as tokenized '.dataset' file in 'output_directory'.
 
@@ -190,7 +191,9 @@ class CellGraphRankTokenizer:
         cache_directory_path:
             If specified, cache directory path for dataset creation.
         keep_in_memory:
-            If 'True', keep dataset in memory when using generator.            
+            If 'True', keep dataset in memory when using generator.
+        num_shards:
+            Number of shards to save dataset to.                   
         """
 
         gene_tokens, cell_pos_tokens, gene_pos_tokens, cell_metadata = self.tokenize_files(
@@ -206,7 +209,7 @@ class CellGraphRankTokenizer:
                                                 keep_in_memory=keep_in_memory)
 
         output_path = str((Path(output_directory) / output_file_prefix).with_suffix(".dataset"))
-        tokenized_dataset.save_to_disk(output_path)
+        tokenized_dataset.save_to_disk(output_path, num_shards=num_shards)
 
     def tokenize_files(self,
                        data_directory: Path | str,
