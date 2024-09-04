@@ -47,6 +47,7 @@ from __future__ import annotations
 import logging
 import pickle
 import warnings
+import concurrent
 from pathlib import Path
 from typing import Literal, Optional, Tuple
 
@@ -82,6 +83,7 @@ class CellGraphRankTokenizer:
     def __init__(self,
                  custom_attr_name_dict: Optional[dict] = None,
                  nproc: int = 1,
+                 processing_mode: Optional[Literal["sequential", "parallel"]] = "sequential",                 
                  chunk_size: int = 512,
                  model_input_size: int = 2048,
                  tokens_per_cell: int = 64,
@@ -93,7 +95,7 @@ class CellGraphRankTokenizer:
                                       "shifted_log"]="seurat_v3",
                  norm_factor: Optional[Literal["read_depth", "cell_area"]]=None,
                  gene_means_file: Path | str = GENE_MEANS_FILE,
-                 gene_nzmeans_file: Path | str = GENE_NZMEDIANS_FILE,
+                 gene_nzmeans_file: Path | str = GENE_NZMEANS_FILE,
                  gene_logmeans_file: Path | str = GENE_LOGMEANS_FILE,
                  token_dictionary_file: Path | str = TOKEN_DICTIONARY_FILE,
                  special_tokens: Optional[list[str]] = None, # ["<cls>"],
@@ -109,6 +111,8 @@ class CellGraphRankTokenizer:
             attributes in the '.h5ad' files. Values are the names of the attributes in the Hugging Face dataset.
         nproc
             Number of processes to use for dataset mapping.
+        processing_mode:
+            Processing mode for tokenizing '.h5ad' files. Can be 'sequential' or 'parallel'.            
         chunk_size:
             Chunk size for adata tokenizer.
         model_input_size:
@@ -139,6 +143,7 @@ class CellGraphRankTokenizer:
 
         self.custom_attr_name_dict = custom_attr_name_dict
         self.nproc = nproc
+        self.processing_mode = processing_mode
         self.chunk_size = chunk_size
         self.model_input_size = model_input_size
         self.tokens_per_cell = tokens_per_cell
@@ -231,19 +236,40 @@ class CellGraphRankTokenizer:
 
         tokenize_file_fn = self.tokenize_adata
 
-        # Loop through data directory to tokenize '.h5ad' files
-        for file_path in data_directory.glob(f"*.{file_format}"):
-            file_found = 1
-            print(f"Tokenizing '{file_path}'...")
-            file_gene_tokens, file_cell_pos_tokens, file_gene_pos_tokens, file_cell_metadata = tokenize_file_fn(file_path)
-            gene_tokens += file_gene_tokens
-            cell_pos_tokens += file_cell_pos_tokens
-            gene_pos_tokens += file_gene_pos_tokens
-            if self.custom_attr_name_dict is not None:
-                for k in cell_attr:
-                    cell_metadata[self.custom_attr_name_dict[k]] += file_cell_metadata[k]
-            else:
-                cell_metadata = None
+        if self.processing_mode == "sequential":
+        # Loop through data directory to tokenize '.h5ad' files sequentially
+            print("Tokenizing files sequentially...")
+            for file_path in data_directory.glob(f"*.{file_format}"):
+                file_found = 1
+                print(f"Tokenizing '{file_path}'...")
+                file_gene_tokens, file_cell_pos_tokens, file_gene_pos_tokens, file_cell_metadata = tokenize_file_fn(file_path)
+                gene_tokens += file_gene_tokens
+                cell_pos_tokens += file_cell_pos_tokens
+                gene_pos_tokens += file_gene_pos_tokens
+                if self.custom_attr_name_dict is not None:
+                    for k in cell_attr:
+                        cell_metadata[self.custom_attr_name_dict[k]] += file_cell_metadata[k]
+                else:
+                    cell_metadata = None
+        elif self.processing_mode == "parallel":
+            print("Tokenizing files in parallel...")
+            with concurrent.futures.ProcessPoolExecutor(max_workers=self.nproc) as executor:
+                futures = []
+                for file_path in data_directory.glob(f"*.{file_format}"):
+                    file_found = 1
+                    print(f"Tokenizing '{file_path}'...")
+                    future = executor.submit(tokenize_file_fn, file_path)
+                    futures.append(future)
+                for future in concurrent.futures.as_completed(futures):
+                    file_gene_tokens, file_cell_pos_tokens, file_gene_pos_tokens, file_cell_metadata = future.result()
+                    gene_tokens += file_gene_tokens
+                    cell_pos_tokens += file_cell_pos_tokens
+                    gene_pos_tokens += file_gene_pos_tokens
+                    if self.custom_attr_name_dict is not None:
+                        for k in cell_attr:
+                            cell_metadata[self.custom_attr_name_dict[k]] += file_cell_metadata[k]
+                    else:
+                        cell_metadata = None
 
         if file_found == 0:
             logger.error(f"No '.{file_format}' files found in directory '{data_directory}'.")
