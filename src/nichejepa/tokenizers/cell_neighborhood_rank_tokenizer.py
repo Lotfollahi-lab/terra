@@ -206,7 +206,9 @@ class CellNeighborhoodRankTokenizer:
                       output_file_prefix: str,
                       file_format: Literal["h5ad"] = "h5ad",
                       use_generator: bool = False,
-                      cache_directory_path: Path | str = None):
+                      cache_directory_path: Path | str = None,
+                      num_shards: int = None,
+                      keep_in_memory: bool = False) -> None:
         """
         Tokenize files in 'input_directory' and save as tokenized '.dataset' file in 'output_directory'.
 
@@ -224,6 +226,10 @@ class CellNeighborhoodRankTokenizer:
             If 'True', use generator for tokenization, else dict.
         cache_directory_path:
             If specified, cache directory path for dataset creation.
+        num_shards:
+            Number of shards to save dataset to.
+        keep_in_memory:
+            If 'True', keep dataset in memory when using generator.
         """
 
         gene_tokens_cell, gene_tokens_neighborhood, cell_metadata = self.tokenize_files(
@@ -234,10 +240,11 @@ class CellNeighborhoodRankTokenizer:
                                                 gene_tokens_neighborhood,
                                                 cell_metadata,
                                                 use_generator=use_generator,
-                                                cache_directory_path=cache_directory_path)
+                                                cache_directory_path=cache_directory_path,
+                                                keep_in_memory=keep_in_memory)
 
         output_path = str((Path(output_directory) / output_file_prefix).with_suffix(".dataset"))
-        tokenized_dataset.save_to_disk(output_path)
+        tokenized_dataset.save_to_disk(output_path, num_shards=num_shards)
 
     def tokenize_files(self,
                        data_directory: Path | str,
@@ -303,7 +310,7 @@ class CellNeighborhoodRankTokenizer:
                         for k in cell_attr:
                             cell_metadata[self.custom_attr_name_dict[k]] += file_cell_metadata[k]
                     else:
-                        cell_metadata = None            
+                        cell_metadata = None
 
         if file_found == 0:
             logger.error(f"No '.{file_format}' files found in directory '{data_directory}'.")
@@ -392,10 +399,12 @@ class CellNeighborhoodRankTokenizer:
             adata.layers["X_neighborhood"] = normalize_by_shifted_log(adata.layers["X_neighborhood"])
 
         # Initialize cell metadata
+        print("Initializing cell metadata.")
         if self.custom_attr_name_dict is not None:
             cell_metadata = {attr_key: [] for attr_key in self.custom_attr_name_dict.keys()}
 
         # Retrieve gene tokens for genes contained in dataset and vocab, i.e. protein-coding and miRNA genes
+        print("Retrieving gene tokens.")
         coding_miRNA_idx = np.where(
             [self.coding_miRNA_dict.get(gene_id, False) for gene_id in adata.var["ensembl_id"]]
             )[0]
@@ -412,6 +421,7 @@ class CellNeighborhoodRankTokenizer:
         gene_tokens_neighborhood = []
 
         # Divide cells into chunks and loop through chunks
+        print("Ranking gene tokens.")
         for i in range(0, len(adata), self.chunk_size):
             norm_counts_cell = sp.csr_matrix(adata[i : i + self.chunk_size, coding_miRNA_idx].X)
             norm_counts_neighborhood = sp.csr_matrix(
@@ -440,14 +450,14 @@ class CellNeighborhoodRankTokenizer:
 
         return gene_tokens_cell, gene_tokens_neighborhood, cell_metadata
 
-
     def create_dataset(self,
                        gene_tokens_cell: np.ndarray,
                        gene_tokens_neighborhood: np.ndarray,
                        cell_metadata: dict,
                        use_generator: bool = False,
                        keep_original_gene_tokens: bool = False,
-                       cache_directory_path: Path | str = None) -> Dataset:
+                       cache_directory_path: Path | str = None,
+                       keep_in_memory: bool = False) -> Dataset:
         """
         Create a Hugging Face dataset based on tokenized cells.
 
@@ -466,6 +476,8 @@ class CellNeighborhoodRankTokenizer:
             special tokens).
         cache_directory_path:
             If specified, cache directory path for dataset creation.
+        keep_in_memory:
+            If 'True', keep dataset in memory when using generator.
 
         Returns
         ----------
@@ -488,10 +500,10 @@ class CellNeighborhoodRankTokenizer:
             print("Using generator for dataset creation.")
             dataset = Dataset.from_generator(dict_generator,
                                              num_proc=self.nproc,
-                                             keep_in_memory=True,
+                                             keep_in_memory=keep_in_memory,
                                              cache_dir=cache_directory_path)
         else:
-            print("Using dict for dataset creation.")
+            print("Using dictionary for dataset creation.")
             dataset = Dataset.from_dict(dataset_dict)
 
         def format_gene_tokens(example):
