@@ -245,6 +245,7 @@ class CellNeighborhoodRankTokenizer:
 
         output_path = str((Path(output_directory) / output_file_prefix).with_suffix(".dataset"))
         tokenized_dataset.save_to_disk(output_path, num_shards=num_shards)
+        print(f"Tokenized dataset saved to '{output_path}'.")
 
     def tokenize_files(self,
                        data_directory: Path | str,
@@ -544,6 +545,6 @@ class CellNeighborhoodRankTokenizer:
         formatted_dataset = dataset.map(
             format_gene_tokens, 
             num_proc=self.nproc,
-            cache_file_name=str(cache_directory_path / "formatted_dataset.cache"))
+            keep_in_memory=keep_in_memory)
                 
         return formatted_dataset
