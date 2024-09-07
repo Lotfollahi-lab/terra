@@ -245,6 +245,7 @@ class CellNeighborhoodRankTokenizer:
 
         output_path = str((Path(output_directory) / output_file_prefix).with_suffix(".dataset"))
         tokenized_dataset.save_to_disk(output_path, num_shards=num_shards)
+        print(f"Tokenized dataset saved to '{output_path}'.")
 
     def tokenize_files(self,
                        data_directory: Path | str,
@@ -514,18 +515,20 @@ class CellNeighborhoodRankTokenizer:
                 example["gene_tokens_neighborhood_original"] = example["gene_tokens_neighborhood"]
                 example["gene_tokens_neighborhood_original_length"] = len(example["gene_tokens_neighborhood"])
 
-            example["gene_tokens_cell"] = process_gene_tokens(example["gene_tokens_cell"],
+            example["gene_tokens_cell"], example["n_nonzero_cell_tokens"] = process_gene_tokens(example["gene_tokens_cell"],
                                                               int(self.model_input_size / 2),
                                                               self.token_dict,
                                                               self.cell_special_tokens,
                                                               self.cell_special_tokens_idx)
 
-            example["gene_tokens_neighborhood"] = process_gene_tokens(example["gene_tokens_neighborhood"],
+            example["gene_tokens_neighborhood"], example["n_nonzero_neighborhood_tokens"] = process_gene_tokens(example["gene_tokens_neighborhood"],
                                                                       int(self.model_input_size / 2),
                                                                       self.token_dict,
                                                                       self.neighborhood_special_tokens,
                                                                       self.neighborhood_special_tokens_idx)
 
+            example["n_nonzero_tokens"] = example["n_nonzero_cell_tokens"] + example["n_nonzero_neighborhood_tokens"]
+            
             # example["gene_tokens_cell"] = example["gene_tokens_cell"].astype(np.int64)
             # example["gene_tokens_neighborhood"] = example["gene_tokens_neighborhood"].astype(np.int64)
             # if not isinstance(example["gene_tokens_cell"], np.int64):
@@ -544,6 +547,6 @@ class CellNeighborhoodRankTokenizer:
         formatted_dataset = dataset.map(
             format_gene_tokens, 
             num_proc=self.nproc,
-            cache_file_name=str(cache_directory_path / "formatted_dataset.cache"))
+            keep_in_memory=keep_in_memory)
                 
         return formatted_dataset
