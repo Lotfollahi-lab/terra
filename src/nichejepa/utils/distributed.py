@@ -129,7 +129,10 @@ class CustomDistributedLengthGroupedSampler(DistributedSampler):
         num_replicas: Optional[int] = None,
         rank: Optional[int] = None,
         seed: int = 0,
+        hugging_face_dataset: Optional[Dataset] = None,
         drop_last: bool = False,
+        incl_cell_seq: bool=False,
+        incl_neighborhood_seq: bool=False,
         lengths: Optional[List[int]] = None,
         model_input_name: Optional[str] = None,
     ):
@@ -163,28 +166,12 @@ class CustomDistributedLengthGroupedSampler(DistributedSampler):
         self.model_input_name = (
             model_input_name if model_input_name is not None else "input_ids"
         )
-        ''' 
-        if lengths is None:
-            print("Lengths is none - calculating lengths.")
-            if (
-                not (
-                    isinstance(dataset[0], dict)
-                    or isinstance(dataset[0], BatchEncoding)
-                )
-                or self.model_input_name not in dataset[0]
-            ):
-                raise ValueError(
-                    "Can only automatically infer lengths for datasets whose items are dictionaries with an "
-                    f"'{self.model_input_name}' key."
-                )
-            lengths = [len(feature[self.model_input_name]) for feature in dataset]
-        '''
-        lengths = [
-                 torch.nonzero(
-                  feature[0]
-                 ).size(0) for feature in dataset
-                  ]
-        self.lengths = lengths
+        if incl_neighborhood_seq and incl_cell_seq:
+          self.lengths = hugging_face_dataset['n_nonzero_tokens']
+        elif incl_cell_seq:
+          self.lengths = hugging_face_dataset['n_nonzero_cell_tokens']
+        elif incl_neighborhood_seq:
+          self.lengths = hugging_face_dataset['n_nonzero_neighborhood_tokens']
 
     def __iter__(self) -> Iterator:
         # Deterministically shuffle based on epoch and seed

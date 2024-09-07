@@ -1,23 +1,19 @@
 data:
   batch_size: 10
-  #data_path: /lustre/scratch126/cellgen/team361/mv10/jepa/nichejepa/scGPT.dataset
-  #data_path: /lustre/scratch126/cellgen/team361/mv10/jepa/nichejepa/nichecompass.dataset 
-  #data_path: ../../nichejepa-reproducibility/nichejepa-reproducibility/datasets/st_data/gold/cell_neighborhood_tokenizer/sim1_1105fts_10000locs/sim1_1105fts_10000locs_read_depth_shifted_log_2210.dataset
-  data_path: /lustre/scratch126/cellgen/team361/mv10/nichejepa-reproducibility/nichejepa-reproducibility/datasets/st_data/gold/cell_neighborhood_tokenizer/merfish_mouse_brain_subset/merfish_mouse_brain_subset_read_depth_shifted_log_2170.dataset/
-  data_set_name: 'merfish'
-  num_workers: 0
+  data_path: /lustre/scratch126/cellgen/team361/am84/NicheJEPA/datasets/am84/st_data/gold/cell-neighborhood-tokenizer/sim1_1105genes_100klocs_strongincrements/8-shards/sim1_1105genes_100klocs_strongincrements_4_False_read_depth_shifted_log_2210.dataset
+  data_set_name: 'simulated_100k'
+  num_workers: 18
   pin_mem: true
-  vocab_size: 1087 #this is for merfish data
+  vocab_size: 1107 #this is for simulated_100k
   incl_cell_seq: True
   incl_neighborhood_seq: True
-  seq_len_cell: 457 #this is for merfish data
-  #seq_len_neighborhood: 1091 #this is for simulated data
-  seq_len_neighborhood: 786 #this is for merfish data
+  seq_len_cell: 374 #this is for simulated_100k
+  seq_len_neighborhood: 1105 #this is for simulated_100k
   has_cls: True
   sample_size: 5000
-  sample_subset: True
+  sample_subset: False
   random_state: 0
-  stratify: False
+  stratify: True
   split: 0.2
   specific_cell_types: []
   #specific_cell_types: ['Celltype5','Celltype6']
@@ -33,7 +29,7 @@ emb:
   retrieve_position_emb: False
   retrieve_emb_from_layer: 2 # This indicates that we should retrieve embeddings from the layer specified by #retrieve_emb_from_layer and upwards its value should be between zero and #enc_depth-1
 logging:
-  folder: logs/merfish_200
+  folder: logs/simulated_100k
   write_tag: jepa
 mask:
   context_mask_size: 1240 # This doesn't have meaning in segment_masking.
@@ -68,3 +64,4 @@ optimization:
   start_lr: 5.0e-05
   warmup: 5
   weight_decay: 0.04
+

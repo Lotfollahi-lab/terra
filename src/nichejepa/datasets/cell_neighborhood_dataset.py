@@ -194,7 +194,10 @@ def make_cell_neighborhood_dataset(batch_size: int,
         #                                                               rank=rank)
         dist_sampler = CustomDistributedLengthGroupedSampler(dataset,
                                                              batch_size,
+                                                             hugging_face_dataset=data,
                                                              num_replicas=world_size,
+                                                             incl_cell_seq=incl_cell_seq,
+                                                             incl_neighborhood_seq=incl_neighborhood_seq,
                                                              rank=rank)
 
         data_loader = torch.utils.data.DataLoader(dataset,

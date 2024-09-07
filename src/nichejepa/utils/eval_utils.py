@@ -43,15 +43,15 @@ def load_cell_neighborhoods(udata: List,
     cell_neighborhood_tokens = udata[0].to(device, non_blocking=True)
     seg_label = udata[1].to(device, non_blocking=True)
 
-    # Initialize niche_label and cell_type based on the length of udata and the just_cell flag
+    # Initialize niche_label and cell_type based on the length of udata and the incl_neighborhood_seq flag
     if len(udata) == 4:
         niche_label = udata[2]
         cell_type = udata[3]
     elif len(udata) == 3:
-        if args['data']['just_cell']:
+        if args['data']['incl_cell_seq']:
             niche_label = None
             cell_type = udata[2]
-        elif args['data']['just_neighborhood']:
+        elif args['data']['incl_neighborhood_seq']:
             cell_type = None
             niche_label = udata[2]
 
@@ -132,8 +132,8 @@ def forward_context(model,
             selection = create_selection(
                 cell_neighborhood_tokens, label_name,
                 args['data']['seq_len_cell'], args, 
-                just_cell=args['data']['just_cell'], 
-                just_neighborhood=args['data']['just_neighborhood'],
+                just_cell=args['data']['incl_cell_seq'], 
+                just_neighborhood=args['data']['incl_neighborhood_seq'],
                 retrieve_label=retrieve_label
             )
             # Calculate the mean of the non-padding embeddings based on the selection
@@ -143,8 +143,8 @@ def forward_context(model,
            selection = create_selection(
                 cell_neighborhood_tokens, label_name,
                 args['data']['seq_len_cell'], args,
-                just_cell=args['data']['just_cell'],
-                just_neighborhood=args['data']['just_neighborhood']
+                just_cell=args['data']['incl_cell_seq'],
+                just_neighborhood=args['data']['incl_neighborhood_seq']
             )
            # Calculate the mean of the non-padding embeddings based on the `selection` mask.
            # This operation will compute the mean embedding where `selection` is 1, which in this case is the first token.
@@ -181,7 +181,7 @@ def eval_step(model, data_dict, split, args):
     split (str): The split of the dataset (e.g., train, test, validation).
     args (dict): Dictionary of Configs.
     """
-    assert not(args['emb']['retrieve_niche'] and not args['data']['just_neighborhood']), (
+    assert not(args['emb']['retrieve_niche'] and not args['data']['incl_neighborhood_seq']), (
     " The data has not been trained on neighborhood data.")
 
     with torch.no_grad():

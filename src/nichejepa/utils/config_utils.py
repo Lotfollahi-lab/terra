@@ -22,7 +22,7 @@ def setup_batch_size(enc_pred_depth, is_training):
 
     # Default batch size assignment based on the encoder prediction depth
     if enc_pred_depth < 41:
-        return 20
+        return 25
     elif 41 <= enc_pred_depth < 51:
         return 40
     else:
