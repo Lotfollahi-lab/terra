@@ -3,7 +3,7 @@ data:
   #data_path: /lustre/scratch126/cellgen/team361/mv10/jepa/nichejepa/scGPT.dataset
   #data_path: /lustre/scratch126/cellgen/team361/mv10/jepa/nichejepa/nichecompass.dataset 
   #data_path: ../../nichejepa-reproducibility/nichejepa-reproducibility/datasets/st_data/gold/cell_neighborhood_tokenizer/sim1_1105fts_10000locs/sim1_1105fts_10000locs_read_depth_shifted_log_2210.dataset
-  data_path: /lustre/scratch126/cellgen/team361/mv10/nichejepa-reproducibility/nichejepa-reproducibility/datasets/st_data/gold/cell_neighborhood_tokenizer/merfish_mouse_brain_subset/merfish_mouse_brain_subset_read_depth_shifted_log_2170.dataset/
+  data_path: /lustre/scratch126/cellgen/team205/sb75/nichejepa-reproducibility/datasets/st_data/gold/cell_neighborhood_tokenizer/merfish_mouse_brain_subset/merfish_mouse_brain_subset_read_depth_shifted_log_2170.dataset
   data_set_name: 'merfish'
   num_workers: 18
   pin_mem: true
