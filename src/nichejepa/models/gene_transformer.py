@@ -21,7 +21,8 @@ from ..utils.tensors import (repeat_interleave_batch,
 
 def get_1d_sincos_pos_embed(embed_dim: int,
                             seq_len: int,
-                            cls_token: bool=False) -> np.ndarray:
+                            cls_token: bool=False
+                            ) -> np.ndarray:
     """
     Retrieve 1D sin cos positional embedding based on number of positions and
     presence of <cls> token.
@@ -53,7 +54,8 @@ def get_1d_sincos_pos_embed(embed_dim: int,
 
 
 def get_1d_sincos_pos_embed_from_pos(embed_dim: int,
-                                     pos: np.ndarray) -> np.ndarray:
+                                     pos: np.ndarray
+                                     ) -> np.ndarray:
     """
     Retrieve 1D sin cos positional embedding from an array of positions/sequence
     index.
@@ -91,7 +93,8 @@ def get_1d_sincos_pos_embed_from_pos(embed_dim: int,
 
 def drop_path(x: torch.Tensor,
               drop_prob: float=0.,
-              training: bool=False) -> torch.Tensor:
+              training: bool=False
+              ) -> torch.Tensor:
     """
     Helper function for forward pass of DropPath module.
 
@@ -172,7 +175,8 @@ class MLP(nn.Module):
                  hidden_features: Optional[int]=None,
                  out_features: Optional[int]=None,
                  act_layer: nn.modules.activation=nn.GELU,
-                 drop: float=0.):
+                 drop: float=0.
+                 ):
         super().__init__()
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
@@ -182,7 +186,8 @@ class MLP(nn.Module):
         self.drop = nn.Dropout(drop)
 
     def forward(self,
-                x: torch.Tensor) -> torch.Tensor:
+                x: torch.Tensor
+                ) -> torch.Tensor:
         """
         Forward pass of the MLP module.
 
@@ -231,7 +236,8 @@ class Attention(nn.Module):
                  qkv_bias: bool=False,
                  qk_scale: Optional[float]=None,
                  attn_drop: float=0.,
-                 proj_drop: float=0.):
+                 proj_drop: float=0.
+                 ):
         super().__init__()
         self.num_heads = num_heads
         head_dim = dim // num_heads
@@ -243,11 +249,10 @@ class Attention(nn.Module):
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        masks: Optional[torch.Tensor]=None) -> Tuple[torch.Tensor,
-                                                     torch.Tensor]:
+    def forward(self,
+                x: torch.Tensor,
+                masks: Optional[torch.Tensor]=None
+                ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass of the attention module.
 
@@ -327,7 +332,8 @@ class Block(nn.Module):
                  attn_drop: float=0.,
                  drop_path: float=0.,
                  act_layer: nn.modules.activation=nn.GELU,
-                 norm_layer: nn.modules.normalization=nn.LayerNorm):
+                 norm_layer: nn.modules.normalization=nn.LayerNorm
+                 ):
         super().__init__()
         self.norm1 = norm_layer(dim)
         self.attn = Attention(dim,
@@ -348,7 +354,8 @@ class Block(nn.Module):
     def forward(self,
                 x: torch.Tensor,
                 return_attention: bool=False,
-                masks: Optional[torch.Tensor]=None) -> torch.Tensor:
+                masks: Optional[torch.Tensor]=None
+                ) -> torch.Tensor:
         """
         Forward pass of the transformer block.
 
@@ -527,114 +534,15 @@ class GeneTransformerEncoder(nn.Module):
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
 
-    @torch.no_grad()
-    def return_pos_emb(self,
-                       x: torch.Tensor) -> list:
-        """
-        Return the positional embeddings for a batch of input tokens.
-
-        Parameters
-        -----------
-        x:
-            Tensor containing input tokens with shape (BATCH_SIZE, SEQ_LEN).
-
-        Returns
-        -----------
-        pos_embeds:
-            A list containing the positional embeddings repeated across the
-            batch dimension with shape (BATCH_SIZE, SEQ_LEN, EMBED_DIM).
-        """
-        # Repeat the positional embeddings across the batch dimension to match
-        # the input shape
-        pos_embeds = [self.pos_embed.repeat(x.shape[0], 1, 1)]
-
-        return pos_embeds
-
-    @torch.no_grad()
-    def return_gene_emb(self,
-                        x: torch.Tensor) -> list:
-        """
-        Return the gene embeddings for a batch of input tokens.
-
-        Parameters
-        -----------
-        x:
-            Tensor containing input tokens with shape (BATCH_SIZE, SEQ_LEN).
-
-        Returns
-        -----------
-        gene_embeds:
-            A list containing the gene embeddings with shape (BATCH_SIZE,
-            SEQ_LEN, EMBED_DIM).
-        """
-        # Retrieve gene embeddings
-        gene_embeds = [self.gene_embed(x)]
-
-        return gene_embeds
-
-    @torch.no_grad()
-    def return_multi_layer_emb(
-        self,
-        x: torch.Tensor,
-        seg_label: torch.Tensor,
-        masks: Optional[Union[list, torch.Tensor]]=None) -> list:
-        """
-        Process the batch of input tokens through the encoder blocks, applying
-        masks if provided, and return a list containing the embeddings after
-        each block.
-
-        Parameters
-        -----------
-        x:
-            Tensor containing input tokens with shape (BATCH_SIZE, SEQ_LEN).
-        seg_label:
-            Tensor containing segment labels with shape (BATCH_SIZE, SEQ_LEN).
-        masks:
-            List of N_CONTEXT_MASKS tensors containing indices (within the
-            sequence) of tokens to keep with shape (BATCH_SIZE, 
-            CONTEXT_MASK_SIZE).
-
-        Returns
-        -----------
-        emb_list:
-            List containing the embeddings after each layer with shape (
-            BATCH_SIZE * N_CONTEXT_MASKS, MIN_CONTEXT_SIZE, EMBED_DIM).
-        """
-        # Format masks
-        if masks is not None:
-            if not isinstance(masks, list):
-                masks = [masks]
-
-        # Get gene embeddings for sequence of gene tokens
-        x = self.gene_embed(x)
-        B, N, D = x.shape
-
-        # Add positional and segment embeddings to gene embedding
-        x = x + self.pos_embed + self.seg_embed(seg_label)
-
-        # Mask token embeddings if masks are provided
-        if masks is not None:
-            x = apply_masks(x, masks)
-
-        # Store embeddings after each block
-        emb_list = []
-        for blk in self.blocks:
-            x = blk(x)
-            if self.norm is not None:
-                x = self.norm(x)
-            emb_list.append(x)
-
-        return emb_list
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        seg_label: torch.Tensor,
-        masks: Optional[Union[list, torch.Tensor]]=None) -> torch.Tensor:
+    def forward(self,
+                x: torch.Tensor,
+                seg_label: torch.Tensor,
+                masks: Optional[Union[list, torch.Tensor]]=None
+                ) -> torch.Tensor:
         """
         Run encoder forward pass on a batch of input token sequences. For each 
         observation in the batch return only embeddings for tokens included in
-        mask.
+        the masks.
 
         Parameters
         -----------
@@ -654,7 +562,7 @@ class GeneTransformerEncoder(nn.Module):
         x:
             Embeddings of input tokens included in the masks with shape (
             BATCH_SIZE * N_MASKS, MIN_MASK_SIZE, EMBED_DIM), where MIN_MASK_SIZE
-            is minimum size in the batch.    
+            is minimum mask size in the batch.    
         """
         # Format masks
         if masks is not None:
@@ -663,7 +571,8 @@ class GeneTransformerEncoder(nn.Module):
 
         # Get gene embeddings for sequence of gene tokens
         x = self.gene_embed(x)
-        B, N, D = x.shape # B: BATCH_SIZE, N: SEQ_LEN, D: EMBED_DIM
+        B, N, D = x.shape # B: BATCH_SIZE, N: SEQ_LEN (+1 if <cls>),
+                          # D: EMBED_DIM
         
         # Add positional and segment embeddings to gene embedding
         x = x + self.pos_embed + self.seg_embed(seg_label)
@@ -679,6 +588,114 @@ class GeneTransformerEncoder(nn.Module):
             x = self.norm(x)
 
         return x
+
+    @torch.no_grad()
+    def return_pos_emb(self,
+                       x: torch.Tensor
+                       ) -> torch.Tensor:
+        """
+        Return the positional embeddings for a batch of input token sequences.
+
+        Parameters
+        -----------
+        x:
+            Tensor containing input tokens with shape (BATCH_SIZE, SEQ_LEN) if
+            no <cls> token is included and (BATCH_SIZE, SEQ_LEN+1) otherwise.
+
+        Returns
+        -----------
+        pos_embed:
+            Tensor containing the positional embeddings repeated across the
+            batch dimension with shape (BATCH_SIZE, SEQ_LEN, EMBED_DIM) if
+            no <cls> token is included and (BATCH_SIZE, SEQ_LEN+1, EMBED_DIM)
+            otherwise.
+        """
+        # Repeat the positional embeddings across the batch dimension to match
+        # the input shape
+        pos_embed = self.pos_embed.repeat(x.shape[0], 1, 1)
+
+        return pos_embed
+
+    @torch.no_grad()
+    def return_gene_emb(self,
+                        x: torch.Tensor
+                        ) -> torch.Tensor:
+        """
+        Return the gene embeddings for a batch of input tokens.
+
+        Parameters
+        -----------
+        x:
+            Tensor containing input tokens with shape (BATCH_SIZE, SEQ_LEN).
+
+        Returns
+        -----------
+        gene_embed:
+            Tensor containing the gene embeddings with shape (BATCH_SIZE,
+            SEQ_LEN, EMBED_DIM).
+        """
+        # Retrieve gene embeddings
+        gene_embeds = self.gene_embed(x)
+
+        return gene_embeds
+
+    @torch.no_grad()
+    def return_multi_layer_emb(self,
+                               x: torch.Tensor,
+                               seg_label: torch.Tensor,
+                               masks: Optional[Union[list, torch.Tensor]]=None
+                               ) -> list:
+        """
+        Run encoder forward pass on a batch of input token sequences, applying
+        masks if provided, and return a list containing the embeddings after
+        each block.
+
+        Parameters
+        -----------
+        x:
+            Tensor containing input tokens with shape (BATCH_SIZE, SEQ_LEN) if
+            no <cls> token is included and (BATCH_SIZE, SEQ_LEN+1) otherwise. 
+        seg_label:
+            Tensor containing segment labels to differentiate between cell and
+            neighborhood gene tokens with shape (BATCH_SIZE, SEQ_LEN) if no
+            <cls> token is included and (BATCH_SIZE, SEQ_LEN+1) otherwise.
+        masks:
+            List of N_MASKS tensors containing indices (within the sequence) of
+            tokens to keep with shape (BATCH_SIZE, MASK_SIZE).
+
+        Returns
+        -----------
+        emb_list:
+            List containing the embeddings after each layer with shape (
+            BATCH_SIZE * N_MASKS, MIN_MASK_SIZE, EMBED_DIM), where MIN_MASK_SIZE
+            is minimum mask size in the batch. 
+        """
+        # Format masks
+        if masks is not None:
+            if not isinstance(masks, list):
+                masks = [masks]
+
+        # Get gene embeddings for sequence of gene tokens
+        x = self.gene_embed(x)
+        B, N, D = x.shape
+
+        # Add positional and segment embeddings to gene embedding
+        x = x + self.pos_embed + self.seg_embed(seg_label)
+
+        # Mask token embeddings if masks are provided
+        if masks is not None:
+            x = apply_masks(x, masks)
+
+        # Run forward prop and store embeddings after each block
+        n_blocks = len(self.blocks)
+        emb_list = []
+        for i, blk in enumerate(self.blocks):
+            x = blk(x)
+            if (i == (n_blocks - 1)) and (self.norm is not None):
+                x = self.norm(x)
+            emb_list.append(x)
+
+        return emb_list
 
 
 class GeneTransformerPredictor(nn.Module):
