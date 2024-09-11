@@ -59,6 +59,7 @@ from __future__ import annotations
 import logging
 import pickle
 import warnings
+import concurrent
 from pathlib import Path
 from typing import Literal, Optional, Tuple
 
@@ -88,27 +89,29 @@ logger = logging.getLogger(__name__)
 
 base_path = Path(__file__).parent.parent.parent.parent
 GENE_MEANS_FILE = base_path / "cell_gene_means_dictionary.pkl"
-GENE_NZMEDIANS_FILE = base_path / "cell_gene_nzmedians_dictionary.pkl"
+GENE_NZMEANS_FILE = base_path / "cell_gene_nzmeans_dictionary.pkl"
 GENE_LOGMEANS_FILE = base_path / "cell_gene_logmeans_dictionary.pkl"
 TOKEN_DICTIONARY_FILE = base_path / "token_dictionary.pkl"
 
 
 class CellGraphRankTokenizer:
-    def __init__(self,
-                 custom_attr_name_dict: Optional[dict]=None,
-                 nproc: int=1,
-                 chunk_size: int=512,
-                 model_input_size: int=2048,
-                 tokens_per_cell: int=64,
-                 norm_method: Literal["analytic_pearson_residuals",
-                                      "mean",
-                                      "nzmedian",
-                                      "seurat_v3",
-                                      "shifted_log_mean"
-                                      "shifted_log"]="seurat_v3",
-                 norm_factor: Optional[Literal["read_depth", "cell_area"]]=None,
+    def __init__(
+        self,
+        custom_attr_name_dict: Optional[dict]=None,
+        nproc: int=1,
+        processing_mode: Optional[Literal["sequential", "parallel"]]="sequential",
+        chunk_size: int=512,
+        model_input_size: int=2048,
+        tokens_per_cell: int=64,
+        norm_method: Literal["analytic_pearson_residuals",
+                             "mean",
+                             "nzmedian",
+                             "seurat_v3",
+                             "shifted_log_mean"
+                             "shifted_log"]="seurat_v3",
+        norm_factor: Optional[Literal["read_depth", "cell_area"]]=None,
                  gene_means_file: Path | str=GENE_MEANS_FILE,
-                 gene_nzmedians_file: Path | str=GENE_NZMEDIANS_FILE,
+                 gene_nzmeans_file: Path | str=GENE_NZMEANS_FILE,
                  gene_logmeans_file: Path | str=GENE_LOGMEANS_FILE,
                  token_dictionary_file: Path | str=TOKEN_DICTIONARY_FILE,
                  special_tokens: Optional[list[str]]=None, # ["<cls>"],
@@ -125,6 +128,9 @@ class CellGraphRankTokenizer:
             Values are the names of the attributes in the Hugging Face dataset.
         nproc
             Number of processes to use for dataset mapping.
+        processing_mode:
+            Processing mode for tokenizing '.h5ad' files. Can be 'sequential' or
+            'parallel'.            
         chunk_size:
             Chunk size for adata tokenizer.
         model_input_size:
@@ -136,12 +142,12 @@ class CellGraphRankTokenizer:
             size differences. Is not used if 'norm_method' is
             'analytic_pearson_residuals'.
         gene_means_file:
-            Path to pickle file containing dictionary of mean gene expression
-            of cells across STcorpus (for each gene). Only relevant if
+            Path to pickle file containing dictionary of mean gene expression of
+            cells across STcorpus (for each gene). Only relevant if
             'norm_method' in ['mean'].
-        gene_nzmedians_file:
-            Path to pickle file containing dictionary of non-zero median gene
-            expression of cells across STcorpus (for each gene). Only relevant
+        gene_nzmeans_file:
+            Path to pickle file containing dictionary of non-zero mean gene
+            expression of cells across STcorpus (for each gene).cOnly relevant
             if 'norm_method' in ['nzmean'].
         gene_logmeans_file:
             Path to pickle file containing dictionary of log mean gene
@@ -157,16 +163,16 @@ class CellGraphRankTokenizer:
             Index where special tokens are to be inserted into the cell gene
             token vector.
         """
-
         self.custom_attr_name_dict = custom_attr_name_dict
         self.nproc = nproc
+        self.processing_mode = processing_mode
         self.chunk_size = chunk_size
         self.model_input_size = model_input_size
         self.tokens_per_cell = tokens_per_cell
         self.norm_method = norm_method
         self.norm_factor = norm_factor
         self.gene_means_file = gene_means_file
-        self.gene_nzmedians_file = gene_nzmedians_file
+        self.gene_nzmeans_file = gene_nzmeans_file
         self.gene_logmeans_file = gene_logmeans_file
         self.special_tokens = special_tokens
         self.special_tokens_idx = special_tokens_idx
@@ -187,7 +193,10 @@ class CellGraphRankTokenizer:
                       output_directory: Path | str,
                       output_file_prefix: str,
                       file_format: Literal["h5ad"]="h5ad",
-                      use_generator: bool=False
+                      use_generator: bool=False,
+                      cache_directory_path: Path | str=None,
+                      keep_in_memory: bool=False,
+                      num_shards: int=None
                       ):
         """
         Tokenize files in 'input_directory' and save as tokenized '.dataset'
@@ -206,22 +215,31 @@ class CellGraphRankTokenizer:
             Format of input files. Can be '.h5ad'.
         use_generator:
             If 'True', use generator for tokenization, else dict.
+        cache_directory_path:
+            If specified, cache directory path for dataset creation.
+        keep_in_memory:
+            If 'True', keep dataset in memory when using generator.
+        num_shards:
+            Number of shards to save dataset to.                   
         """
 
         gene_tokens, cell_pos_tokens, gene_pos_tokens, cell_metadata = self.tokenize_files(
             Path(input_directory), file_format
             )
 
-        tokenized_dataset = self.create_dataset(gene_tokens,
-                                                cell_pos_tokens,
-                                                gene_pos_tokens,
-                                                cell_metadata,
-                                                use_generator=use_generator)
+        tokenized_dataset = self.create_dataset(
+            gene_tokens,
+            cell_pos_tokens,
+            gene_pos_tokens,
+            cell_metadata,
+            use_generator=use_generator,
+            cache_directory_path=cache_directory_path,
+            keep_in_memory=keep_in_memory)
 
         output_path = str(
             (Path(output_directory) / output_file_prefix).with_suffix(
                 ".dataset"))
-        tokenized_dataset.save_to_disk(output_path)
+        tokenized_dataset.save_to_disk(output_path, num_shards=num_shards)
 
     def tokenize_files(self,
                        data_directory: Path | str,
@@ -263,21 +281,41 @@ class CellGraphRankTokenizer:
 
         tokenize_file_fn = self.tokenize_adata
 
-        # Loop through data directory to tokenize '.h5ad' files
-        for file_path in data_directory.glob(f"*.{file_format}"):
-            file_found = 1
-            print(f"Tokenizing '{file_path}'...")
-            file_gene_tokens, file_cell_pos_tokens, file_gene_pos_tokens, file_cell_metadata = tokenize_file_fn(
-                file_path)
-            gene_tokens += file_gene_tokens
-            cell_pos_tokens += file_cell_pos_tokens
-            gene_pos_tokens += file_gene_pos_tokens
-            if self.custom_attr_name_dict is not None:
-                for k in cell_attr:
-                    cell_metadata[
-                        self.custom_attr_name_dict[k]] += file_cell_metadata[k]
-            else:
-                cell_metadata = None
+        if self.processing_mode == "sequential":
+        # Loop through data directory to tokenize '.h5ad' files sequentially
+            print("Tokenizing files sequentially...")
+            for file_path in data_directory.glob(f"*.{file_format}"):
+                file_found = 1
+                print(f"Tokenizing '{file_path}'...")
+                file_gene_tokens, file_cell_pos_tokens, file_gene_pos_tokens, file_cell_metadata = tokenize_file_fn(
+                    file_path)
+                gene_tokens += file_gene_tokens
+                cell_pos_tokens += file_cell_pos_tokens
+                gene_pos_tokens += file_gene_pos_tokens
+                if self.custom_attr_name_dict is not None:
+                    for k in cell_attr:
+                        cell_metadata[self.custom_attr_name_dict[k]] += file_cell_metadata[k]
+                else:
+                    cell_metadata = None
+        elif self.processing_mode == "parallel":
+            print("Tokenizing files in parallel...")
+            with concurrent.futures.ProcessPoolExecutor(max_workers=self.nproc) as executor:
+                futures = []
+                for file_path in data_directory.glob(f"*.{file_format}"):
+                    file_found = 1
+                    print(f"Tokenizing '{file_path}'...")
+                    future = executor.submit(tokenize_file_fn, file_path)
+                    futures.append(future)
+                for future in concurrent.futures.as_completed(futures):
+                    file_gene_tokens, file_cell_pos_tokens, file_gene_pos_tokens, file_cell_metadata = future.result()
+                    gene_tokens += file_gene_tokens
+                    cell_pos_tokens += file_cell_pos_tokens
+                    gene_pos_tokens += file_gene_pos_tokens
+                    if self.custom_attr_name_dict is not None:
+                        for k in cell_attr:
+                            cell_metadata[self.custom_attr_name_dict[k]] += file_cell_metadata[k]
+                    else:
+                        cell_metadata = None
 
         if file_found == 0:
             logger.error(f"No '.{file_format}' files found in directory"
@@ -341,10 +379,10 @@ class CellGraphRankTokenizer:
             adata.X = normalize_by_mean(adata.X,
                                         gene_means_file=self.gene_means_file,
                                         probed_genes=adata.var["ensembl_id"])
-        elif self.norm_method == "nzmedian":
-            adata.X = normalize_by_nonzero_median(
+        elif self.norm_method == "nzmean":
+            adata.X = normalize_by_nonzero_mean(
                 adata.X,
-                gene_nzmedians_file=self.gene_nzmedians_file,
+                gene_nzmeans_file=self.gene_nzmeans_file,
                 probed_genes=adata.var["ensembl_id"])
         elif self.norm_method == "shifted_logmean":
             adata.X = normalize_by_shifted_log_mean(
@@ -431,7 +469,9 @@ class CellGraphRankTokenizer:
                        cell_metadata: dict,
                        use_generator: bool=False,
                        add_pos_tokens: bool=True,
-                       keep_original_gene_tokens: bool=False
+                       keep_original_gene_tokens: bool=False,
+                       cache_directory_path: Path | str=None,
+                       keep_in_memory: bool=False
                        ) -> Dataset:
         """
         Create a Hugging Face dataset based on tokenized cells.
@@ -454,6 +494,10 @@ class CellGraphRankTokenizer:
         keep_original_gene_tokens:
             If 'True', keep original gene tokens in Hugging Face dataset (before
             padding/truncation and addition of special tokens).
+        cache_directory_path:
+            If specified, cache directory path for dataset creation.
+        keep_in_memory:
+            If 'True', keep dataset in memory when using generator.            
 
         Returns
         ----------
@@ -477,8 +521,11 @@ class CellGraphRankTokenizer:
                 for i in range(len(gene_tokens)):
                     yield {k: dataset_dict[k][i] for k in dataset_dict.keys()}
 
+            print("Using generator for dataset creation.")
             dataset = Dataset.from_generator(dict_generator,
-                                             num_proc=self.nproc)
+                                             num_proc=self.nproc,
+                                             keep_in_memory=keep_in_memory,
+                                             cache_dir=cache_directory_path)            
         else:
             dataset = Dataset.from_dict(dataset_dict)
 
@@ -497,7 +544,13 @@ class CellGraphRankTokenizer:
 
             return example
 
+        # formatted_dataset = dataset.map(
+            # format_gene_tokens, num_proc=self.nproc)
+        print("Formatting gene tokens...")
         formatted_dataset = dataset.map(
-            format_gene_tokens, num_proc=self.nproc)
+            format_gene_tokens, 
+            num_proc=self.nproc,
+            cache_file_name=str(
+                cache_directory_path / "formatted_dataset.cache"))            
 
         return formatted_dataset

@@ -190,7 +190,6 @@ class CellNeighborhoodRankTokenizer:
             Index where special tokens are to be inserted into the neighborhood
             gene token vector.
         """
-
         self.custom_attr_name_dict = custom_attr_name_dict
         self.nproc = nproc
         self.processing_mode = processing_mode
@@ -231,8 +230,10 @@ class CellNeighborhoodRankTokenizer:
                       output_file_prefix: str,
                       file_format: Literal["h5ad"]="h5ad",
                       use_generator: bool=False,
-                      cache_directory_path: Path | str=None
-                      ):
+                      cache_directory_path: Path | str=None,
+                      num_shards: int=None,
+                      keep_in_memory: bool=False
+                      ) -> None:
         """
         Tokenize files in 'input_directory' and save as tokenized '.dataset'
         file in 'output_directory'.
@@ -252,6 +253,10 @@ class CellNeighborhoodRankTokenizer:
             If 'True', use generator for tokenization, else dict.
         cache_directory_path:
             If specified, cache directory path for dataset creation.
+        num_shards:
+            Number of shards to save dataset to.
+        keep_in_memory:
+            If 'True', keep dataset in memory when using generator.
         """
 
         gene_tokens_cell, gene_tokens_neighborhood, cell_metadata = self.tokenize_files(
@@ -263,12 +268,14 @@ class CellNeighborhoodRankTokenizer:
             gene_tokens_neighborhood,
             cell_metadata,
             use_generator=use_generator,
-            cache_directory_path=cache_directory_path)
+            cache_directory_path=cache_directory_path,
+            keep_in_memory=keep_in_memory)
 
         output_path = str(
             (Path(output_directory) / output_file_prefix).with_suffix(
                 ".dataset"))
-        tokenized_dataset.save_to_disk(output_path)
+        tokenized_dataset.save_to_disk(output_path, num_shards=num_shards)
+        print(f"Tokenized dataset saved to '{output_path}'.")
 
     def tokenize_files(self,
                        data_directory: Path | str,
@@ -341,7 +348,7 @@ class CellNeighborhoodRankTokenizer:
                             cell_metadata[
                                 self.custom_attr_name_dict[k]] += file_cell_metadata[k]
                     else:
-                        cell_metadata = None            
+                        cell_metadata = None
 
         if file_found == 0:
             logger.error(f"No '.{file_format}' files found in directory '{data_directory}'.")
@@ -410,9 +417,10 @@ class CellNeighborhoodRankTokenizer:
             adata.layers["X_neighborhood"] = normalize_by_seurat(
                 adata.layers["X_neighborhood"])
         elif self.norm_method == "mean":
-            adata.X = normalize_by_mean(adata.X,
-                                        gene_means_file=self.cell_gene_means_file,
-                                        probed_genes=adata.var["ensembl_id"])
+            adata.X = normalize_by_mean(
+                adata.X,
+                gene_means_file=self.cell_gene_means_file,
+                probed_genes=adata.var["ensembl_id"])
             adata.layers["X_neighborhood"] = normalize_by_mean(
                 adata.layers["X_neighborhood"],
                 gene_means_file=self.neighborhood_gene_means_file,
@@ -441,12 +449,14 @@ class CellNeighborhoodRankTokenizer:
                 adata.layers["X_neighborhood"])
 
         # Initialize cell metadata
+        print("Initializing cell metadata.")
         if self.custom_attr_name_dict is not None:
             cell_metadata = {
                 attr_key: [] for attr_key in self.custom_attr_name_dict.keys()}
 
         # Retrieve gene tokens for genes contained in dataset and vocab, i.e.
         # protein-coding and miRNA genes
+        print("Retrieving gene tokens.")
         coding_miRNA_idx = np.where(
             [self.coding_miRNA_dict.get(
                 gene_id, False) for gene_id in adata.var["ensembl_id"]])[0]
@@ -466,6 +476,7 @@ class CellNeighborhoodRankTokenizer:
         gene_tokens_neighborhood = []
 
         # Divide cells into chunks and loop through chunks
+        print("Ranking gene tokens.")
         for i in range(0, len(adata), self.chunk_size):
             norm_counts_cell = sp.csr_matrix(adata[
                 i : i + self.chunk_size, coding_miRNA_idx].X)
@@ -496,14 +507,14 @@ class CellNeighborhoodRankTokenizer:
 
         return gene_tokens_cell, gene_tokens_neighborhood, cell_metadata
 
-
     def create_dataset(self,
                        gene_tokens_cell: np.ndarray,
                        gene_tokens_neighborhood: np.ndarray,
                        cell_metadata: dict,
                        use_generator: bool=False,
                        keep_original_gene_tokens: bool=False,
-                       cache_directory_path: Path | str=None
+                       cache_directory_path: Path | str=None,
+                       keep_in_memory: bool=False
                        ) -> Dataset:
         """
         Create a Hugging Face dataset based on tokenized cells.
@@ -524,6 +535,8 @@ class CellNeighborhoodRankTokenizer:
             padding/truncation and addition of special tokens).
         cache_directory_path:
             If specified, cache directory path for dataset creation.
+        keep_in_memory:
+            If 'True', keep dataset in memory when using generator.
 
         Returns
         ----------
@@ -545,10 +558,10 @@ class CellNeighborhoodRankTokenizer:
             print("Using generator for dataset creation.")
             dataset = Dataset.from_generator(dict_generator,
                                              num_proc=self.nproc,
-                                             keep_in_memory=True,
+                                             keep_in_memory=keep_in_memory,
                                              cache_dir=cache_directory_path)
         else:
-            print("Using dict for dataset creation.")
+            print("Using dictionary for dataset creation.")
             dataset = Dataset.from_dict(dataset_dict)
 
         def format_gene_tokens(example):
@@ -563,24 +576,26 @@ class CellNeighborhoodRankTokenizer:
                 example["gene_tokens_neighborhood_original_length"] = len(
                     example["gene_tokens_neighborhood"])
 
-            example["gene_tokens_cell"] = process_gene_tokens(
+            example["gene_tokens_cell"], example["n_nonzero_cell_tokens"] = process_gene_tokens(
                 example["gene_tokens_cell"],
                 int(self.model_input_size / 2),
                 self.token_dict,
                 self.cell_special_tokens,
                 self.cell_special_tokens_idx)
 
-            example["gene_tokens_neighborhood"] = process_gene_tokens(
+            example["gene_tokens_neighborhood"], example["n_nonzero_neighborhood_tokens"] = process_gene_tokens(
                 example["gene_tokens_neighborhood"],
                 int(self.model_input_size / 2),
                 self.token_dict,
                 self.neighborhood_special_tokens,
                 self.neighborhood_special_tokens_idx)
 
-            # example["gene_tokens_cell"] = example[
-            #     "gene_tokens_cell"].astype(np.int64)
-            # example["gene_tokens_neighborhood"] = example[
-            #     "gene_tokens_neighborhood"].astype(np.int64)
+            example["n_nonzero_tokens"] = (
+                example["n_nonzero_cell_tokens"] +
+                example["n_nonzero_neighborhood_tokens"])
+            
+            # example["gene_tokens_cell"] = example["gene_tokens_cell"].astype(np.int64)
+            # example["gene_tokens_neighborhood"] = example["gene_tokens_neighborhood"].astype(np.int64)
             # if not isinstance(example["gene_tokens_cell"], np.int64):
             #    print("gene tokens cell after format_gene_tokens",
             #          example["gene_tokens_cell"])
@@ -603,6 +618,7 @@ class CellNeighborhoodRankTokenizer:
             format_gene_tokens, 
             num_proc=self.nproc,
             cache_file_name=str(
-                cache_directory_path / "formatted_dataset.cache"))
+                cache_directory_path / "formatted_dataset.cache"),
+            keep_in_memory=keep_in_memory)
                 
         return formatted_dataset

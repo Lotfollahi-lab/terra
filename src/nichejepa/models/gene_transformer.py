@@ -955,4 +955,3 @@ def gt_predictor(**kwargs):
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
         **kwargs)
     return model
-    

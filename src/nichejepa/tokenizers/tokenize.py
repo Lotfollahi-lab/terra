@@ -55,6 +55,7 @@ def process_gene_tokens(gene_tokens: list,
     if pad_size < 0:
         # Truncate
         processed_gene_tokens = processed_gene_tokens[:length]
+        num_nonzero_tokens = length
     else:
         # Add pad tokens
         processed_gene_tokens = np.pad(
@@ -62,8 +63,9 @@ def process_gene_tokens(gene_tokens: list,
             (0, pad_size),
             'constant',
             constant_values=token_dict.get("<pad>"))
-        
-    return processed_gene_tokens
+        num_nonzero_tokens = len(processed_gene_tokens) - pad_size
+                
+    return processed_gene_tokens, num_nonzero_tokens
     
 
 def rank_gene_tokens(gene_scores: np.ndarray,
@@ -95,3 +97,4 @@ def rank_gene_tokens(gene_scores: np.ndarray,
     ranked_gene_tokens = gene_tokens[sorted_indices][:n_tokens]
     
     return ranked_gene_tokens
+    

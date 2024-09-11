@@ -41,6 +41,7 @@ from .helper import (init_model,
                      init_opt,
                      load_checkpoint)
 from .masks.multigene import MaskCollator
+from .masks.segment_masking  import SegmentMaskCollator
 from .masks.utils import apply_masks
 from .utils.distributed import (AllReduce,
                                 init_distributed)
@@ -111,12 +112,16 @@ def train(args: dict,
     has_cls = args['data']['has_cls']
     data_set_name = args['data']['data_set_name']
     vocab_size = args['data']['vocab_size']
+    incl_cell_seq = args['data']['incl_cell_seq']
+    incl_neighborhood_seq = args['data']['incl_neighborhood_seq']
 
     # Load mask params
     n_targets = args['mask']['n_targets']
     n_contexts = args['mask']['n_contexts']
     target_mask_size = args['mask']['target_mask_size']
     context_mask_size = args['mask']['context_mask_size']
+    segment_masking = args['mask']['segment_masking']
+    per_segment_mask_ratio = args['mask']['per_segment_mask_ratio']
 
     # Load optimization params
     if isinstance(args['optimization']['ema'], list):
@@ -204,14 +209,23 @@ def train(args: dict,
     target_encoder = copy.deepcopy(encoder)
 
     # Initialize mask collator
-    mask_collator = MaskCollator(
-        n_targets=n_targets,
-        n_contexts=n_contexts,
-        target_mask_size=target_mask_size,
-        context_mask_size=context_mask_size,
-        seq_len_cell=seq_len_cell,
-        seq_len_neighborhood=seq_len_neighborhood,
-        has_cls=has_cls)
+    if segment_masking:
+       mask_collator = SegmentMaskCollator(
+            n_targets=n_targets,
+            n_contexts=n_contexts,
+            seq_len_cell=seq_len_cell,
+            seq_len_neighborhood=seq_len_neighborhood,
+            has_cls=has_cls,
+            per_segment_mask_ratio = per_segment_mask_ratio)
+    else:
+        mask_collator = MaskCollator(
+            n_targets=n_targets,
+            n_contexts=n_contexts,
+            target_mask_size=target_mask_size,
+            context_mask_size=context_mask_size,
+            seq_len_cell=seq_len_cell,
+            seq_len_neighborhood=seq_len_neighborhood,
+            has_cls=has_cls)
     
     # Initialize dataloader and -sampler
     _, train_loader, train_sampler = make_cell_neighborhood_dataset(
