@@ -21,8 +21,7 @@ class TestCreateBinarySelectionMask(unittest.TestCase):
             top_k=None,
             gene_id=None)
         print(computed_mask)
-        torch.testing.assert_close(computed_mask,
-                                   expected_mask)
+        self.assertTrue(torch.equal(expected_mask, computed_mask))
 
     def test_basic_neighborhood_case(self):
         tokens = torch.tensor([[1, 3, 2, 0, 0, 5, 4, 3, 1, 8],
@@ -39,26 +38,7 @@ class TestCreateBinarySelectionMask(unittest.TestCase):
             top_k=None,
             gene_id=None)
         print(computed_mask)
-        torch.testing.assert_close(computed_mask,
-                                   expected_mask)
-
-    def test_top_k_cell_case(self):
-        tokens = torch.tensor([[1, 3, 2, 0, 0, 5, 4, 3, 1, 8],
-                               [4, 5, 0, 0, 0, 2, 3, 0, 0, 0]])
-        expected_mask = torch.tensor(
-            [[1, 1, 0, 0, 0, 0, 0, 0, 0, 0],
-             [1, 1, 0, 0, 0, 0, 0, 0, 0, 0]],
-            dtype=torch.bool)
-        computed_mask = create_binary_selection_mask(
-            tokens=tokens,
-            seq_len_cell=5,
-            has_cls=False,
-            selection_type='agg_cell',
-            top_k=2,
-            gene_id=None)
-        print(computed_mask)
-        torch.testing.assert_close(computed_mask,
-                                   expected_mask)
+        self.assertTrue(torch.equal(expected_mask, computed_mask))
 
     def test_cls_case(self):
         tokens = torch.tensor([[99, 1, 3, 2, 0, 0, 5, 4, 3, 1, 8],
@@ -75,8 +55,7 @@ class TestCreateBinarySelectionMask(unittest.TestCase):
             top_k=None,
             gene_id=None)
         print(computed_mask)
-        torch.testing.assert_close(computed_mask,
-                                   expected_mask)
+        self.assertTrue(torch.equal(expected_mask, computed_mask))
         expected_mask = torch.tensor(
             [[0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0],
              [0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0]],
@@ -89,9 +68,8 @@ class TestCreateBinarySelectionMask(unittest.TestCase):
             top_k=None,
             gene_id=None)
         print(computed_mask)
-        torch.testing.assert_close(computed_mask,
-                                   expected_mask)
-
+        self.assertTrue(torch.equal(expected_mask, computed_mask))
+        
     def test_gene_cell_case(self):
         tokens = torch.tensor([[1, 3, 2, 0, 0, 5, 4, 3, 1, 8],
                                [4, 5, 0, 0, 0, 2, 3, 0, 0, 0]])
@@ -107,12 +85,11 @@ class TestCreateBinarySelectionMask(unittest.TestCase):
             top_k=None,
             gene_id=2)
         print(computed_mask)
-        torch.testing.assert_close(computed_mask,
-                                   expected_mask)
+        self.assertTrue(torch.equal(expected_mask, computed_mask))
 
     def test_gene_neighborhood_case(self):
         tokens = torch.tensor([[1, 3, 2, 0, 0, 5, 4, 3, 1, 8],
-                               [4, 5, 0, 0, 0, 2, 3, 0, 0, 0]])
+                               [4, 5, 3, 0, 0, 2, 3, 0, 0, 0]])
         expected_mask = torch.tensor(
             [[0, 0, 0, 0, 0, 0, 0, 1, 0, 0],
              [0, 0, 0, 0, 0, 0, 1, 0, 0, 0]],
@@ -125,8 +102,24 @@ class TestCreateBinarySelectionMask(unittest.TestCase):
             top_k=None,
             gene_id=3)
         print(computed_mask)
-        torch.testing.assert_close(computed_mask,
-                                   expected_mask)
+        self.assertTrue(torch.equal(expected_mask, computed_mask))
+
+    def test_top_k_cell_case(self):
+        tokens = torch.tensor([[1, 3, 2, 0, 0, 5, 4, 3, 1, 8],
+                               [4, 5, 0, 0, 0, 2, 3, 0, 0, 0]])
+        expected_mask = torch.tensor(
+            [[1, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+             [1, 1, 0, 0, 0, 0, 0, 0, 0, 0]],
+            dtype=torch.bool)
+        computed_mask = create_binary_selection_mask(
+            tokens=tokens,
+            seq_len_cell=5,
+            has_cls=False,
+            selection_type='agg_cell',
+            top_k=2,
+            gene_id=None)
+        print(computed_mask)
+        self.assertTrue(torch.equal(expected_mask, computed_mask))
 
 if __name__ == '__main__':
     unittest.main()

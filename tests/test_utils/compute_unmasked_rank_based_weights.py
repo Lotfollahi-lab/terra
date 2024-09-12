@@ -27,7 +27,7 @@ class TestComputeRankBasedWeights(unittest.TestCase):
                              [0, 0, 0]])
         expected_weights = torch.tensor([[0.0, 0.0, 0.0],
                                          [0.0, 0.0, 0.0]])
-        computed_weights = compute_unmasked_rank_based_weights(tokens)
+        computed_weights = compute_unmasked_rank_based_weights(tokens, mask)
         print(computed_weights)
         torch.testing.assert_close(computed_weights,
                                    expected_weights,
@@ -54,7 +54,7 @@ class TestComputeRankBasedWeights(unittest.TestCase):
         mask = torch.tensor([[0, 0, 0, 0],
                              [0, 0, 0, 0],
                              [0, 0, 1, 1],
-                             [0, 0, 1 0]])
+                             [0, 0, 1, 0]])
         expected_weights = torch.tensor([[0.0000, 0.0000, 0.0000, 0.0000],
                                          [0.0000, 0.0000, 0.0000, 0.0000],
                                          [0.0000, 0.0000, 0.6667, 0.3333],

@@ -52,7 +52,7 @@ def compute_unmasked_rank_based_weights(tokens: torch.Tensor,
 
 def compute_mean_unmasked_emb(emb: torch.Tensor,
                               mask: torch.Tensor,
-                              ) -> Tuple[torch.Tensor, torch.Tensor]:
+                              ) -> torch.Tensor:
     """
     Compute the mean of unmasked embedding positions.
     
@@ -68,8 +68,6 @@ def compute_mean_unmasked_emb(emb: torch.Tensor,
     -----------
     mean_emb:
         The mean embedding tensor.
-    n_unmasked_genes:
-        Number of genes that are used to compute the average.
 
     Raises
     -----------
@@ -99,9 +97,7 @@ def compute_mean_unmasked_emb(emb: torch.Tensor,
         raise ValueError('Expected a 3D tensor for emb, but got a tensor with'
                          f'{emb.dim()} dimensions.')
 
-    n_unmasked_genes = mask.sum(dim)
-
-    return mean_emb, n_unmasked_genes
+    return mean_emb
 
 
 def create_binary_selection_mask(tokens: torch.Tensor,
@@ -189,8 +185,8 @@ def retrieve_gene_emb(tokens: torch.Tensor,
                       gene_id: int,
                       ) -> torch.Tensor:
     """
-    Retrieve contextual gene embeddings from contextual cell embeddings based
-    on specified gene IDs and gene types.
+    Retrieve contextual gene embeddings for a given gene based on a specified
+    gene ID and gene type.
 
     Parameters
     -----------
@@ -201,12 +197,12 @@ def retrieve_gene_emb(tokens: torch.Tensor,
     has_cls:
         If 'True', sequence contains a <cls> token at position 0.
     emb:
-        A 3D tensor containg the embeddings.
+        A 3D tensor containg the embeddings of all genes.
     gene_type:
         Defines whether to retrieve the cell or neighborhood gene embedding for
         the given gene ID.
     gene_id:
-        Gene ID for which the embedding will be retrieved.
+        Gene ID of the gene for which the embedding will be retrieved.
 
     Returns
     --------
@@ -220,11 +216,19 @@ def retrieve_gene_emb(tokens: torch.Tensor,
         selection_type=f"gene_{gene_type}",
         gene_id=gene_id)
 
-    _, gene_indices = torch.nonzero(gene_mask, as_tuple=True)
-    gene_emb_selection = emb.gather(
+    gene_indices = torch.argmax(gene_mask.to(torch.int),
+                                dim=1,
+                                keepdim=True) # shape: (3, 1)
+
+    # Use gather to get the correct embeddings for each cell based on the
+    # indices (if gene is not present, the index will be wrong but is
+    # overwritten below)
+    gene_emb = torch.gather(
+        emb,
         1,
-        gene_indices.unsqueeze(-1).unsqueeze(-1).expand(
-            -1, -1, emb.size(2)))
-    gene_emb = gene_emb_selection.squeeze(1)
+        gene_indices.unsqueeze(-1).expand(-1, -1, emb.size(2))).squeeze(1)
+
+    # For rows with no True values, set them to zero embeddings
+    gene_emb[gene_mask.sum(dim=1) == 0] = torch.zeros(emb.size(2))
 
     return gene_emb
