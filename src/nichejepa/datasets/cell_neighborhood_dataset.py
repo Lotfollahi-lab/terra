@@ -224,7 +224,7 @@ class CellNeighborhoodDataset(Dataset):
             List of neighborhood tokens.
         """
         # If neighborhood sequence length is greater than the number of
-        neighborhood tokens in the HF dataset, use all tokens
+        # neighborhood tokens in the HF dataset, use all tokens
         if self.seq_len_neighborhood >= len(self.dataset[item]["gene_tokens_neighborhood"]):
             gene_tokens_neighborhood = self.dataset[item]["gene_tokens_neighborhood"]
             
