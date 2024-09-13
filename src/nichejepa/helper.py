@@ -90,7 +90,7 @@ def load_checkpoint(
         pretrained_dict = checkpoint['predictor']
         msg = predictor.load_state_dict(pretrained_dict)
         logger.info(
-            f'loaded pretrained predictor from epoch {epoch} with msg: {msg}.')
+            f'Loaded pretrained predictor from epoch {epoch} with msg: {msg}.')
 
         # Load state into target encoder
         if target_encoder is not None:

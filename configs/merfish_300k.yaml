@@ -32,6 +32,7 @@ meta:
   read_checkpoint: null
   use_bfloat16: True
   pos_learnable: False
+  seg_learnable: False
 optimization:
   epochs: 40
   warmup: 5
