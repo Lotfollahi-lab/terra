@@ -16,8 +16,8 @@ import pandas as pd
 
 from src.nichejepa.utils.distributed import init_distributed
 from src.nichejepa.train import train
-from src.nichejepa.eval import evaluation
-from src.nichejepa.utils.config_utils import create_params_from_YAML_wandb_config, prepare_dataset
+from src.nichejepa.infer import infer
+from src.nichejepa.utils.config import create_params_from_YAML_wandb_config, prepare_dataset
 
 # Setup argument parsing
 def parse_arguments():

@@ -186,7 +186,7 @@ class SegmentMaskCollator:
         # Collate the batch using default PyTorch collate function
         collated_batch = torch.utils.data.default_collate(batch)
 
-        collated_masks_target, collated_masks_context = [], []
+        collated_masks_target, collated_masks_context, collated_masks_attention = [], [], []
 
         # Variables to track the minimum length of masks across the batch
         keep_tokens_target = self.seq_len
@@ -209,6 +209,7 @@ class SegmentMaskCollator:
             # Append the masks for the current observation to the collated lists
             collated_masks_target.append(masks_target)
             collated_masks_context.append(masks_context)
+            collated_masks_attention.append((batch[i][0]!=0).int())
 
         # Trim masks to the minimum size across the batch and collate them
         collated_masks_target = [[cm[:keep_tokens_target] for cm in cm_list] for cm_list in collated_masks_target]
@@ -218,5 +219,7 @@ class SegmentMaskCollator:
         # Step 2: Use default_collate to create a batch
         collated_masks_context = torch.utils.data.default_collate(collated_masks_context)
 
-        return collated_batch, collated_masks_context, collated_masks_target
+        collated_masks_attention = torch.utils.data.default_collate(collated_masks_attention).unsqueeze(1).unsqueeze(1)
+        
+        return collated_batch, collated_masks_context, collated_masks_target, collated_masks_attention
     

@@ -228,12 +228,14 @@ class MaskCollator:
             Sampled context masks collated by batch.
         collated_masks_target:
             Sampled target masks collated by batch.
+        collated_masks_attention:
+            masks_attention by batch.
         """
         B = len(batch)
 
         collated_batch = torch.utils.data.default_collate(batch)
 
-        collated_masks_target, collated_masks_context = [], []
+        collated_masks_target, collated_masks_context, collated_masks_attention = [], [], []
 
         # Initialize variables to track the minimum length of masks across the
         # batch
@@ -246,6 +248,8 @@ class MaskCollator:
         g.manual_seed(seed)  # Ensure reproducibility by setting the seed
 
         for i in range(B):
+            # Create a collated_masks_attention
+            collated_masks_attention.append((batch[i][0]!=0).int())
             # Initialize lists to store target masks and their complements for
             # the current observation
             masks_target_complement = []
@@ -307,5 +311,7 @@ class MaskCollator:
                                   for cm_list in collated_masks_context]
         collated_masks_context = torch.utils.data.default_collate(
             collated_masks_context)
+        collated_masks_attention = torch.utils.data.default_collate(
+                collated_masks_attention).unsqueeze(1).unsqueeze(1)
 
-        return collated_batch, collated_masks_context, collated_masks_target
+        return collated_batch, collated_masks_context, collated_masks_target, collated_masks_attention

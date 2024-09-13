@@ -538,7 +538,8 @@ class GeneTransformerEncoder(nn.Module):
     def forward(self,
                 x: torch.Tensor,
                 seg_label: torch.Tensor,
-                masks: Optional[Union[list, torch.Tensor]]=None
+                masks: Optional[Union[list, torch.Tensor]]=None,
+                masks_attention: Optional[torch.Tensor]=None 
                 ) -> torch.Tensor:
         """
         Run encoder forward pass on a batch of input token sequences. For each 
@@ -557,7 +558,8 @@ class GeneTransformerEncoder(nn.Module):
         masks:
             List of N_MASKS tensors containing indices (within the sequence) of
             tokens to keep with shape (BATCH_SIZE, MASK_SIZE).
-
+        masks_attention:
+            Tensor containing input for mask attention 
         Returns
         -----------
         x:
@@ -584,7 +586,10 @@ class GeneTransformerEncoder(nn.Module):
         
         # Run forward prop
         for i, blk in enumerate(self.blocks):
-            x = blk(x)
+            if masks_attention is not None:
+               x = blk(x, masks=masks_attention)
+            else:
+               x = blk(x)
         if self.norm is not None:
             x = self.norm(x)
 
@@ -644,7 +649,8 @@ class GeneTransformerEncoder(nn.Module):
     def return_multi_layer_emb(self,
                                x: torch.Tensor,
                                seg_label: torch.Tensor,
-                               masks: Optional[Union[list, torch.Tensor]]=None
+                               masks: Optional[Union[list, torch.Tensor]]=None,
+                               masks_attention: Optional[torch.Tensor]=None 
                                ) -> list:
         """
         Run encoder forward pass on a batch of input token sequences, applying
@@ -663,6 +669,8 @@ class GeneTransformerEncoder(nn.Module):
         masks:
             List of N_MASKS tensors containing indices (within the sequence) of
             tokens to keep with shape (BATCH_SIZE, MASK_SIZE).
+        masks_attention:
+            Tensor containing input for mask attention 
 
         Returns
         -----------
@@ -691,7 +699,10 @@ class GeneTransformerEncoder(nn.Module):
         n_blocks = len(self.blocks)
         emb_list = []
         for i, blk in enumerate(self.blocks):
-            x = blk(x)
+            if masks_attention is not None:
+               x = blk(x, masks=masks_attention)
+            else:
+               x = blk(x) 
             if (i == (n_blocks - 1)) and (self.norm is not None):
                 x = self.norm(x)
             emb_list.append(x)

@@ -617,8 +617,6 @@ class CellNeighborhoodRankTokenizer:
         formatted_dataset = dataset.map(
             format_gene_tokens, 
             num_proc=self.nproc,
-            cache_file_name=str(
-                cache_directory_path / "formatted_dataset.cache"),
             keep_in_memory=keep_in_memory)
                 
         return formatted_dataset

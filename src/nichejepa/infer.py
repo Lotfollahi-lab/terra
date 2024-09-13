@@ -221,11 +221,12 @@ def infer(args: dict,
     all_cell_gene_emb_dict = {}
     all_neighborhood_gene_emb_dict = {}
 
-    for itr, (udata, masks_enc, masks_pred) in tqdm(enumerate(loader)):
+    for itr, (udata, masks_enc, masks_pred, masks_attention) in tqdm(enumerate(loader)):
         # Load cell neighborhood tokens and segmentation label to the specified
         # device
         cell_neighborhood_tokens = udata[0].to(device, non_blocking=True)
         seg_label = udata[1].to(device, non_blocking=True)
+        masks_attention = masks_attention.to(device, non_blocking=True)
 
         # Load niche and cell type labels based on specified sequence lengths
         if (args['data']['seq_len_cell'] > 0) & (
@@ -241,7 +242,7 @@ def infer(args: dict,
         with torch.cuda.amp.autocast(dtype=torch.bfloat16,
                                      enabled=args['meta']['use_bfloat16']):
             emb_list = target_encoder.module.return_multi_layer_emb(
-                cell_neighborhood_tokens, seg_label)
+                cell_neighborhood_tokens, seg_label, masks_attention=masks_attention)
         
             if feature_norm:
                 # Normalize last layer like in training
