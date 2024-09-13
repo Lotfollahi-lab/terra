@@ -55,7 +55,8 @@ optimization:
   ema:
   - 0.9764319982153814
   - 1.0
-  learnable: 1
+  pos_learnable: 0
+  seg_learnable: 0
   epochs: 40
   final_lr: 1.0e-06
   final_weight_decay: 0.4

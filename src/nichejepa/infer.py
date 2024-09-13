@@ -84,6 +84,7 @@ def infer(args: dict,
     enc_depth = args['meta']['enc_depth']
     enc_emb_dim = args['meta']['enc_emb_dim']
     pos_learnable = args['meta']['pos_learnable']
+    seg_learnable = args['meta']['seg_learnable']
 
     # Load data params
     batch_size = args['data']['batch_size']
@@ -126,11 +127,14 @@ def infer(args: dict,
     # Set the folder for saving extracted features
     folder = (f"logs/{data_set_name}_"
               f"pred_depth_{pred_depth}_pred_emb_dim_{pred_emb_dim}_"
-              f"enc_depth_{enc_depth}_n_targets_{n_targets}_"
+              f"enc_depth_{enc_depth}_enc_emb_dim_{enc_emb_dim}_n_targets_{n_targets}_"
               f"n_contexts_{n_contexts}_target_mask_size_{target_mask_size}_"
               f"context_mask_size_{context_mask_size}_num_epochs_{num_epochs}_"
               f"seq_len_cell_{seq_len_cell}_"
-              f"seq_len_neighborhood_{seq_len_neighborhood}")
+              f"seq_len_neighborhood_{seq_len_neighborhood}_"
+              f"pos_learnable_{pos_learnable}_"
+              f"seg_learnable_{seg_learnable}_"
+              f"ratio_{per_segment_mask_ratio}")
     save_folder = f"{folder}/extracted_features"
     feature_path = f"{save_folder}/"
 
@@ -155,6 +159,7 @@ def infer(args: dict,
         pred_emb_dim=pred_emb_dim,
         pred_depth=pred_depth,
         pos_learnable=pos_learnable,
+        seg_learnable=seg_learnable,
         has_cls=has_cls)
     target_encoder = copy.deepcopy(encoder)
 

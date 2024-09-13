@@ -127,6 +127,7 @@ def init_model(device: str,
                pred_emb_dim: int=384,
                pred_depth: int=6,
                pos_learnable: bool=False,
+               seg_learnable: bool=False,
                has_cls: bool=False
                ) -> Tuple[gt.GeneTransformerEncoder,
                           gt.GeneTransformerPredictor]:
@@ -152,6 +153,9 @@ def init_model(device: str,
     pos_learnable:
         If 'True', positional embeddings are learnable, otherwise use sin cos
         positional embeddings.
+    seg_learnable:
+        If 'True', segment embeddings are learnable, otherwise use fixed
+        segment embeddings.
     has_cls:
         If 'True', sequences include a <cls> token at the start.
 
@@ -167,6 +171,7 @@ def init_model(device: str,
         seq_len=seq_len,
         has_cls=has_cls,
         pos_learnable=pos_learnable,
+        seg_learnable=seg_learnable,
         embed_dim=enc_emb_dim,
         depth=enc_depth)
     predictor = gt.__dict__["gt_predictor"](
@@ -174,6 +179,7 @@ def init_model(device: str,
         seq_len=seq_len,
         has_cls=has_cls,
         pos_learnable=pos_learnable,
+        seg_learnable=seg_learnable,
         predictor_embed_dim=pred_emb_dim,
         depth=pred_depth)
 
