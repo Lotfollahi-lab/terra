@@ -8,8 +8,6 @@ data:
   seq_len_cell: 411
   seq_len_neighborhood: 809
   has_cls: True
-  sample_size: 300000
-  sample_subset: False
   random_state: 0
   stratify: False
   split: 0.2
@@ -19,9 +17,6 @@ emb:
   average: True
   cls: False
   select_topk: False
-  retrieve_gene: False
-  retrieve_niche: False
-  retrieve_cell: True
   gene_id: 332
   retrieve_position_emb: False
   retrieve_emb_from_layer: 2 # This indicates that we should retrieve embeddings from the layer specified by #retrieve_emb_from_layer and upwards its value should be between zero and #enc_depth-1
@@ -52,7 +47,7 @@ optimization:
   ema:
   - 0.9764319982153814
   - 1.0
-  learnable: 1
+  learnable: False
   epochs: 40
   final_lr: 1.0e-06
   final_weight_decay: 0.4

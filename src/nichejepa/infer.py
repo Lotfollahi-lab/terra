@@ -123,10 +123,10 @@ def infer(args: dict,
 
     # Set the folder for saving extracted features
     folder = (f"logs/{data_set_name}_"
-               f"pred_depth_{pred_depth}_pred_emb_dim_{pred_emb_dim}_"
-               f"enc_depth_{enc_depth}_n_targets_{n_targets}_"
-               f"n_contexts_{n_contexts}_target_mask_size_{target_mask_size}_"
-               f"context_mask_size_{context_mask_size}_num_epochs_{num_epochs}")
+              f"pred_depth_{pred_depth}_pred_emb_dim_{pred_emb_dim}_"
+              f"enc_depth_{enc_depth}_n_targets_{n_targets}_"
+              f"n_contexts_{n_contexts}_target_mask_size_{target_mask_size}_"
+              f"context_mask_size_{context_mask_size}_num_epochs_{num_epochs}")
     if args['data']['seq_len_cell'] > 0:
        folder += "_incl_cell_seq"
     if args['data']['seq_len_neighborhood'] > 0:
@@ -142,7 +142,7 @@ def infer(args: dict,
 
     os.makedirs(save_folder, exist_ok=True)
     tag = args['logging']['write_tag']
-    dump = os.path.join(folder, f'params-nichejepa.yaml')
+    dump = os.path.join(folder, f'params.yaml')
     with open(dump, 'w') as f:
         yaml.dump(args, f)
 
@@ -169,14 +169,23 @@ def infer(args: dict,
     target_encoder = DistributedDataParallel(target_encoder)
 
     # Initialize mask collator
-    mask_collator = MaskCollator(
-        n_targets=n_targets,
-        n_contexts=n_contexts,
-        target_mask_size=target_mask_size,
-        context_mask_size=context_mask_size,
-        seq_len_cell=seq_len_cell,
-        seq_len_neighborhood=seq_len_neighborhood,
-        has_cls=has_cls)
+    if segment_masking:
+       mask_collator = SegmentMaskCollator(
+            n_targets=n_targets,
+            n_contexts=n_contexts,
+            seq_len_cell=seq_len_cell,
+            seq_len_neighborhood=seq_len_neighborhood,
+            has_cls=has_cls,
+            per_segment_mask_ratio = per_segment_mask_ratio)
+    else:
+        mask_collator = MaskCollator(
+            n_targets=n_targets,
+            n_contexts=n_contexts,
+            target_mask_size=target_mask_size,
+            context_mask_size=context_mask_size,
+            seq_len_cell=seq_len_cell,
+            seq_len_neighborhood=seq_len_neighborhood,
+            has_cls=has_cls)
 
     # Initialize dataloader
     _, loader = make_cell_neighborhood_dataset(

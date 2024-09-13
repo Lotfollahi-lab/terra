@@ -156,11 +156,14 @@ class SegmentMaskCollator:
             The minimum number of tokens kept across target masks.
         """
         # Apply segment masking on the full sequence
-        target_masks, context_mask, keep_tokens_target = self.segment_masking(sequence, self.per_segment_mask_ratio, generator)
+        target_masks, context_mask, keep_tokens_target = self.segment_masking(
+            sequence, self.per_segment_mask_ratio, generator)
 
         return target_masks, context_mask, keep_tokens_target
 
-    def __call__(self, batch: Tuple[torch.Tensor, torch.Tensor, str]) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def __call__(self,
+                 batch: Tuple[torch.Tensor, torch.Tensor, str]
+                 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Create context and target masks when collating cell neighborhoods into a batch.
 
@@ -214,5 +217,6 @@ class SegmentMaskCollator:
         collated_masks_context = [[cm[:keep_tokens_context] for cm in cm_list] for cm_list in collated_masks_context]
         # Step 2: Use default_collate to create a batch
         collated_masks_context = torch.utils.data.default_collate(collated_masks_context)
+
         return collated_batch, collated_masks_context, collated_masks_target
     
