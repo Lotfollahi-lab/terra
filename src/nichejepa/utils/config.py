@@ -2,14 +2,14 @@ import yaml
 import logging
 
 
-def setup_batch_size(enc_pred_depth:int,
-                     is_training:bool
+def setup_batch_size(enc_pred_depth: int,
+                     is_training: bool
                      ):
     """
     Determine and set the appropriate batch size based on the encoder depth and
     whether the model is training.
 
-    Parameters
+    Parameters  
     -----------
     enc_pred_depth:
         The depth of the encoder and prediction. This influences the batch size
@@ -36,13 +36,12 @@ def setup_batch_size(enc_pred_depth:int,
         return 70
 
 
-def create_params_from_YAML_wandb_config(YAML_file:str,
+def create_params_from_YAML_wandb_config(YAML_file: str,
                                          logger: logging.RootLogger,
                                          sweep_config=None,
-                                         is_training: bool=True,
-                                         has_same_dimention: bool=True,
-                                         update_from_sweep: bool=False
-                                         ):
+                                         is_training: bool = True,
+                                         has_same_dimention: bool = True,
+                                         update_from_sweep: bool = False):
     """
     Updates the `params` dictionary with values from the YAML config file and
     optionally from the wandb configuration file. This can be useful when using
@@ -84,26 +83,48 @@ def create_params_from_YAML_wandb_config(YAML_file:str,
         logger.error(f"Error parsing YAML file: {exc}")
         raise
 
-    if update_from_sweep:
-        # Update 'meta' section with values from wandb config
-        params['meta']['enc_pred_depth'] = int(sweep_config.enc_pred_depth)
-        params['meta']['pred_depth'] = int(sweep_config.enc_pred_depth % 10)
-        params['meta']['enc_depth'] = int(sweep_config.enc_pred_depth // 10)
-        params['meta']['enc_emb_dim'] = sweep_config.enc_emb_dim
-        if has_same_dimention:
-            params['meta']['pred_emb_dim'] = sweep_config.enc_emb_dim
-        params['meta']['top_layer'] = sweep_config.top_layer
-        params['meta']['top_k'] = sweep_config.top_k
+    if update_from_sweep and sweep_config:
+        # Update 'meta' section with values from wandb config if they exist
+        if hasattr(sweep_config, 'enc_pred_depth'):
+            params['meta']['enc_pred_depth'] = int(sweep_config.enc_pred_depth)
+            params['meta']['pred_depth'] = int(sweep_config.enc_pred_depth % 10)
+            params['meta']['enc_depth'] = int(sweep_config.enc_pred_depth // 10)
 
-        # Update 'mask' section with values from wandb config
-        params['mask']['n_targets'] = sweep_config.n_targets
-        params['mask']['context_mask_size'] = sweep_config.context_mask_size
-        params['mask']['target_mask_size'] = sweep_config.target_mask_size
+        if hasattr(sweep_config, 'enc_emb_dim'):
+            params['meta']['enc_emb_dim'] = sweep_config.enc_emb_dim
+            if has_same_dimention:
+                params['meta']['pred_emb_dim'] = sweep_config.enc_emb_dim
 
-        # Update 'optimization' section with values from wandb config
-        params['optimization']['ema'] = sweep_config.ema
-        params['optimization']['epochs'] = sweep_config.epochs
-        params['optimization']['learnable'] = sweep_config.learnable
+        if hasattr(sweep_config, 'top_layer'):
+            params['meta']['top_layer'] = sweep_config.top_layer
+
+        if hasattr(sweep_config, 'top_k'):
+            params['meta']['top_k'] = sweep_config.top_k
+
+        # Update 'mask' section with values from wandb config if they exist
+        if hasattr(sweep_config, 'n_targets'):
+            params['mask']['n_targets'] = sweep_config.n_targets
+
+        if hasattr(sweep_config, 'context_mask_size'):
+            params['mask']['context_mask_size'] = sweep_config.context_mask_size
+
+        if hasattr(sweep_config, 'target_mask_size'):
+            params['mask']['target_mask_size'] = sweep_config.target_mask_size
+
+        if hasattr(sweep_config, 'per_segment_mask_ratio'):
+            params['mask']['per_segment_mask_ratio'] = sweep_config.per_segment_mask_ratio
+
+        # Update 'optimization' section with values from wandb config if they exist
+        if hasattr(sweep_config, 'ema'):
+            params['optimization']['ema'] = sweep_config.ema
+
+        if hasattr(sweep_config, 'epochs'):
+            params['optimization']['epochs'] = sweep_config.epochs
+
+        if hasattr(sweep_config, 'pos_learnable'):
+            params['optimization']['pos_learnable'] = sweep_config.pos_learnable
+
+        print(params)
 
     # Set batch size
     # params['data']['batch_size'] = setup_batch_size(
@@ -111,3 +132,4 @@ def create_params_from_YAML_wandb_config(YAML_file:str,
 
     # Return the updated params dictionary
     return params
+

@@ -17,7 +17,11 @@ import pandas as pd
 from src.nichejepa.utils.distributed import init_distributed
 from src.nichejepa.train import train
 from src.nichejepa.infer import infer
-from src.nichejepa.utils.config import create_params_from_YAML_wandb_config, prepare_dataset
+from src.nichejepa.utils.config import create_params_from_YAML_wandb_config
+from src.nichejepa.datasets.prepare_dataset import prepare_dataset
+import anndata as ad
+from src.nichejepa.utils.evaluation import clustering_metrics
+import multiprocessing as mp
 
 # Setup argument parsing
 def parse_arguments():
@@ -42,27 +46,34 @@ def process_main(rank, args, world_size, devices, is_training=True):
 
     world_size, rank = init_distributed(rank_and_world_size=(rank, world_size), port=40000)
     logger.info(f'Running... (rank: {rank}/{world_size})')
+    if len(wandb.config.keys())!=0:
+      update_from_sweep=True
+    else:      
+      update_from_sweep=False
 
     # Execute training or evaluation
     if is_training:
         logger.info(f'Called with params from {args.fname} and wandb')
-        params = create_params_from_YAML_wandb_config(args.fname, logger, sweep_config=wandb.config, is_training=is_training)
+        params = create_params_from_YAML_wandb_config(args.fname, logger, sweep_config=wandb.config, is_training=is_training, update_from_sweep=update_from_sweep)
         train_dataset, test_dataset = prepare_dataset(params)
         train(params, train_dataset, test_dataset)
     else:
         logger.info(f'Called with params from {args.fname} and wandb')
-        params = create_params_from_YAML_wandb_config(args.fname, logger, sweep_config=wandb.config, is_training=is_training)
+        params = create_params_from_YAML_wandb_config(args.fname, logger, sweep_config=wandb.config, is_training=is_training, update_from_sweep=update_from_sweep)
         train_dataset, test_dataset = prepare_dataset(params)
-        evaluation(params, train_dataset, test_dataset)
-
+        train_data = infer(params, train_dataset)
+        test_data = infer(params, test_dataset)
+        adata_combined = ad.concat([train_data, test_data], axis=0)  # Concatenate along the observations (cells)
+        cell_type_nmi_ari = clustering_metrics(adata_combined, emb_key='cell_emb_layer_0',label_col='cell_type')
+        niche_nmi_ari = clustering_metrics(adata_combined, emb_key='neighborhood_emb_layer_0',label_col='niche')
+        wandb.log({"niche_nmi":niche_nmi_ari['nmi'], "niche_ari":niche_nmi_ari['ari'], 'cell_type_ari':cell_type_nmi_ari['ari'], 'cell_type_nmi':cell_type_nmi_ari['nmi']})
 # Function to manage sweeping process
 def sweep_func(args):
     num_gpus = len(args.devices)
     processes = []
-
+    
     # Initialize W&B for sweeping
-    if args.do_sweep:
-        wandb.init(project="nichejepa-sweep")
+    wandb.init(project="nichejepa-sweep")
     # Run the process_main function in a single or multi-GPU setting
     if args.test:
         process_main(0, args, num_gpus, args.devices)
@@ -73,29 +84,33 @@ def sweep_func(args):
             processes.append(p)
 
         for p in processes:
-            p.join()
+            p.join()  
+    processes = []
+    if args.test:
+       process_main(0, args, 1, [args.devices[0]], is_training=False)
+    else :
+       for rank in range(1):
+            p = mp.Process(target=process_main, args=(rank, args, 1, [args.devices[0]],False))
+            p.start()
+            processes.append(p)
 
-    # Final evaluation after sweeping
-    process_main(0, args, 1, [args.devices[0]], is_training=False)
+       for p in processes:
+            p.join()
 
 # Entry point of the script
 if __name__ == '__main__':
     args = parse_arguments()
-
+    
     # Configuration for W&B sweep
     sweep_config = {
         'method': 'random',
-        'metric': {'name': 'nmi_score', 'goal': 'maximize'},
+        'metric': {'name': 'niche_nmi', 'goal': 'maximize'},
         'parameters': {
-            'enc_pred_depth': {'values': [31]},
-            'learnable': {'values': [1]},
+            'enc_pred_depth': {'values': [31,32,41]},
+            'pos_learnable': {'values': [1,0]},
             'ema': {'distribution': 'uniform', "max": 1, "min": 0},
-            'enc_emb_dim': {'values': [768]},
-            'context_mask_size': {'distribution': 'int_uniform', 'min': 300, 'max': 786},
+            'per_segment_mask_ratio': {'distribution': 'uniform', "max": 0.6, "min": 0.1},
             'n_targets': {'distribution': 'int_uniform', 'min': 1, 'max': 9},
-            'target_mask_size': {'distribution': 'int_uniform', 'min': 10, 'max': 30},
-            'epochs': {'distribution': 'int_uniform', 'min': 20, 'max': 40},
-            'top_layer': {'distribution': 'int_uniform', 'min': 1, 'max': 3}
         }
     }
 
