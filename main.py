@@ -61,11 +61,12 @@ def process_main(rank, args, world_size, devices, is_training=True):
         logger.info(f'Called with params from {args.fname} and wandb')
         params = create_params_from_YAML_wandb_config(args.fname, logger, sweep_config=wandb.config, is_training=is_training, update_from_sweep=update_from_sweep)
         train_dataset, test_dataset = prepare_dataset(params)
-        train_data = infer(params, train_dataset)
+        #train_data = infer(params, train_dataset)
         test_data = infer(params, test_dataset)
-        adata_combined = ad.concat([train_data, test_data], axis=0)  # Concatenate along the observations (cells)
-        cell_type_nmi_ari = clustering_metrics(adata_combined, emb_key='cell_emb_layer_0',label_col='cell_type')
-        niche_nmi_ari = clustering_metrics(adata_combined, emb_key='neighborhood_emb_layer_0',label_col='niche')
+        print(test_data)
+        #adata_combined = ad.concat([train_data, test_data], axis=0)  # Concatenate along the observations (cells)
+        cell_type_nmi_ari = clustering_metrics(test_data, emb_key='cell_emb_layer_'+str(int(wandb.config.enc_pred_depth // 10)-1),label_col='cell_type')
+        niche_nmi_ari = clustering_metrics(test_data, emb_key='neighborhood_emb_layer_'+str(int(wandb.config.enc_pred_depth // 10)-1),label_col='niche')
         wandb.log({"niche_nmi":niche_nmi_ari['nmi'], "niche_ari":niche_nmi_ari['ari'], 'cell_type_ari':cell_type_nmi_ari['ari'], 'cell_type_nmi':cell_type_nmi_ari['nmi']})
 # Function to manage sweeping process
 def sweep_func(args):
@@ -106,7 +107,7 @@ if __name__ == '__main__':
         'method': 'random',
         'metric': {'name': 'niche_nmi', 'goal': 'maximize'},
         'parameters': {
-            'enc_pred_depth': {'values': [31,32,41]},
+            'enc_pred_depth': {'values': [31]},
             'pos_learnable': {'values': [1,0]},
             'ema': {'distribution': 'uniform', "max": 1, "min": 0},
             'per_segment_mask_ratio': {'distribution': 'uniform', "max": 0.6, "min": 0.1},

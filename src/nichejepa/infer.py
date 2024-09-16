@@ -44,7 +44,8 @@ def infer(args: dict,
           cell_gene_ids: list=[],
           neighborhood_gene_ids: list=[],
           agg_type: Literal['cls', 'avg', 'weighted_avg']='avg',
-          feature_norm: bool=False
+          feature_norm: bool=False,
+          check_point: int=None
           ) -> anndata.AnnData:
     """
     Use a trained model for inference. Run forward pass on a given dataset and
@@ -67,7 +68,9 @@ def infer(args: dict,
         from individual gene embeddings.
     feature_norm:
         If 'True', apply feature norm in the last embedding layer.
-
+    check_point:
+        If a checkpoint is provided, the model will load from it; 
+        otherwise, it will load the latest saved model.
     Returns
     -----------
     adata:
@@ -148,7 +151,10 @@ def infer(args: dict,
         yaml.dump(args, f)
 
     # Define checkpointing path
-    latest_path = os.path.join(folder, f'{tag}-latest.pth.tar')
+    if check_point is None:
+       latest_path = os.path.join(folder, f'{tag}-latest.pth.tar')
+    else:
+       latest_path = os.path.join(folder, f'{tag}-ep{check_point}.pth.tar')
     load_path = (os.path.join(folder, r_file) if r_file is not None else
         latest_path)
 
@@ -218,6 +224,7 @@ def infer(args: dict,
     # ----------------------------- #
     #  Retrieve embeddings
     # ----------------------------- #
+    target_encoder.eval()
     niche_label = []
     cell_type_label = []
     all_cell_emb_list = []
