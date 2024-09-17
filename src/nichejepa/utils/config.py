@@ -124,6 +124,11 @@ def create_params_from_YAML_wandb_config(YAML_file: str,
         if hasattr(sweep_config, 'pos_learnable'):
             params['optimization']['pos_learnable'] = sweep_config.pos_learnable
 
+        if hasattr(sweep_config,'lr'):
+            params['optimization']['start_lr'] = sweep_config.lr/2
+            params['optimization']['lr'] = sweep_config.lr
+            params['optimization']['final_lr'] = sweep_config.lr
+
         print(params)
 
     # Set batch size

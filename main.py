@@ -65,9 +65,15 @@ def process_main(rank, args, world_size, devices, is_training=True):
         test_data = infer(params, test_dataset)
         print(test_data)
         #adata_combined = ad.concat([train_data, test_data], axis=0)  # Concatenate along the observations (cells)
-        cell_type_nmi_ari = clustering_metrics(test_data, emb_key='cell_emb_layer_'+str(int(wandb.config.enc_pred_depth // 10)-1),label_col='cell_type')
-        niche_nmi_ari = clustering_metrics(test_data, emb_key='neighborhood_emb_layer_'+str(int(wandb.config.enc_pred_depth // 10)-1),label_col='niche')
-        wandb.log({"niche_nmi":niche_nmi_ari['nmi'], "niche_ari":niche_nmi_ari['ari'], 'cell_type_ari':cell_type_nmi_ari['ari'], 'cell_type_nmi':cell_type_nmi_ari['nmi']})
+        if update_from_sweep:
+           cell_type_nmi_ari = clustering_metrics(test_data, emb_key='cell_emb_layer_'+str(int(wandb.config.enc_pred_depth // 10)-1),label_col='cell_type')
+           niche_nmi_ari = clustering_metrics(test_data, emb_key='neighborhood_emb_layer_'+str(int(wandb.config.enc_pred_depth // 10)-1),label_col='niche')
+           wandb.log({"niche_nmi":niche_nmi_ari['nmi'], "niche_ari":niche_nmi_ari['ari'], 'cell_type_ari':cell_type_nmi_ari['ari'], 'cell_type_nmi':cell_type_nmi_ari['nmi']})
+        else:
+           cell_type_nmi_ari = clustering_metrics(test_data, emb_key='cell_emb_layer_2',label_col='cell_type')
+           niche_nmi_ari = clustering_metrics(test_data, emb_key='neighborhood_emb_layer_2',label_col='niche')
+           wandb.log({"niche_nmi":niche_nmi_ari['nmi'], "niche_ari":niche_nmi_ari['ari'], 'cell_type_ari':cell_type_nmi_ari['ari'], 'cell_type_nmi':cell_type_nmi_ari['nmi']})
+        
 # Function to manage sweeping process
 def sweep_func(args):
     num_gpus = len(args.devices)
@@ -108,11 +114,13 @@ if __name__ == '__main__':
         'metric': {'name': 'niche_nmi', 'goal': 'maximize'},
         'parameters': {
             'enc_pred_depth': {'values': [31]},
-            'pos_learnable': {'values': [1,0]},
+            #'pos_learnable': {'values': [1,0]},
             'ema': {'distribution': 'uniform', "max": 1, "min": 0},
-            'per_segment_mask_ratio': {'distribution': 'uniform', "max": 0.6, "min": 0.1},
+            'per_segment_mask_ratio': {'distribution': 'uniform', "max": 0.6, "min": 0.2},
             'n_targets': {'distribution': 'int_uniform', 'min': 1, 'max': 9},
-        }
+            'lr': {'distribution': 'uniform', "max": 0.001, "min": 0.0001}
+            
+            }
     }
 
     # Start W&B sweep or single run

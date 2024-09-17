@@ -1,10 +1,10 @@
 data:
-  batch_size: 32
+  batch_size: 40
   data_path: /lustre/scratch126/cellgen/team361/am84/NicheJEPA/datasets/am84/st_data/gold/cell-neighborhood-tokenizer/merfish_mouse_brain_300k/16-shards/merfish_mouse_brain_300k_4_False_read_depth_shifted_log_2170.dataset
   split: 0.2
   stratify: False
-  data_set_name: 'merfish_300k'
-  num_workers: 0
+  data_set_name: 'Merfish_300k'
+  num_workers: 12
   pin_mem: true
   vocab_size: 1087
   seq_len_cell: 411
@@ -19,7 +19,7 @@ mask:
   target_mask_size: 10 # This doesn't have meaning in segment_masking.
   n_contexts: 1
   n_targets: 9 # This is equivalent to n_segment in segment_masking.
-  per_segment_mask_ratio: 0.2
+  per_segment_mask_ratio: 0.5561937958156751 
   segment_masking: True
 meta:
   enc_depth: 3
@@ -28,19 +28,20 @@ meta:
   pred_emb_dim: 768
   enc_emb_dim: 768
   enc_pred_depth: 31
-  top_k: 127
   read_checkpoint: null
   use_bfloat16: True
   pos_learnable: False
+  seg_learnable: False
 optimization:
-  epochs: 40
-  warmup: 5
-  ema:
-  - 0.9764319982153814
+  epochs: 5
+  warmup: 1
+  clip_grad: 0 
+  ema: 
+  - 0.667312858602702 
   - 1.0
-  start_lr: 5.0e-05
-  lr: 0.000001
-  final_lr: 1.0e-06
+  start_lr: 0.000001
+  lr: 0.000005
+  final_lr: 0.000005
   weight_decay: 0.04
   final_weight_decay: 0.4
   ipe_scale: 1.0

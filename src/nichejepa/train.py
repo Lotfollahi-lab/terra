@@ -49,7 +49,7 @@ from .utils.logging import (AverageMeter,
                             CSVLogger,
                             gpu_timer,
                             grad_logger)
-from .utils.tensors import repeat_interleave_batch
+from .utils.tensors import repeat_interleave_batch, clip_gradients
 
 
 log_timings = True
@@ -136,6 +136,7 @@ def train(args: dict,
     start_lr = args['optimization']['start_lr']
     lr = args['optimization']['lr']
     final_lr = args['optimization']['final_lr']
+    clip_grad = args['optimization']['clip_grad']
 
     seq_len = seq_len_cell + seq_len_neighborhood
 
@@ -144,7 +145,7 @@ def train(args: dict,
     folder = (f"logs/{data_set_name}_"
               f"pred_depth_{pred_depth}_pred_emb_dim_{pred_emb_dim}_"
               f"enc_depth_{enc_depth}_enc_emb_dim_{enc_emb_dim}_n_targets_{n_targets}_"
-              f"n_contexts_{n_contexts}_target_mask_size_{target_mask_size}_"
+              f"n_contexts_{n_contexts}_lr_{lr*1000:.4f}_"
               f"ema_{ema[0]:.4f}_num_epochs_{num_epochs}_"
               f"seq_len_cell_{seq_len_cell}_"
               f"seq_len_neighborhood_{seq_len_neighborhood}_"
@@ -388,6 +389,7 @@ def train(args: dict,
                     return z
 
                 def loss_fn(z, h):
+                    #loss = F.l1_loss(z, h)
                     loss = F.smooth_l1_loss(z, h)
                     loss = AllReduce.apply(loss)
                     return loss
@@ -402,10 +404,17 @@ def train(args: dict,
                 # Step 2: backward pass and step
                 if use_bfloat16:
                     scaler.scale(loss).backward()
+                    if clip_grad:
+                       scaler.unscale_(optimizer)
+                       clip_gradients(encoder, clip_grad)
+                       clip_gradients(predictor, clip_grad)
                     scaler.step(optimizer)
                     scaler.update()
                 else:
                     loss.backward()
+                    if clip_grad:
+                      clip_gradients(encoder, clip_grad)
+                      clip_gradients(predictor, clip_grad)
                     optimizer.step()
                 grad_stats = grad_logger(encoder.named_parameters())
                 optimizer.zero_grad()
@@ -454,7 +463,7 @@ def train(args: dict,
                             grad_stats.min,
                             grad_stats.max))
             log_stats()
-            wandb.log({"loss": loss})
+            wandb.log({"loss": loss, 'lr':_new_lr})
             assert not np.isnan(loss), 'loss is nan'
 
         # -- Save Checkpoint after every epoch
