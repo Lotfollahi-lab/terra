@@ -117,8 +117,8 @@ if __name__ == '__main__':
             #'pos_learnable': {'values': [1,0]},
             'ema': {'distribution': 'uniform', "max": 1, "min": 0},
             'per_segment_mask_ratio': {'distribution': 'uniform', "max": 0.6, "min": 0.2},
-            'n_targets': {'distribution': 'int_uniform', 'min': 1, 'max': 9},
-            'lr': {'distribution': 'uniform', "max": 0.001, "min": 0.0001}
+            'n_targets': {'distribution': 'int_uniform', 'min': 1, 'max': 9}
+            #'lr': {'distribution': 'uniform', "max": 0.001, "min": 0.0001}
             
             }
     }

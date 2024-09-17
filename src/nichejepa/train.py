@@ -137,6 +137,7 @@ def train(args: dict,
     lr = args['optimization']['lr']
     final_lr = args['optimization']['final_lr']
     clip_grad = args['optimization']['clip_grad']
+    grad_accum_steps = args['optimization']['grad_accum_steps']
 
     seq_len = seq_len_cell + seq_len_neighborhood
 
@@ -400,6 +401,8 @@ def train(args: dict,
                     h = forward_target()
                     z = forward_context()
                     loss = loss_fn(z, h)
+                    if grad_accum_steps:
+                        loss=loss/grad_accum_steps
 
                 # Step 2: backward pass and step
                 if use_bfloat16:
@@ -408,25 +411,29 @@ def train(args: dict,
                        scaler.unscale_(optimizer)
                        clip_gradients(encoder, clip_grad)
                        clip_gradients(predictor, clip_grad)
-                    scaler.step(optimizer)
-                    scaler.update()
+                    if itr % grad_accum_steps == 0:
+                       scaler.step(optimizer)
+                       scaler.update()
                 else:
                     loss.backward()
                     if clip_grad:
                       clip_gradients(encoder, clip_grad)
                       clip_gradients(predictor, clip_grad)
-                    optimizer.step()
+                    if itr % grad_accum_steps == 0:
+                       optimizer.step()
                 grad_stats = grad_logger(encoder.named_parameters())
-                optimizer.zero_grad()
+                if itr % grad_accum_steps == 0:
+                   optimizer.zero_grad()
 
                 # Step 3: momentum update of target encoder
-                with torch.no_grad():
-                    m = next(momentum_scheduler)
-                    for param_q, param_k in zip(encoder.parameters(),
+                if itr % grad_accum_steps == 0:
+                    with torch.no_grad():
+                      m = next(momentum_scheduler)
+                      for param_q, param_k in zip(encoder.parameters(),
                                                 target_encoder.parameters()):
                         param_k.data.mul_(m).add_((1.-m) * param_q.detach().data)
-
-                return (float(loss), _new_lr, _new_wd, grad_stats)
+                
+                return (float(loss*10), _new_lr, _new_wd, grad_stats)
             (loss, _new_lr, _new_wd, grad_stats), etime = gpu_timer(train_step)
             loss_meter.update(loss)
             time_meter.update(etime)
