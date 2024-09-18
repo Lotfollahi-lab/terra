@@ -1,14 +1,14 @@
 data:
-  batch_size: 16
-  data_path: /lustre/scratch126/cellgen/team361/am84/NicheJEPA/datasets/am84/st_data/gold/cell-neighborhood-tokenizer/merfish_mouse_brain_300k/16-shards/merfish_mouse_brain_300k_4_False_read_depth_shifted_log_2170.dataset
-  split: 0.2
+  batch_size: 50
+  data_path: /lustre/scratch126/cellgen/team361/am84/NicheJEPA/datasets/am84/st_data/gold/cell-neighborhood-tokenizer/merfish_mouse_brain_64-batch/64-shards/merfish_mouse_brain_64-batch_8_False_read_depth_shifted_log_2170.dataset
+  split: 0.15
   stratify: False
-  data_set_name: 'Merfish_300k'
+  data_set_name: 'Merfish_1.4m'
   num_workers: 12
   pin_mem: true
   vocab_size: 1087
-  seq_len_cell: 411
-  seq_len_neighborhood: 809
+  seq_len_cell: 489
+  seq_len_neighborhood: 837
   has_cls: True
   random_state: 0
   sample_subset: False
@@ -19,7 +19,7 @@ mask:
   target_mask_size: 10 # This doesn't have meaning in segment_masking.
   n_contexts: 1
   n_targets: 9 # This is equivalent to n_segment in segment_masking.
-  per_segment_mask_ratio: 0.2 
+  per_segment_mask_ratio: 0.3
   segment_masking: True
 meta:
   enc_depth: 3
@@ -38,7 +38,7 @@ optimization:
   clip_grad: 0
   grad_accum_steps: 1 
   ema: 
-  - 0.99
+  - 0.97
   - 1.0
   start_lr: 2.0e-05
   lr: 2.0e-05
