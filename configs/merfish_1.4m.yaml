@@ -35,8 +35,8 @@ meta:
 optimization:
   epochs: 6
   warmup: 2
-  clip_grad: 0
-  grad_accum_steps: 1 
+  clip_grad: 0 # You should set this to zero to disable it.
+  grad_accum_steps: 1 # You should set this to one to disable it.
   ema: 
   - 0.97
   - 1.0
