@@ -214,6 +214,7 @@ class SegmentMaskCollator:
         # Trim masks to the minimum size across the batch and collate them
         collated_masks_target = [[cm[:keep_tokens_target] for cm in cm_list] for cm_list in collated_masks_target]
         collated_masks_target = torch.utils.data.default_collate(collated_masks_target)
+        
         # Trim masks to the minimum size across the batch and collate them
         collated_masks_context = [[cm[:keep_tokens_context] for cm in cm_list] for cm_list in collated_masks_context]
         # Step 2: Use default_collate to create a batch

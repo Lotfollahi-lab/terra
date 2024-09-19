@@ -106,7 +106,8 @@ def infer(args: dict,
        ema = args['optimization']['ema']
     else:
        ema = [args['optimization']['ema'], 1]
-
+    use_flash_attention = args['optimization']['use_flash_attention']
+    
     # Load mask params
     n_targets = args['mask']['n_targets']
     n_contexts = args['mask']['n_contexts']
@@ -170,7 +171,8 @@ def infer(args: dict,
         pred_depth=pred_depth,
         pos_learnable=pos_learnable,
         seg_learnable=seg_learnable,
-        has_cls=has_cls)
+        has_cls=has_cls,
+        use_flash_attention=use_flash_attention)
     target_encoder = copy.deepcopy(encoder)
 
     encoder = DistributedDataParallel(encoder, static_graph=True)

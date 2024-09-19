@@ -138,7 +138,8 @@ def train(args: dict,
     final_lr = args['optimization']['final_lr']
     clip_grad = args['optimization']['clip_grad']
     grad_accum_steps = args['optimization']['grad_accum_steps']
-
+    use_flash_attention = args['optimization']['use_flash_attention']
+    
     seq_len = seq_len_cell + seq_len_neighborhood
 
     # Create folder to store artifacts
@@ -203,7 +204,8 @@ def train(args: dict,
         pred_depth=pred_depth,
         pos_learnable=pos_learnable,
         seg_learnable=seg_learnable,
-        has_cls=has_cls)
+        has_cls=has_cls,
+        use_flash_attention=use_flash_attention)
     target_encoder = copy.deepcopy(encoder)
 
     # Initialize mask collator
@@ -433,7 +435,7 @@ def train(args: dict,
                                                 target_encoder.parameters()):
                         param_k.data.mul_(m).add_((1.-m) * param_q.detach().data)
                 
-                return (float(loss*10), _new_lr, _new_wd, grad_stats)
+                return (float(loss*grad_accum_steps), _new_lr, _new_wd, grad_stats)
             (loss, _new_lr, _new_wd, grad_stats), etime = gpu_timer(train_step)
             loss_meter.update(loss)
             time_meter.update(etime)
