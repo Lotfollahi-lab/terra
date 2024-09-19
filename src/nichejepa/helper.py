@@ -90,7 +90,7 @@ def load_checkpoint(
         pretrained_dict = checkpoint['predictor']
         msg = predictor.load_state_dict(pretrained_dict)
         logger.info(
-            f'Loaded pretrained predictor from epoch {epoch} with msg: {msg}.')
+            f'loaded pretrained predictor from epoch {epoch} with msg: {msg}.')
 
         # Load state into target encoder
         if target_encoder is not None:
@@ -128,7 +128,8 @@ def init_model(device: str,
                pred_depth: int=6,
                pos_learnable: bool=False,
                seg_learnable: bool=False,
-               has_cls: bool=False
+               has_cls: bool=False,
+               use_flash_attention: bool=False
                ) -> Tuple[gt.GeneTransformerEncoder,
                           gt.GeneTransformerPredictor]:
     """
@@ -158,6 +159,8 @@ def init_model(device: str,
         segment embeddings.
     has_cls:
         If 'True', sequences include a <cls> token at the start.
+    use_flash_attention:
+       if use flash_attention or not.
 
     Returns
     -----------
@@ -173,7 +176,8 @@ def init_model(device: str,
         pos_learnable=pos_learnable,
         seg_learnable=seg_learnable,
         embed_dim=enc_emb_dim,
-        depth=enc_depth)
+        depth=enc_depth,
+        use_flash_attention=use_flash_attention)
     predictor = gt.__dict__["gt_predictor"](
         embed_dim=enc_emb_dim,
         seq_len=seq_len,
@@ -181,7 +185,8 @@ def init_model(device: str,
         pos_learnable=pos_learnable,
         seg_learnable=seg_learnable,
         predictor_embed_dim=pred_emb_dim,
-        depth=pred_depth)
+        depth=pred_depth,
+        use_flash_attention=use_flash_attention)
 
     def init_weights(m):
         if isinstance(m, torch.nn.Linear):

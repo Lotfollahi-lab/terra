@@ -13,6 +13,8 @@ from typing import Optional, Tuple, Union
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.nn.attention import SDPBackend, sdpa_kernel
+
 
 from ..masks.utils import apply_masks
 from ..utils.tensors import (repeat_interleave_batch,
@@ -229,6 +231,8 @@ class Attention(nn.Module):
         Dropout ratio in attention layer.
     proj_drop:
         Dropout ratio in projection layer.
+    use_flash_attention:
+       if use flash_attention or not.
     """
     def __init__(self,
                  dim: int,
@@ -236,7 +240,8 @@ class Attention(nn.Module):
                  qkv_bias: bool=False,
                  qk_scale: Optional[float]=None,
                  attn_drop: float=0.,
-                 proj_drop: float=0.
+                 proj_drop: float=0.,
+                 use_flash_attention: bool=False
                  ):
         super().__init__()
         self.num_heads = num_heads
@@ -248,7 +253,7 @@ class Attention(nn.Module):
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
-
+        self.use_flash_attention = use_flash_attention
     def forward(self,
                 x: torch.Tensor,
                 masks: Optional[torch.Tensor]=None
@@ -278,15 +283,26 @@ class Attention(nn.Module):
         q, k, v = qkv[0], qkv[1], qkv[2]
 
         # Compute and mask attention
-        attn = (q @ k.transpose(-2, -1)) * self.scale
-        if masks is not None:
+        if self.use_flash_attention:
+           with torch.backends.cuda.sdp_kernel(enable_flash=True):
+               if masks is not None:
+                 attn = nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=masks!= 0, scale=self.scale)
+               else:
+                 attn = nn.functional.scaled_dot_product_attention(q, k, v, scale=self.scale)
+        else:
+           attn = (q @ k.transpose(-2, -1)) * self.scale
+        
+        if (masks is not None) and (self.use_flash_attention is False):
             attn = attn.masked_fill(masks == 0, float('-inf'))
-        attn = attn.softmax(dim=-1)
-        attn = self.attn_drop(attn)
+        if self.use_flash_attention is False:
+           attn = attn.softmax(dim=-1)
+           attn = self.attn_drop(attn)
 
-        # Compute dot product of attention and value vectors and apply
-        # projection
-        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+           # Compute dot product of attention and value vectors and apply
+           # projection
+           x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        else:
+           x = attn.transpose(1, 2).reshape(B, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
 
@@ -321,6 +337,8 @@ class Block(nn.Module):
         Activation layer used in MLP module.
     norm_layer:
         Normalization layer.
+    use_flash_attention:
+       if use flash_attention or not.
     """
     def __init__(self,
                  dim: int,
@@ -332,7 +350,8 @@ class Block(nn.Module):
                  attn_drop: float=0.,
                  drop_path: float=0.,
                  act_layer: nn.modules.activation=nn.GELU,
-                 norm_layer: nn.modules.normalization=nn.LayerNorm
+                 norm_layer: nn.modules.normalization=nn.LayerNorm,
+                 use_flash_attention: bool=False
                  ):
         super().__init__()
         self.norm1 = norm_layer(dim)
@@ -341,7 +360,8 @@ class Block(nn.Module):
                               qkv_bias=qkv_bias,
                               qk_scale=qk_scale,
                               attn_drop=attn_drop,
-                              proj_drop=drop)
+                              proj_drop=drop,
+                              use_flash_attention=use_flash_attention)
         self.drop_path = DropPath(
             drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
@@ -430,6 +450,8 @@ class GeneTransformerEncoder(nn.Module):
         Normalization layer.
     init_std:
         Standard deviation for weight initialization.
+    use_flash_attention:
+       if use flash_attention or not.
     """
     def __init__(self,
                  vocab_size: int,
@@ -450,6 +472,7 @@ class GeneTransformerEncoder(nn.Module):
                  drop_path_rate: float=0.0,
                  norm_layer: nn.modules.normalization=nn.LayerNorm,
                  init_std: float=0.02,
+                 use_flash_attention: bool=False,
                  **kwargs
                  ):
         super().__init__()
@@ -517,7 +540,8 @@ class GeneTransformerEncoder(nn.Module):
                 drop=drop_rate,
                 attn_drop=attn_drop_rate,
                 drop_path=dpr[i],
-                norm_layer=norm_layer)
+                norm_layer=norm_layer,
+                use_flash_attention=use_flash_attention)
             for i in range(depth)])
         self.norm = norm_layer(embed_dim)
 
@@ -770,6 +794,8 @@ class GeneTransformerPredictor(nn.Module):
         Normalization layer.
     init_std:
         Standard deviation for weight initialization.
+    use_flash_attention:
+       if use flash_attention or not.
     """
     def __init__(self,
                  embed_dim: int,
@@ -788,6 +814,7 @@ class GeneTransformerPredictor(nn.Module):
                  drop_path_rate: float=0.0,
                  norm_layer: torch.nn.modules.normalization=nn.LayerNorm,
                  init_std: float=0.02,
+                 use_flash_attention: bool=False,
                  **kwargs
                  ):
         super().__init__()
@@ -856,7 +883,8 @@ class GeneTransformerPredictor(nn.Module):
                   drop=drop_rate,
                   attn_drop=attn_drop_rate,
                   drop_path=dpr[i],
-                  norm_layer=norm_layer)
+                  norm_layer=norm_layer,
+                  use_flash_attention=use_flash_attention)
             for i in range(depth)])
         self.predictor_norm = norm_layer(predictor_embed_dim)
         self.predictor_proj = nn.Linear(predictor_embed_dim,

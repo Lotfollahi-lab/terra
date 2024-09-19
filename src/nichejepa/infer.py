@@ -44,7 +44,8 @@ def infer(args: dict,
           cell_gene_ids: list=[],
           neighborhood_gene_ids: list=[],
           agg_type: Literal['cls', 'avg', 'weighted_avg']='avg',
-          feature_norm: bool=False
+          feature_norm: bool=False,
+          check_point: int=None
           ) -> anndata.AnnData:
     """
     Use a trained model for inference. Run forward pass on a given dataset and
@@ -67,7 +68,9 @@ def infer(args: dict,
         from individual gene embeddings.
     feature_norm:
         If 'True', apply feature norm in the last embedding layer.
-
+    check_point:
+        If a checkpoint is provided, the model will load from it; 
+        otherwise, it will load the latest saved model.
     Returns
     -----------
     adata:
@@ -98,7 +101,13 @@ def infer(args: dict,
 
     # Load optimization params
     num_epochs = args['optimization']['epochs']
-
+    lr = args['optimization']['lr']
+    if isinstance(args['optimization']['ema'], list):
+       ema = args['optimization']['ema']
+    else:
+       ema = [args['optimization']['ema'], 1]
+    use_flash_attention = args['optimization']['use_flash_attention']
+    
     # Load mask params
     n_targets = args['mask']['n_targets']
     n_contexts = args['mask']['n_contexts']
@@ -117,7 +126,6 @@ def infer(args: dict,
     else:
         device = torch.device('cuda:0')
         torch.cuda.set_device(device)
-
     # Initialize torch distributed backend
     world_size, rank = init_distributed()
     
@@ -128,13 +136,13 @@ def infer(args: dict,
     folder = (f"logs/{data_set_name}_"
               f"pred_depth_{pred_depth}_pred_emb_dim_{pred_emb_dim}_"
               f"enc_depth_{enc_depth}_enc_emb_dim_{enc_emb_dim}_n_targets_{n_targets}_"
-              f"n_contexts_{n_contexts}_target_mask_size_{target_mask_size}_"
-              f"context_mask_size_{context_mask_size}_num_epochs_{num_epochs}_"
+              f"n_contexts_{n_contexts}_lr_{lr*1000:.4f}_"
+              f"ema_{ema[0]:.4f}_num_epochs_{num_epochs}_"
               f"seq_len_cell_{seq_len_cell}_"
               f"seq_len_neighborhood_{seq_len_neighborhood}_"
               f"pos_learnable_{pos_learnable}_"
               f"seg_learnable_{seg_learnable}_"
-              f"ratio_{per_segment_mask_ratio}")
+              f"ratio_{per_segment_mask_ratio:.4f}")
     save_folder = f"{folder}/extracted_features"
     feature_path = f"{save_folder}/"
 
@@ -145,7 +153,10 @@ def infer(args: dict,
         yaml.dump(args, f)
 
     # Define checkpointing path
-    latest_path = os.path.join(folder, f'{tag}-latest.pth.tar')
+    if check_point is None:
+       latest_path = os.path.join(folder, f'{tag}-latest.pth.tar')
+    else:
+       latest_path = os.path.join(folder, f'{tag}-ep{check_point}.pth.tar')
     load_path = (os.path.join(folder, r_file) if r_file is not None else
         latest_path)
 
@@ -160,7 +171,8 @@ def infer(args: dict,
         pred_depth=pred_depth,
         pos_learnable=pos_learnable,
         seg_learnable=seg_learnable,
-        has_cls=has_cls)
+        has_cls=has_cls,
+        use_flash_attention=use_flash_attention)
     target_encoder = copy.deepcopy(encoder)
 
     encoder = DistributedDataParallel(encoder, static_graph=True)
@@ -216,7 +228,6 @@ def infer(args: dict,
     #  Retrieve embeddings
     # ----------------------------- #
     target_encoder.eval()
-
     niche_label = []
     cell_type_label = []
     all_cell_emb_list = []

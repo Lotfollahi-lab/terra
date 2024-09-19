@@ -1,17 +1,15 @@
 data:
-  batch_size: 10
+  batch_size: 20
   data_path: /lustre/scratch126/cellgen/team361/am84/NicheJEPA/datasets/am84/st_data/gold/cell-neighborhood-tokenizer/sim1_1105genes_100klocs_strongincrements/8-shards/sim1_1105genes_100klocs_strongincrements_4_False_read_depth_shifted_log_2210.dataset
   data_set_name: 'simulated_100k'
-  num_workers: 18
+  num_workers: 0
   pin_mem: true
   vocab_size: 1107 #this is for simulated_100k
-  incl_cell_seq: True
-  incl_neighborhood_seq: True
   seq_len_cell: 374 #this is for simulated_100k
   seq_len_neighborhood: 1105 #this is for simulated_100k
   has_cls: True
-  sample_size: 5000
-  sample_subset: False
+  sample_size: 500
+  sample_subset: True
   random_state: 0
   stratify: True
   split: 0.2
@@ -51,14 +49,18 @@ meta:
   top_k: 127
   read_checkpoint: null
   use_bfloat16: True
+  pos_learnable: False
+  seg_learnable: False
+
 optimization:
   ema:
   - 0.9764319982153814
   - 1.0
-  pos_learnable: 0
-  seg_learnable: 0
-  epochs: 40
+  clip_grad: 0
+  grad_accum_steps: 1
+  epochs: 1
   final_lr: 1.0e-06
+  use_flash_attention: True
   final_weight_decay: 0.4
   ipe_scale: 1.0
   lr: 0.000001
