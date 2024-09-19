@@ -133,7 +133,7 @@ def infer(args: dict,
     seq_len = seq_len_cell + seq_len_neighborhood
 
     # Set the folder for saving extracted features
-   folder = (f"logs/{data_set_name}_"
+    folder = (f"logs/{data_set_name}_"
               f"pred_depth_{pred_depth}_pred_emb_dim_{pred_emb_dim}_"
               f"enc_depth_{enc_depth}_enc_emb_dim_{enc_emb_dim}_n_targets_{n_targets}_"
               f"n_contexts_{n_contexts}_target_mask_size_{target_mask_size}_"
