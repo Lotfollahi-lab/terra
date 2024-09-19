@@ -133,16 +133,16 @@ def infer(args: dict,
     seq_len = seq_len_cell + seq_len_neighborhood
 
     # Set the folder for saving extracted features
-    folder = (f"logs/{data_set_name}_"
+   folder = (f"logs/{data_set_name}_"
               f"pred_depth_{pred_depth}_pred_emb_dim_{pred_emb_dim}_"
               f"enc_depth_{enc_depth}_enc_emb_dim_{enc_emb_dim}_n_targets_{n_targets}_"
-              f"n_contexts_{n_contexts}_lr_{lr*1000:.4f}_"
-              f"ema_{ema[0]:.4f}_num_epochs_{num_epochs}_"
+              f"n_contexts_{n_contexts}_target_mask_size_{target_mask_size}_"
+              f"context_mask_size_{context_mask_size}_num_epochs_{num_epochs}_"
               f"seq_len_cell_{seq_len_cell}_"
               f"seq_len_neighborhood_{seq_len_neighborhood}_"
               f"pos_learnable_{pos_learnable}_"
               f"seg_learnable_{seg_learnable}_"
-              f"ratio_{per_segment_mask_ratio:.4f}")
+              f"ratio_{per_segment_mask_ratio}")
     save_folder = f"{folder}/extracted_features"
     feature_path = f"{save_folder}/"
 
