@@ -70,10 +70,9 @@ def process_main(rank, args, world_size, devices, is_training=True):
            niche_nmi_ari = clustering_metrics(test_data, emb_key='neighborhood_emb_layer_'+str(int(wandb.config.enc_pred_depth // 10)-1),label_col='niche')
            wandb.log({"niche_nmi":niche_nmi_ari['nmi'], "niche_ari":niche_nmi_ari['ari'], 'cell_type_ari':cell_type_nmi_ari['ari'], 'cell_type_nmi':cell_type_nmi_ari['nmi']})
         else:
-           cell_type_nmi_ari = clustering_metrics(test_data, emb_key='cell_emb_layer_2',label_col='cell_type')
-           niche_nmi_ari = clustering_metrics(test_data, emb_key='neighborhood_emb_layer_2',label_col='niche')
+           cell_type_nmi_ari = clustering_metrics(test_data, emb_key='cell_emb_layer_'+str(params['meta']['enc_pred_depth']//10 -1), label_col='cell_type')
+           niche_nmi_ari = clustering_metrics(test_data, emb_key='neighborhood_emb_layer_'+str(params['meta']['enc_pred_depth']//10-1), label_col='niche')
            wandb.log({"niche_nmi":niche_nmi_ari['nmi'], "niche_ari":niche_nmi_ari['ari'], 'cell_type_ari':cell_type_nmi_ari['ari'], 'cell_type_nmi':cell_type_nmi_ari['nmi']})
-        
 # Function to manage sweeping process
 def sweep_func(args):
     num_gpus = len(args.devices)
