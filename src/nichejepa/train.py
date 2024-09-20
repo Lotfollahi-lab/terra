@@ -459,5 +459,3 @@ def train(args: dict,
         # -- Save Checkpoint after every epoch
         logger.info('avg. loss %.3f' % loss_meter.avg)
         save_checkpoint(epoch+1)
-if __name__ == "__main__":
-    main()
