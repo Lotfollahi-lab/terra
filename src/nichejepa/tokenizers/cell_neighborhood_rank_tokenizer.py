@@ -317,7 +317,7 @@ class CellNeighborhoodRankTokenizer:
         if self.processing_mode == "sequential":
         # Loop through data directory to tokenize '.h5ad' files sequentially
             print("Tokenizing files sequentially...")
-            for file_path in data_directory.glob(f"*.{file_format}"):
+            for file_path in data_directory.glob(f"**/*.{file_format}"):
                 file_found = 1
                 print(f"Tokenizing '{file_path}'...")
                 file_gene_tokens_cell, file_gene_tokens_neighborhood, file_cell_metadata = tokenize_file_fn(
@@ -334,7 +334,7 @@ class CellNeighborhoodRankTokenizer:
             print("Tokenizing files in parallel...")
             with concurrent.futures.ProcessPoolExecutor(max_workers=self.nproc) as executor:
                 futures = []
-                for file_path in data_directory.glob(f"*.{file_format}"):
+                for file_path in data_directory.glob(f"**/*.{file_format}"):
                     file_found = 1
                     print(f"Tokenizing '{file_path}'...")
                     future = executor.submit(tokenize_file_fn, file_path)
