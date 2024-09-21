@@ -26,7 +26,6 @@ class CellGraphDataset(Dataset):
                  ):
         """
         Torch CellGraphDataset class.
-
         Parameters
         -----------
         data:
@@ -51,10 +50,10 @@ class CellGraphDataset(Dataset):
         self.has_cls = has_cls
         self.sampling_strategy = sampling_strategy
         self.sampling_seed = sampling_seed
-        
+
     def __len__(self):
         return self.len
-         
+
     def __getitem__(self, item):
         # Case 1: both cell and neighborhood tokens are included
             # Get gene tokens for cell and neighborhood
@@ -63,7 +62,7 @@ class CellGraphDataset(Dataset):
             # Set the total number of nonzero tokens as the sum of nonzero cell
             # and neighborhood tokens
             n_nonzero_cell_tokens = self.get_num_nonzero_cell_tokens(item)           
-            
+
             # Set cell-level labels
             metadata = {}
             for key in self.dataset[item].keys():
@@ -72,30 +71,28 @@ class CellGraphDataset(Dataset):
                                "gene_pos_tokens",
                                "input_ids"]:
                     metadata[key] = self.dataset[item][key]
-            
+
             if self.has_cls:
                 # If a <cls> token is used, prepend it to the tokens and
                 # consider it for segment labels
                 tokens = [self.vocab_size] + tokens
-                
+
                 # Set total number of nonzero tokens to include <cls> token
                 n_nonzero_tokens += 1
 
             labels = self.dataset[item]["cell_pos_tokens"]
-                
+
             return torch.tensor(tokens), torch.tensor(labels), metadata, n_nonzero_cell_tokens  
-        
+
     def _get_cell_tokens(self, 
                          item: int
                          ) -> List:
         """
         Get cell tokens and number of nonzero cell tokens for a given cell.
-
         Parameters
         -----------
         item:
             Index of the cell in the dataset.
-
         Returns
         --------
         gene_tokens_cell:
@@ -105,7 +102,7 @@ class CellGraphDataset(Dataset):
         # the huggingface dataset, use all tokens
         if self.seq_len_cell >= len(self.dataset[item]["gene_tokens_cell"]):
             gene_tokens_cell = self.dataset[item]["gene_tokens_cell"]
-            
+
         # Otherwise, use a subset of tokens
         else:
             # If sampling strategy is not specified, use all tokens up to
@@ -113,7 +110,7 @@ class CellGraphDataset(Dataset):
             if self.sampling_strategy is None:
                 gene_tokens_cell = self.dataset[item][
                     "gene_tokens_cell"][:self.seq_len_cell]
-                
+
             # Otherwise, sample a subset of tokens based on the sampling
             # strategy
             else:
@@ -123,7 +120,7 @@ class CellGraphDataset(Dataset):
                     self.seq_len_cell,
                     self.sampling_strategy,
                     self.sampling_seed)
-                
+
         return gene_tokens_cell
 
     def _get_neighborhood_tokens(self,
@@ -148,7 +145,7 @@ class CellGraphDataset(Dataset):
         if self.seq_len_neighborhood >= len(self.dataset[item]["gene_tokens_neighborhood"]):
             gene_tokens_neighborhood = self.dataset[item][
                 "gene_tokens_neighborhood"]
-            
+
         # Otherwise, use a subset of tokens
         else:
             # If sampling strategy is not specified, use all tokens up to
@@ -165,7 +162,7 @@ class CellGraphDataset(Dataset):
                     self.seq_len_neighborhood,
                     self.sampling_strategy,
                     self.sampling_seed)
-        
+
         return gene_tokens_neighborhood
 
     def get_num_nonzero_cell_tokens(self,
@@ -219,7 +216,7 @@ class CellGraphDataset(Dataset):
             self.seq_len_neighborhood)
 
         return n_nonzero_neighborhood_tokens
-            
+
     def create_sampled_token_sequence(
         self,
         tokens: List,
@@ -230,7 +227,6 @@ class CellGraphDataset(Dataset):
         ) -> List:
         """
         Sample a subset of tokens based on the sampling strategy and seed.
-
         Parameters
         -----------
         tokens:
@@ -250,11 +246,11 @@ class CellGraphDataset(Dataset):
             List of sampled tokens.
         """
         assert size < n_nonzero_tokens
-        
+
         if sampling_strategy == "normalized_count_rank_sampling":
             # Set seed for sampling
             np.random.seed(seed)
-            
+
             # Calculate weights based on rank and number of nonzero tokens
             # Higher the rank, higher the weight
             # a = [4, 1, 3, 2, 5, 0, 0, 0]
@@ -266,7 +262,7 @@ class CellGraphDataset(Dataset):
             sum_rank = (n_nonzero_tokens * (n_nonzero_tokens + 1) / 2.0) + 1e-9
             weights = [(n_nonzero_tokens - i)/sum_rank for i in range(n_nonzero_tokens)]
             assert np.isclose(np.sum(weights), 1.0)
-            
+
             # Sample seq_cell_len or seq_neighborhood token indices based on
             # weights
             sampled_indices = np.random.choice(
@@ -274,11 +270,11 @@ class CellGraphDataset(Dataset):
                 size=size,
                 p=weights,
                 replace=False)
-            
+
             # Sort sampled indices to preserve rank order
             sampled_indices = np.sort(sampled_indices)
             sampled_tokens = [tokens[i] for i in sampled_indices]
-            
+
             return sampled_tokens
         else:
             raise ValueError(
@@ -305,7 +301,6 @@ def make_cell_neighborhood_dataset(
     """
     Convert huggingface Dataset into a torch CellNeighborhoodDataset object and
     create corresponding data loader.
-
     Parameters
     -----------
     batch_size:
@@ -335,7 +330,6 @@ def make_cell_neighborhood_dataset(
         If 'True', a <cls> token is included for each cell at position 0.
     distributed:
         If 'True', use distributed mode.
-
     Returns
     --------
     dataset:
@@ -350,7 +344,7 @@ def make_cell_neighborhood_dataset(
                                       seq_len_cell=seq_len_cell,
                                       seq_len_neighborhood=seq_len_neighborhood,
                                       has_cls=has_cls)
-    
+
     if distributed:
         dist_sampler = CustomDistributedLengthGroupedSampler(
             dataset,
@@ -381,5 +375,5 @@ def make_cell_neighborhood_dataset(
                                                   num_workers=num_workers,
                                                   persistent_workers=False)
         logger.info('Data loader created.')
-        
+
         return dataset, data_loader
