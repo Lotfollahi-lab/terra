@@ -4,7 +4,7 @@ import os
 import sys
 import yaml
 from collections import defaultdict
-from typing import Literal
+from typing import List, Literal, Optional
 
 import anndata
 import numpy as np
@@ -46,6 +46,7 @@ def infer(args: dict,
           cell_gene_ids: list=[],
           neighborhood_gene_ids: list=[],
           agg_type: Literal['cls', 'avg', 'weighted_avg']='avg',
+          agg_excluded_tokens: Optional[List]=None,
           feature_norm: bool=False
           ) -> anndata.AnnData:
     """
@@ -67,6 +68,8 @@ def infer(args: dict,
     agg_type:
         Specifies how (aggregated) cell and neighborhood embeddings are computed
         from individual gene embeddings.
+    agg_excluded_tokens:
+        List of tokens to be excluded from the aggregation.
     feature_norm:
         If 'True', apply feature norm in the last embedding layer.
 
@@ -244,11 +247,13 @@ def infer(args: dict,
                 cell_mask = create_binary_selection_mask(
                     cell_neighborhood_tokens,
                     selection_type=agg_type,
+                    excluded_tokens=agg_excluded_tokens,
                     seq_len_cell=seq_len_cell,
                     has_cls=has_cls)
                 neighborhood_mask = create_binary_selection_mask(
                     cell_neighborhood_tokens,
                     selection_type=agg_type,
+                    excluded_tokens=agg_excluded_tokens,
                     seq_len_cell=seq_len_cell,
                     has_cls=has_cls)
             # Keep elements relevant to cell embedding

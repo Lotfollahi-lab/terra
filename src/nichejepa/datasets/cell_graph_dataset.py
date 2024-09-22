@@ -34,8 +34,8 @@ class CellGraphDataset(Dataset):
             cell-level metadata.
         vocab_size:
             Size of the vocabulary.
-        seq_len_cell:
-            Sequence length in terms of gene tokens.
+        seq_len:
+            Sequence length (number of gene tokens).
         has_cls:
             If 'True', a <cls> token is included for each cell at position 0.
         sampling_strategy:
@@ -55,34 +55,32 @@ class CellGraphDataset(Dataset):
         return self.len
 
     def __getitem__(self, item):
-        # Case 1: both cell and neighborhood tokens are included
-            # Get gene tokens for cell and neighborhood
-            gene_tokens_cell = self._get_cell_tokens(item)
+        gene_tokens_cell = self._get_cell_tokens(item)
 
-            # Set the total number of nonzero tokens as the sum of nonzero cell
-            # and neighborhood tokens
-            n_nonzero_cell_tokens = self.get_num_nonzero_cell_tokens(item)           
+        # Set the total number of nonzero tokens as the sum of nonzero cell
+        # and neighborhood tokens
+        n_nonzero_cell_tokens = self.get_num_nonzero_cell_tokens(item)           
 
-            # Set cell-level labels
-            metadata = {}
-            for key in self.dataset[item].keys():
-                if key not in ["gene_tokens",
-                               "cell_pos_tokens",
-                               "gene_pos_tokens",
-                               "input_ids"]:
-                    metadata[key] = self.dataset[item][key]
+        # Set cell-level labels
+        metadata = {}
+        for key in self.dataset[item].keys():
+            if key not in ["gene_tokens",
+                            "cell_pos_tokens",
+                            "gene_pos_tokens",
+                            "input_ids"]:
+                metadata[key] = self.dataset[item][key]
 
-            if self.has_cls:
-                # If a <cls> token is used, prepend it to the tokens and
-                # consider it for segment labels
-                tokens = [self.vocab_size] + tokens
+        if self.has_cls:
+            # If a <cls> token is used, prepend it to the tokens and
+            # consider it for segment labels
+            tokens = [self.vocab_size] + tokens
 
-                # Set total number of nonzero tokens to include <cls> token
-                n_nonzero_tokens += 1
+            # Set total number of nonzero tokens to include <cls> token
+            n_nonzero_tokens += 1
 
-            labels = self.dataset[item]["cell_pos_tokens"]
+        labels = self.dataset[item]["cell_pos_tokens"]
 
-            return torch.tensor(tokens), torch.tensor(labels), metadata, n_nonzero_cell_tokens  
+        return torch.tensor(tokens), torch.tensor(labels), metadata, n_nonzero_cell_tokens  
 
     def _get_cell_tokens(self, 
                          item: int
@@ -95,8 +93,10 @@ class CellGraphDataset(Dataset):
             Index of the cell in the dataset.
         Returns
         --------
-        gene_tokens_cell:
-            List of cell tokens.
+        gene_tokens:
+            List of gene tokens.
+        labels:
+            List of (segment) labels.
         """
         # If cell sequence length is greater than the number of cell tokens in
         # the huggingface dataset, use all tokens
@@ -109,61 +109,19 @@ class CellGraphDataset(Dataset):
             # specified cell sequence lengths
             if self.sampling_strategy is None:
                 gene_tokens_cell = self.dataset[item][
-                    "gene_tokens_cell"][:self.seq_len_cell]
+                    "gene_tokens_cell"][:self.seq_len]
 
             # Otherwise, sample a subset of tokens based on the sampling
             # strategy
             else:
-                gene_tokens_cell = self.create_sampled_token_sequence(
+                gene_tokens_cell, labels = self.create_sampled_token_sequence(
                     self.dataset[item]["gene_tokens_cell"],
                     self.dataset[item]["n_nonzero_cell_tokens"],
-                    self.seq_len_cell,
+                    self.seq_len,
                     self.sampling_strategy,
                     self.sampling_seed)
 
         return gene_tokens_cell
-
-    def _get_neighborhood_tokens(self,
-                                 item: int
-                                 ) -> List:
-        """ 
-        Get neighborhood tokens and number of nonzero neighborhood tokens for a
-        given cell.
-        
-        Parameters
-        -----------
-        item:
-            Index of the cell in the dataset.
-        
-        Returns
-        --------
-        gene_tokens_neighborhood:
-            List of neighborhood tokens.
-        """
-        # If neighborhood sequence length is greater than the number of
-        # neighborhood tokens in the huggingface dataset, use all tokens
-        if self.seq_len_neighborhood >= len(self.dataset[item]["gene_tokens_neighborhood"]):
-            gene_tokens_neighborhood = self.dataset[item][
-                "gene_tokens_neighborhood"]
-
-        # Otherwise, use a subset of tokens
-        else:
-            # If sampling strategy is not specified, use all tokens up to
-            # specified neighborhood sequence lengths
-            if self.sampling_strategy is None:
-                gene_tokens_neighborhood = self.dataset[item][
-                    "gene_tokens_neighborhood"][:self.seq_len_neighborhood]
-            # Otherwise, sample a subset of tokens based on the sampling
-            # strategy
-            else:
-                gene_tokens_neighborhood = self.create_sampled_token_sequence(
-                    self.dataset[item]["gene_tokens_neighborhood"],
-                    self.dataset[item]["n_nonzero_neighborhood_tokens"],
-                    self.seq_len_neighborhood,
-                    self.sampling_strategy,
-                    self.sampling_seed)
-
-        return gene_tokens_neighborhood
 
     def get_num_nonzero_cell_tokens(self,
                                     item: int
@@ -187,39 +145,14 @@ class CellGraphDataset(Dataset):
         # n_nonzero_cell_tokens -> self.seq_len_cell if self.seq_len_cell < self.dataset[item]["n_nonzero_cell_tokens"]
         n_nonzero_cell_tokens = min(
             self.dataset[item]["n_nonzero_cell_tokens"],
-            self.seq_len_cell)
+            self.seq_len)
 
         return n_nonzero_cell_tokens
-
-    def get_num_nonzero_neighborhood_tokens(self,
-                                            item: int
-                                            ) -> int:
-        """
-        Get the number of nonzero neighborhood tokens for a given cell.
-        
-        Parameters
-        -----------
-        item:
-            Index of the cell in the dataset.
-            
-        Returns
-        --------
-        n_nonzero_neighborhood_tokens:
-            Number of nonzero neighborhood tokens.
-        """
-        # Set the number of nonzero neighborhood tokens
-        # n_nonzero_neighborhood_tokens -> self.dataset[item]["n_nonzero_neighborhood_tokens"] if self.seq_len_neighborhood >= len(self.dataset[item]["gene_tokens_neighborhood"])
-        # n_nonzero_neighborhood_tokens -> self.dataset[item]["n_nonzero_neighborhood_tokens"] if self.seq_len_neighborhood >= self.dataset[item]["n_nonzero_neighborhood_tokens"]
-        # n_nonzero_neighborhood_tokens -> self.seq_len_neighborhood if self.seq_len_neighborhood < self.dataset[item]["n_nonzero_neighborhood_tokens"]
-        n_nonzero_neighborhood_tokens = min(
-            self.dataset[item]["n_nonzero_neighborhood_tokens"],
-            self.seq_len_neighborhood)
-
-        return n_nonzero_neighborhood_tokens
 
     def create_sampled_token_sequence(
         self,
         tokens: List,
+        labels: List,
         n_nonzero_tokens: int,
         size: int,
         sampling_strategy: Literal["normalized_count_rank_sampling"]="normalized_count_rank_sampling",
@@ -231,6 +164,8 @@ class CellGraphDataset(Dataset):
         -----------
         tokens:
             List of tokens.
+        tokens:
+            List of (segment) labels.
         n_nonzero_tokens:
             Number of nonzero tokens in `tokens`.
         size:
@@ -274,8 +209,9 @@ class CellGraphDataset(Dataset):
             # Sort sampled indices to preserve rank order
             sampled_indices = np.sort(sampled_indices)
             sampled_tokens = [tokens[i] for i in sampled_indices]
+            sampled_labels = [labels[i] for i in sampled_indices]
 
-            return sampled_tokens
+            return sampled_tokens, sampled_labels
         else:
             raise ValueError(
                 f"{sampling_strategy} is an invalid sampling strategy.")

@@ -108,6 +108,7 @@ def create_binary_selection_mask(tokens: torch.Tensor,
                                                          'agg_neighborhood',
                                                          'gene_cell',
                                                          'gene_neighborhood'],
+                                 excluded_tokens: Optional[List]=None,
                                  top_k: Optional[int]=None,
                                  gene_id: Optional[int]=None
                                  ) -> torch.Tensor:
@@ -125,6 +126,8 @@ def create_binary_selection_mask(tokens: torch.Tensor,
         If 'True', sequence contains a <cls> token at position 0.
     selection_type:
         Defines the type of embedding, which is relevant for the mask creation.
+    excluded_tokens:
+        List of tokens to be excluded from the selection.
     top_k:
         If specified, only 'top_k' of the selected tokens are retrieved.
     gene_id:
@@ -147,6 +150,9 @@ def create_binary_selection_mask(tokens: torch.Tensor,
         selection_mask[:, (1 if has_cls else 0):
                           (1 if has_cls else 0) + seq_len_cell] = True
         selection_mask[tokens == 0] = False # exclude padding tokens
+        if excluded_tokens: # exclude other excluded tokens
+            selection_mask[
+                torch.isin(tokens, torch.tensor(excluded_tokens))] = False
         if top_k:
             # Exclude tokens beyond the top_k positions in the cell segment
             selection_mask[:, (1 if has_cls else 0) + top_k:] = False
@@ -155,6 +161,9 @@ def create_binary_selection_mask(tokens: torch.Tensor,
         selection_mask = torch.zeros_like(tokens, dtype=torch.bool)
         selection_mask[:, (1 if has_cls else 0) + seq_len_cell:] = True
         selection_mask[tokens == 0] = False # exclude padding tokens
+        if excluded_tokens: # exclude other excluded tokens
+            selection_mask[
+                torch.isin(tokens, torch.tensor(excluded_tokens))] = False
         if top_k:
             # Exclude tokens beyond the top_k positions in the neighborhood
             # segment

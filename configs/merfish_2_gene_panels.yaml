@@ -7,8 +7,8 @@ data:
   num_workers: 6
   pin_mem: true
   vocab_size: 1087
-  seq_len_cell: 200 # 411
-  seq_len_neighborhood: 200 # 809
+  seq_len_cell: 411 # 200
+  seq_len_neighborhood: 809 # 200
   has_cls: False
   random_state: 0
   sample_subset: False
@@ -19,7 +19,7 @@ mask:
   target_mask_size: 10 # This doesn't have meaning in segment_masking.
   n_contexts: 1
   n_targets: 9 # This is equivalent to n_segment in segment_masking.
-  per_segment_mask_ratio: 0.2
+  per_segment_mask_ratio: 0.5
   segment_masking: True
 meta:
   enc_depth: 3 # 3
@@ -34,7 +34,7 @@ meta:
   pos_learnable: False
   seg_learnable: False
 optimization:
-  epochs: 20 # 20 
+  epochs: 20 
   warmup: 5
   ema:
   - 0.9764319982153814
