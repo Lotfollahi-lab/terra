@@ -11,6 +11,7 @@ import multiprocessing as mp
 import os
 import pprint
 import yaml
+from datetime import datetime
 
 import anndata as ad
 import pandas as pd
@@ -40,43 +41,23 @@ def parse_arguments():
 
 
 # Main function to handle training or evaluation per process
-def process_main(rank, args, world_size, devices, is_training=True):
+def process_main(rank, args, params, world_size, devices, logger, folder_path, is_training=True):
     os.environ['CUDA_VISIBLE_DEVICES'] = str(devices[rank].split(':')[-1])
 
-    logging.basicConfig()
-    logger = logging.getLogger()
     logger.setLevel(logging.INFO if rank == 0 else logging.ERROR)
 
     world_size, rank = init_distributed(
         rank_and_world_size=(rank, world_size), port=40002)
     logger.info(f'Running... (rank: {rank}/{world_size})')
-    if len(wandb.config.keys()) != 0:
-      update_from_sweep = True
-    else:      
-      update_from_sweep = False
 
     # Execute training or evaluation
     if is_training:
-        logger.info(f'Called with params from {args.fname} and wandb.')
-        params = create_params_from_YAML_wandb_config(
-            args.fname,
-            logger,
-            sweep_config=wandb.config,
-            is_training=is_training,
-            update_from_sweep=update_from_sweep)
         train_dataset, test_dataset = prepare_dataset(params)
-        train(params, train_dataset, test_dataset)
+        train(params, train_dataset, test_dataset, save_folder_path=folder_path)
     else:
-        logger.info(f'Called with params from {args.fname} and wandb.')
-        params = create_params_from_YAML_wandb_config(
-            args.fname,
-            logger,
-            sweep_config=wandb.config,
-            is_training=is_training,
-            update_from_sweep=update_from_sweep)
         train_dataset, test_dataset = prepare_dataset(params)
-        train_data = infer(params, train_dataset)
-        test_data = infer(params, test_dataset)
+        train_data = infer(params, train_dataset, load_folder_path=folder_path)
+        test_data = infer(params, test_dataset, load_folder_path=folder_path)
         adata_combined = ad.concat(
             [train_data, test_data], axis=0) # concat along the obs (cells)
         cell_type_nmi_ari = clustering_metrics(
@@ -88,7 +69,8 @@ def process_main(rank, args, world_size, devices, is_training=True):
             emb_key=f"neighborhood_emb_layer_{params['meta']['enc_depth'] - 1}",
             label_col='niche')
         wandb.log(
-            {"niche_nmi": niche_nmi_ari['nmi'],
+            {"folder_path": folder_path,
+             "niche_nmi": niche_nmi_ari['nmi'],
              "niche_ari": niche_nmi_ari['ari'],
              'cell_type_nmi': cell_type_nmi_ari['nmi'],
              'cell_type_ari': cell_type_nmi_ari['ari']})
@@ -101,13 +83,36 @@ def sweep_func(args):
     
     wandb.init(project='nichejepa-sweep', mode='offline')
 
+    if len(wandb.config.keys()) != 0:
+      update_from_sweep = True
+    else:      
+      update_from_sweep = False
+
+    logging.basicConfig()
+    logger = logging.getLogger()
+
+    params = create_params_from_YAML_wandb_config(
+        args.fname,
+        logger,
+        sweep_config=wandb.config,
+        update_from_sweep=update_from_sweep)
+    logger.info(f'Called with params from {args.fname} and wandb.')
+
+    artifact_folder_path = '../nichejepa-reproducibility/artifacts'
+    current_timestamp = (
+        datetime.now().strftime("%d%m%Y_%H%M%S") +
+        f"_{datetime.now().microsecond // 1000:03d}")
+    folder_path = os.path.join(artifact_folder_path,
+                            params['data']['data_set_name'],
+                            current_timestamp)
+
     # Run the process_main function in a single or multi-GPU setting
     if args.test:
-        process_main(0, args, num_gpus, args.devices)
+        process_main(0, args, params, num_gpus, args.devices, logger, folder_path)
     else:
         for rank in range(num_gpus):
             p = mp.Process(target=process_main,
-                           args=(rank, args, num_gpus, args.devices))
+                           args=(rank, args, params, num_gpus, args.devices, logger, folder_path))
             p.start()
             processes.append(p)
 
@@ -115,11 +120,11 @@ def sweep_func(args):
             p.join()  
     processes = []
     if args.test:
-       process_main(0, args, 1, [args.devices[0]], is_training=False)
-    else :
+       process_main(0, args, params, 1, [args.devices[0]], logger, folder_path, is_training=False)
+    else:
        for rank in range(1):
             p = mp.Process(target=process_main,
-                           args=(rank, args, 1, [args.devices[0]],False))
+                           args=(rank, args, params, 1, [args.devices[0]], logger, folder_path, False))
             p.start()
             processes.append(p)
 

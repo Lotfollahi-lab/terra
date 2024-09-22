@@ -140,7 +140,6 @@ class CustomDistributedLengthGroupedSampler(DistributedSampler):
         hugging_face_dataset: Optional[Dataset]=None,
         drop_last: bool=False,
         lengths: Optional[List[int]]=None,
-        model_input_name: Optional[str]=None,
         ):
         if num_replicas is None:
             if not dist.is_available():
@@ -171,9 +170,6 @@ class CustomDistributedLengthGroupedSampler(DistributedSampler):
             self.num_samples = math.ceil(len(self.dataset) / self.num_replicas)
         self.total_size = self.num_samples * self.num_replicas
         self.seed = seed
-        self.model_input_name = (
-            model_input_name if model_input_name is not None else "input_ids"
-        )
         if (seq_len_cell > 0) and (seq_len_neighborhood > 0):
           self.lengths = hugging_face_dataset['n_nonzero_tokens']
         elif (seq_len_cell > 0):

@@ -19,13 +19,14 @@ class CellGraphDataset(Dataset):
     def __init__(self,
                  data: datasets.Dataset,
                  vocab_size: int,
-                 seq_len_cell: int=0,
+                 seq_len: int=0,
                  has_cls: bool=True,
                  sampling_strategy: Optional[str]=None,
                  sampling_seed: Optional[int]=42
                  ):
         """
         Torch CellGraphDataset class.
+
         Parameters
         -----------
         data:
@@ -34,7 +35,7 @@ class CellGraphDataset(Dataset):
         vocab_size:
             Size of the vocabulary.
         seq_len_cell:
-            Sequence length of the cell tokens.
+            Sequence length in terms of gene tokens.
         has_cls:
             If 'True', a <cls> token is included for each cell at position 0.
         sampling_strategy:
@@ -45,8 +46,7 @@ class CellGraphDataset(Dataset):
         self.dataset = data
         self.len = len(self.dataset)
         self.vocab_size = vocab_size
-        self.seq_len_cell = seq_len_cell
-        self.seq_len
+        self.seq_len = seq_len
         self.has_cls = has_cls
         self.sampling_strategy = sampling_strategy
         self.sampling_seed = sampling_seed

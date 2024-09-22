@@ -464,7 +464,8 @@ def make_cell_neighborhood_dataset(
             seq_len_cell=seq_len_cell,
             seq_len_neighborhood=seq_len_neighborhood,
             num_replicas=world_size,
-            rank=rank)
+            rank=rank,
+            seed=_GLOBAL_SEED)
 
         data_loader = torch.utils.data.DataLoader(dataset,
                                                   collate_fn=collator,

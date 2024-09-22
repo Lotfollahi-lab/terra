@@ -24,6 +24,8 @@ import pickle
 import random
 import sys
 import yaml
+from datetime import datetime
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -58,9 +60,6 @@ checkpoint_freq = 5
 
 
 _GLOBAL_SEED = 0
-np.random.seed(_GLOBAL_SEED)
-torch.manual_seed(_GLOBAL_SEED)
-torch.backends.cudnn.benchmark = True
 
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
@@ -70,7 +69,8 @@ logger = logging.getLogger()
 def train(args: dict,
           train_dataset: CellNeighborhoodDataset,
           test_dataset: CellNeighborhoodDataset,
-          resume_preempt: bool=False
+          resume_preempt: bool=False,
+          save_folder_path: Optional[str]=None,
           ):
     """
     Train the model.
@@ -84,7 +84,21 @@ def train(args: dict,
     test_dataset:
         Test split CellNeighborhoodDataset.
     resume_preempt:
+    save_folder_path:
+        Path for saving model artifacts.
     """
+
+    # ---------------- #
+    # Set random seeds
+    # ----------------- #
+
+    np.random.seed(_GLOBAL_SEED)
+    torch.manual_seed(_GLOBAL_SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(_GLOBAL_SEED)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
     # ----------------------------- #
     #  Load params from config file
     # ----------------------------- #
@@ -140,22 +154,21 @@ def train(args: dict,
     seq_len = seq_len_cell + seq_len_neighborhood
 
     # Create folder to store artifacts
-    # -- LOGGING
-    folder = (f"logs/{data_set_name}_"
-              f"pred_depth_{pred_depth}_pred_emb_dim_{pred_emb_dim}_"
-              f"enc_depth_{enc_depth}_enc_emb_dim_{enc_emb_dim}_n_targets_{n_targets}_"
-              f"n_contexts_{n_contexts}_target_mask_size_{target_mask_size}_"
-              f"context_mask_size_{context_mask_size}_num_epochs_{num_epochs}_"
-              f"seq_len_cell_{seq_len_cell}_"
-              f"seq_len_neighborhood_{seq_len_neighborhood}_"
-              f"pos_learnable_{pos_learnable}_"
-              f"seg_learnable_{seg_learnable}_"
-              f"ratio_{per_segment_mask_ratio}")
+    if not save_folder_path:
+        artifact_folder_path = os.path.join(
+            os.path.dirname(os.path.dirname(
+                os.path.dirname(os.path.abspath(__file__)))), "artifacts")
+        current_timestamp = (
+            datetime.now().strftime("%d%m%Y_%H%M%S") +
+            f"_{datetime.now().microsecond // 1000:03d}")
+        save_folder_path = os.path.join(artifact_folder_path,
+                                        data_set_name,
+                                        current_timestamp)
 
-    os.makedirs(folder, exist_ok=True)
+    os.makedirs(save_folder_path, exist_ok=True)
     tag = args['logging']['write_tag']
 
-    dump = os.path.join(folder, 'params.yaml')
+    dump = os.path.join(save_folder_path, 'params.yaml')
     with open(dump, 'w') as f:
         yaml.dump(args, f)
 
@@ -173,13 +186,13 @@ def train(args: dict,
         logger.setLevel(logging.ERROR)
 
     # Define log/checkpointing paths
-    log_file = os.path.join(folder, f'{tag}_r{rank}.csv')
-    save_path = os.path.join(folder, f'{tag}' + '-ep{epoch}.pth.tar')
-    latest_path = os.path.join(folder, f'{tag}-latest.pth.tar')
+    log_file = os.path.join(save_folder_path, f'{tag}_r{rank}.csv')
+    save_path = os.path.join(save_folder_path, f'{tag}' + '-ep{epoch}.pth.tar')
+    latest_path = os.path.join(save_folder_path, f'{tag}-latest.pth.tar')
     load_path = None
     if load_model:
         load_path = os.path.join(
-            folder, r_file) if r_file is not None else latest_path
+            save_folder_path, r_file) if r_file is not None else latest_path
 
     # Initialize csv logger
     csv_logger = CSVLogger(log_file,

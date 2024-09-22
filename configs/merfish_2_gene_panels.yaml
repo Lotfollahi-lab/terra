@@ -1,10 +1,10 @@
 data:
-  batch_size: 64 # 32
-  data_path: '/lustre/scratch126/cellgen/team205/sb75/nichejepa-reproducibility/datasets/st_data/gold/cell_neighborhood_tokenizer/merfish_gp/merfish_gp_read_depth_shifted_log_2170.dataset'
+  batch_size: 64 # 64
+  data_path: '/lustre/scratch126/cellgen/team361/am84/NicheJEPA/datasets/am84/st_data/gold/cell-neighborhood-tokenizer/merfish_mouse_brain_8-batch_2-gene-panels/8-shards/merfish_mouse_brain_8-batch_2-gene-panels_4_False_read_depth_shifted_log_2170.dataset'
   split: 0.2
   stratify: False
   data_set_name: 'merfish_gp'
-  num_workers: 18
+  num_workers: 6
   pin_mem: true
   vocab_size: 1087
   seq_len_cell: 200 # 411
@@ -34,7 +34,7 @@ meta:
   pos_learnable: False
   seg_learnable: False
 optimization:
-  epochs: 20
+  epochs: 20 # 20 
   warmup: 5
   ema:
   - 0.9764319982153814
