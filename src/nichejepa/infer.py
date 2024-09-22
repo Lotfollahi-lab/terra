@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 import yaml
+from collections import defaultdict
 from typing import Literal
 
 import anndata
@@ -41,6 +42,7 @@ logger = logging.getLogger()
 @torch.no_grad()
 def infer(args: dict,
           dataset: CellNeighborhoodDataset,
+          load_folder_path: str,
           cell_gene_ids: list=[],
           neighborhood_gene_ids: list=[],
           agg_type: Literal['cls', 'avg', 'weighted_avg']='avg',
@@ -125,29 +127,19 @@ def infer(args: dict,
     seq_len = seq_len_cell + seq_len_neighborhood
 
     # Set the folder for saving extracted features
-    folder = (f"logs/{data_set_name}_"
-              f"pred_depth_{pred_depth}_pred_emb_dim_{pred_emb_dim}_"
-              f"enc_depth_{enc_depth}_enc_emb_dim_{enc_emb_dim}_n_targets_{n_targets}_"
-              f"n_contexts_{n_contexts}_target_mask_size_{target_mask_size}_"
-              f"context_mask_size_{context_mask_size}_num_epochs_{num_epochs}_"
-              f"seq_len_cell_{seq_len_cell}_"
-              f"seq_len_neighborhood_{seq_len_neighborhood}_"
-              f"pos_learnable_{pos_learnable}_"
-              f"seg_learnable_{seg_learnable}_"
-              f"ratio_{per_segment_mask_ratio}")
-    save_folder = f"{folder}/extracted_features"
+    save_folder = f"{load_folder_path}/extracted_features"
     feature_path = f"{save_folder}/"
 
     os.makedirs(save_folder, exist_ok=True)
     tag = args['logging']['write_tag']
-    dump = os.path.join(folder, f'params.yaml')
+    dump = os.path.join(save_folder, f'params.yaml')
     with open(dump, 'w') as f:
         yaml.dump(args, f)
 
     # Define checkpointing path
-    latest_path = os.path.join(folder, f'{tag}-latest.pth.tar')
-    load_path = (os.path.join(folder, r_file) if r_file is not None else
-        latest_path)
+    latest_path = os.path.join(load_folder_path, f'{tag}-latest.pth.tar')
+    load_path = (os.path.join(load_folder_path, r_file) if r_file is not None 
+        else latest_path)
 
     # Initialize encoder, predictor, and target encoder
     encoder, predictor = init_model(
@@ -217,8 +209,7 @@ def infer(args: dict,
     # ----------------------------- #
     target_encoder.eval()
 
-    niche_label = []
-    cell_type_label = []
+    metadata = defaultdict(list)
     all_cell_emb_list = []
     all_neighborhood_emb_list = []
     all_cell_gene_emb_dict = {}
@@ -231,15 +222,9 @@ def infer(args: dict,
         seg_label = udata[1].to(device, non_blocking=True)
         masks_attention = masks_attention.to(device, non_blocking=True)
 
-        # Load niche and cell type labels based on specified sequence lengths
-        if (args['data']['seq_len_cell'] > 0) & (
-            args['data']['seq_len_neighborhood'] > 0):
-            cell_type_label.extend(udata[2])
-            niche_label.extend(udata[3])
-        elif args['data']['seq_len_cell'] > 0:
-            cell_type_label.extend(udata[2])
-        elif args['data']['seq_len_neighborhood'] > 0:
-            niche_label.extend(udata[2])
+        # Update metadata
+        for key, value in udata[2].items():
+            metadata[key].extend(value)
 
         # Retrieve gene embeddings from different layers
         with torch.cuda.amp.autocast(dtype=torch.bfloat16,
@@ -333,11 +318,9 @@ def infer(args: dict,
                         all_neighborhood_gene_emb_dict[gene_id].append(gene_emb)                  
                     
     adata = anndata.AnnData(
-        obs=pd.DataFrame({
-            'niche': niche_label,
-            'cell_type': cell_type_label},
-        index=range(len(niche_label))))
-
+        obs=pd.DataFrame(metadata,
+        index=range(len(list(metadata.values())[0]))))
+   
     # Store cell and neighborhood embeddings of all observations across layers  
     for i in range(len(all_cell_emb_list)):
         print(np.array(torch.cat(

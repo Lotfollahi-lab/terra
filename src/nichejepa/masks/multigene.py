@@ -64,26 +64,10 @@ class MaskCollator:
         # Determine the valid minimum start position for the mask based on the
         # presence of a <cls> token
         self.valid_min_start = 1 if self.has_cls else 0
-        # Shared counter to manage iterations across multiple processes
-        self._itr_counter = Value('i', -1)
-
-    def step(self):
-        """ 
-        Increment the iteration counter.
-        
-        This is used to ensure that each worker process generates a unique seed
-        for random sampling.
-        """
-        i = self._itr_counter
-        with i.get_lock():
-            i.value += 1
-            v = i.value
-        return v
 
     def _sample_gene_mask(self,
                           non_zero_seq_len_cell: int,
                           non_zero_seq_len_neighborhood: int,
-                          generator: torch.Generator,
                           mask_size: int,
                           mask_type: Literal['target', 'context'],
                           valid_token_masks: Optional[list]=None
@@ -99,8 +83,6 @@ class MaskCollator:
             Number of non-zero tokens in the cell segment.
         non_zero_seq_len_neighborhood:
             Number of non-zero tokens in the neighborhood segment.
-        generator:
-            Pseudorandom number generator to ensure reproducibility.
         mask_size:
             Length of the masked token sequence.
         mask_type:
@@ -127,7 +109,6 @@ class MaskCollator:
                 self.valid_min_start,
                 (self.valid_min_start + non_zero_seq_len_cell +
                  non_zero_seq_len_neighborhood - mask_size + 1),
-                generator=generator,
                 size=(1,))
 
             # Initialize the mask and its complement
@@ -175,7 +156,6 @@ class MaskCollator:
                 self.valid_min_start,
                 self.valid_min_start + self.seq_len_neighborhood + 
                 self.seq_len_cell - mask_size + 1,
-                generator=generator,
                 size=(1,))
 
             # Initialize the mask and its complement with zeros and ones,
@@ -242,11 +222,6 @@ class MaskCollator:
         keep_tokens_target = self.seq_len
         keep_tokens_context = self.seq_len
 
-        # Create a pseudorandom number generator for sampling
-        seed = self.step()  # Get a unique seed for this iteration
-        g = torch.Generator()
-        g.manual_seed(seed)  # Ensure reproducibility by setting the seed
-
         for i in range(B):
             # Create a collated_masks_attention
             collated_masks_attention.append((batch[i][0]!=0).int())
@@ -277,7 +252,6 @@ class MaskCollator:
                 mask_target, mask_target_complement = self._sample_gene_mask(
                     non_zero_seq_len_cell=non_zero_seq_len_cell,
                     non_zero_seq_len_neighborhood=non_zero_seq_len_neighborhood,
-                    generator=g, # Use the generator for reproducibility
                     mask_size=self.target_mask_size,
                     mask_type='target')
                 masks_target.append(mask_target)
@@ -291,7 +265,6 @@ class MaskCollator:
                     non_zero_seq_len_cell=non_zero_seq_len_cell,
                     non_zero_seq_len_neighborhood=non_zero_seq_len_neighborhood,
                     mask_size=self.context_mask_size,
-                    generator=g, # Use same generator to ensure reproducibility
                     valid_token_masks=masks_target_complement,
                     mask_type='context')
                 masks_context.append(mask_context)

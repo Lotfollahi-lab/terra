@@ -1,26 +1,26 @@
 data:
-  batch_size: 2 # 32
-  data_path: /lustre/scratch126/cellgen/team361/am84/NicheJEPA/datasets/am84/st_data/gold/cell-neighborhood-tokenizer/merfish_mouse_brain_300k/16-shards/merfish_mouse_brain_300k_4_False_read_depth_shifted_log_2170.dataset
+  batch_size: 64 # 64
+  data_path: '/lustre/scratch126/cellgen/team361/am84/NicheJEPA/datasets/am84/st_data/gold/cell-neighborhood-tokenizer/merfish_mouse_brain_8-batch_2-gene-panels/8-shards/merfish_mouse_brain_8-batch_2-gene-panels_4_False_read_depth_shifted_log_2170.dataset'
   split: 0.2
   stratify: False
-  data_set_name: 'merfish_300k'
-  num_workers: 1
+  data_set_name: 'merfish_gp'
+  num_workers: 6
   pin_mem: true
   vocab_size: 1087
-  seq_len_cell: 200
-  seq_len_neighborhood: 200
-  has_cls: True
+  seq_len_cell: 200 # 411
+  seq_len_neighborhood: 200 # 809
+  has_cls: False
   random_state: 0
   sample_subset: False
 logging:
   write_tag: jepa
 mask:
-  context_mask_size: 190 # This doesn't have meaning in segment_masking.
+  context_mask_size: 1220 # This doesn't have meaning in segment_masking.
   target_mask_size: 10 # This doesn't have meaning in segment_masking.
   n_contexts: 1
   n_targets: 9 # This is equivalent to n_segment in segment_masking.
   per_segment_mask_ratio: 0.2
-  segment_masking: False
+  segment_masking: True
 meta:
   enc_depth: 3 # 3
   load_checkpoint: false
@@ -34,7 +34,7 @@ meta:
   pos_learnable: False
   seg_learnable: False
 optimization:
-  epochs: 20
+  epochs: 20 # 20 
   warmup: 5
   ema:
   - 0.9764319982153814

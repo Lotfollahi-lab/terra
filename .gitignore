@@ -30,3 +30,4 @@ __pycache__/
 logs/
 wandb/
 .ipynb_checkpoints
+artifacts/

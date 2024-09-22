@@ -26,7 +26,7 @@ def prepare_dataset(args: dict,
             - stratify: Whether to stratify the dataset during the split.
             - random_state: The random seed for reproducibility.
     split_dataset:
-        If 'True', split the Huggingface dataset into train and test datasets.
+        If 'True', split the huggingface dataset into train and test datasets.
 
     Returns
     -----------

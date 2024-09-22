@@ -7,8 +7,8 @@ data:
   num_workers: 12
   pin_mem: true
   vocab_size: 1087
-  seq_len_cell: 411
-  seq_len_neighborhood: 809
+  seq_len_cell: 200 # 411
+  seq_len_neighborhood: 200 # 809
   has_cls: True
   random_state: 0
   sample_subset: False
@@ -22,7 +22,7 @@ mask:
   per_segment_mask_ratio: 0.2 
   segment_masking: True
 meta:
-  enc_depth: 3
+  enc_depth: 3 # 3
   load_checkpoint: false
   pred_depth: 1
   pred_emb_dim: 768
