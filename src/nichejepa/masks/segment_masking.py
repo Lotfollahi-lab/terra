@@ -182,7 +182,7 @@ class SegmentMaskCollator:
             Sampled target masks collated by batch.
         """
         B = len(batch)
-
+    
         # Collate the batch using default PyTorch collate function
         collated_batch = torch.utils.data.default_collate(batch)
 
@@ -193,14 +193,16 @@ class SegmentMaskCollator:
         keep_tokens_context = self.seq_len
 
         # Create a pseudorandom number generator for sampling
-        seed = self.step()  # Get a unique seed for this iteration
+        #seed = self.step()  # Get a unique seed for this iteration
         g = torch.Generator()
+        seed = 0
         g.manual_seed(seed)  # Ensure reproducibility by setting the seed
-
+        
+        
         for i in range(B):
             # Initialize lists to store target and context masks for each observation
             masks_target, masks_context = [], []
-            
+                       
             # Sample target and context masks for the current observation
             masks_target, masks_context, keep_tokens_target_current_batch = self._sample_gene_mask(batch[i][0], generator=g)
             keep_tokens_target = min(keep_tokens_target, keep_tokens_target_current_batch)
@@ -219,6 +221,7 @@ class SegmentMaskCollator:
         collated_masks_context = [[cm[:keep_tokens_context] for cm in cm_list] for cm_list in collated_masks_context]
         # Step 2: Use default_collate to create a batch
         collated_masks_context = torch.utils.data.default_collate(collated_masks_context)
+        
 
         collated_masks_attention = torch.utils.data.default_collate(collated_masks_attention).unsqueeze(1).unsqueeze(1)
         

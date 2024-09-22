@@ -1,5 +1,5 @@
 data:
-  batch_size: 16 
+  batch_size: 96
   data_path: /lustre/scratch126/cellgen/team361/am84/NicheJEPA/datasets/am84/st_data/gold/cell-neighborhood-tokenizer/merfish_mouse_brain_300k/16-shards/merfish_mouse_brain_300k_4_False_read_depth_shifted_log_2170.dataset
   split: 0.2
   stratify: False
@@ -8,7 +8,7 @@ data:
   pin_mem: true
   vocab_size: 1087
   seq_len_cell: 206 # original len is 411
-  seq_len_neighborhood: 400 #original len is 809
+  seq_len_neighborhood: 809 #original len is 809
   has_cls: True
   random_state: 0
   sample_subset: False
