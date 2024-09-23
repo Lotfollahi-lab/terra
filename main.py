@@ -60,6 +60,7 @@ def process_main(rank, args, params, world_size, devices, logger, folder_path, i
         test_data = infer(params, test_dataset, load_folder_path=folder_path)
         adata_combined = ad.concat(
             [train_data, test_data], axis=0) # concat along the obs (cells)
+        adata_combined.write(f'{folder_path}/adata.h5ad')
         cell_type_nmi_ari = clustering_metrics(
             adata_combined,
             emb_key=f"cell_emb_layer_{params['meta']['enc_depth'] - 1}",
