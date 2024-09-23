@@ -518,7 +518,7 @@ class CellNeighborhoodRankTokenizer:
         # Set dataset ID = gene panel ID
         n_cells = len(adata)
         dataset_ID = self.file_path_to_gene_panel_ID_dict[str(adata_file_path)]
-        dataset_IDs = [dataset_ID] * n_cells
+        dataset_IDs = [str(dataset_ID)] * n_cells
 
         # Get batch IDs
         if "batch" not in adata.obs.keys():
@@ -557,7 +557,7 @@ class CellNeighborhoodRankTokenizer:
             # Add values to cell metadata
             if self.custom_attr_name_dict is not None:
                 for k in cell_metadata.keys():
-                    cell_metadata[k] += adata[i : i + self.chunk_size].obs[k].tolist()
+                    cell_metadata[k] += adata[i : i + self.chunk_size].obs[k].astype(str).tolist()
             else:
                 cell_metadata = None
 
