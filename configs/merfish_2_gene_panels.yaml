@@ -7,11 +7,12 @@ data:
   num_workers: 6
   pin_mem: true
   vocab_size: 1087
-  seq_len_cell: 411 # 200
-  seq_len_neighborhood: 809 # 200
+  seq_len_cell: 100 # 200
+  seq_len_neighborhood: 100 # 200
   has_cls: True
   random_state: 0
   sample_subset: False
+  sampling_strategy: 'random_sampling'
 logging:
   write_tag: jepa
 mask:

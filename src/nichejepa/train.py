@@ -129,6 +129,7 @@ def train(args: dict,
     has_cls = args['data']['has_cls']
     data_set_name = args['data']['data_set_name']
     vocab_size = args['data']['vocab_size']
+    sampling_strategy = args['data']['sampling_strategy']
 
     # Load mask params
     n_targets = args['mask']['n_targets']
@@ -229,7 +230,7 @@ def train(args: dict,
             seq_len_neighborhood=seq_len_neighborhood,
             has_cls=has_cls,
             has_gene_panel=has_gene_panel,
-            per_segment_mask_ratio = per_segment_mask_ratio)
+            per_segment_mask_ratio=per_segment_mask_ratio)
     else:
         mask_collator = MaskCollator(
             n_targets=n_targets,
@@ -255,7 +256,8 @@ def train(args: dict,
         seq_len_cell=seq_len_cell,
         seq_len_neighborhood=seq_len_neighborhood,
         has_cls=has_cls,
-        has_gene_panel=has_gene_panel)
+        has_gene_panel=has_gene_panel,
+        sampling_strategy=sampling_strategy)
 
     _, test_loader, test_sampler = make_cell_neighborhood_dataset(
         batch_size=batch_size,
@@ -270,7 +272,8 @@ def train(args: dict,
         seq_len_cell=seq_len_cell,
         seq_len_neighborhood=seq_len_neighborhood,
         has_cls=has_cls,
-        has_gene_panel=has_gene_panel)
+        has_gene_panel=has_gene_panel,
+        sampling_strategy=sampling_strategy)
 
     ipe = len(train_loader)
 

@@ -358,7 +358,8 @@ class CellNeighborhoodDataset(Dataset):
         tokens: List,
         n_nonzero_tokens: int,
         size: int,
-        sampling_strategy: Literal["normalized_count_rank_sampling"]="normalized_count_rank_sampling",
+        sampling_strategy: Literal['normalized_count_rank_sampling',
+                                   'random_sampling']='random_sampling',
         seed: int=42
         ) -> List:
         """
@@ -382,9 +383,7 @@ class CellNeighborhoodDataset(Dataset):
         sampled_tokens:
             List of sampled tokens.
         """
-        assert size < n_nonzero_tokens
-        
-        if sampling_strategy == "normalized_count_rank_sampling":
+        if sampling_strategy == 'normalized_count_rank_sampling':
             # Set seed for sampling
             np.random.seed(seed)
             
@@ -399,23 +398,30 @@ class CellNeighborhoodDataset(Dataset):
             sum_rank = (n_nonzero_tokens * (n_nonzero_tokens + 1) / 2.0) + 1e-9
             weights = [(n_nonzero_tokens - i)/sum_rank for i in range(n_nonzero_tokens)]
             assert np.isclose(np.sum(weights), 1.0)
-            
-            # Sample seq_cell_len or seq_neighborhood token indices based on
-            # weights
-            sampled_indices = np.random.choice(
-                np.arange(n_nonzero_tokens),
-                size=size,
-                p=weights,
-                replace=False)
-            
-            # Sort sampled indices to preserve rank order
-            sampled_indices = np.sort(sampled_indices)
-            sampled_tokens = [tokens[i] for i in sampled_indices]
-            
-            return sampled_tokens
+        elif sampling_strategy == 'random_sampling':
+            np.random.seed(seed)
+
+            weights = np.ones(n_nonzero_tokens) / n_nonzero_tokens
         else:
             raise ValueError(
                 f"{sampling_strategy} is an invalid sampling strategy.")
+            
+        # Sample seq_cell_len or seq_neighborhood token indices based on
+        # weights
+        sampled_indices = np.random.choice(
+            np.arange(n_nonzero_tokens),
+            size=min(size, n_nonzero_tokens),
+            p=weights,
+            replace=False)
+            
+        # Sort sampled indices to preserve rank order
+        sampled_indices = np.sort(sampled_indices)
+        sampled_tokens = [tokens[i] for i in sampled_indices]
+
+        if size > n_nonzero_tokens:
+            sampled_tokens.extend([0] * (size - len(sampled_tokens)))
+        
+        return sampled_tokens
 
 
 def make_cell_neighborhood_dataset(
@@ -432,7 +438,10 @@ def make_cell_neighborhood_dataset(
     seq_len_neighborhood: int=0,
     has_cls: bool=True,
     has_gene_panel: bool=True,
-    distributed: bool=True
+    distributed: bool=True,
+    sampling_strategy: Optional[
+        Literal['normalized_count_rank_sampling',
+                'random_sampling']]=None,
     ) -> Tuple[CellNeighborhoodDataset,
                torch.utils.data.DataLoader,
                Optional[torch.utils.data.distributed.DistributedSampler]]:
@@ -485,7 +494,8 @@ def make_cell_neighborhood_dataset(
                                       seq_len_cell=seq_len_cell,
                                       seq_len_neighborhood=seq_len_neighborhood,
                                       has_cls=has_cls,
-                                      has_gene_panel=has_gene_panel)
+                                      has_gene_panel=has_gene_panel,
+                                      sampling_strategy=sampling_strategy)
     
     if distributed:
         dist_sampler = CustomDistributedLengthGroupedSampler(
