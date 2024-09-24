@@ -31,6 +31,7 @@ class SegmentMaskCollator:
     has_cls: bool
         If True, the sequence contains a <cls> token at the 0th index, included
         in the masks.
+    has_gene_panel:
     per_segment_mask_ratio: float
         The ratio of elements to be masked in each segment.
     """
@@ -43,6 +44,7 @@ class SegmentMaskCollator:
                  seq_len_cell: int=0,
                  seq_len_neighborhood: int=0,
                  has_cls: bool=False,
+                 has_gene_panel: bool=False,
                  per_segment_mask_ratio: float=0.3):
         self.n_targets = n_targets
         self.n_contexts = n_contexts
@@ -52,11 +54,14 @@ class SegmentMaskCollator:
         self.seq_len_neighborhood = seq_len_neighborhood
         self.seq_len = self.seq_len_cell + self.seq_len_neighborhood
         self.has_cls = has_cls
+        self.has_gene_panel = has_gene_panel
         self.per_segment_mask_ratio = per_segment_mask_ratio
 
         # Determine the valid start position for the mask based on the presence
-        # of a <cls> token
+        # of a <cls> token and gene panel token
         self.valid_min_start = 1 if self.has_cls else 0
+        if has_gene_panel:
+            self.valid_min_start += 1
 
     def segment_masking(self,
                         sequence,
@@ -113,7 +118,9 @@ class SegmentMaskCollator:
                 masked_indices = segment_non_zero_indices[mask_indices].tolist()  # Convert to list
                 context_mask[masked_indices] = 0  # Set masked indices to 0 in the context mask
                 keep_tokens_target = min(keep_tokens_target, len(masked_indices))  # Update minimum tokens target
-                if self.has_cls: # add index of cls
+                if self.has_cls and self.has_gene_panel: # add index of cls and gene panel
+                    masked_indices = [0, 1] + masked_indices
+                elif self.has_cls or self.has_gene_panel:
                     masked_indices = [0] + masked_indices
                 segment_masks.append(torch.tensor(masked_indices))  # Append the masked indices io the list
             else:
@@ -124,7 +131,9 @@ class SegmentMaskCollator:
         context_mask = torch.nonzero(context_mask).squeeze()
         context_mask = context_mask[torch.randperm(len(context_mask))]
         # Add cls to context if it exist
-        if self.has_cls:
+        if self.has_cls and self.has_gene_panel:
+            context_mask = torch.cat((torch.tensor([0, 1]), context_mask))
+        elif self.has_cls or self.has_gene_panel:
             context_mask = torch.cat((torch.tensor([0]), context_mask))
         return segment_masks, [context_mask], keep_tokens_target
 
@@ -195,7 +204,7 @@ class SegmentMaskCollator:
             # Append the masks for the current observation to the collated lists
             collated_masks_target.append(masks_target)
             collated_masks_context.append(masks_context)
-            collated_masks_attention.append((batch[i][0]!=0).int())
+            collated_masks_attention.append((batch[i][0] != 0).int())
 
         # Trim masks to the minimum size across the batch and collate them
         collated_masks_target = [[cm[:keep_tokens_target] for cm in cm_list] for cm_list in collated_masks_target]

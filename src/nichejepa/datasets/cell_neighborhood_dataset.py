@@ -22,6 +22,7 @@ class CellNeighborhoodDataset(Dataset):
                  seq_len_cell: int=0,
                  seq_len_neighborhood: int=0,
                  has_cls: bool=True,
+                 has_gene_panel: bool=True,
                  sampling_strategy: Optional[str]=None,
                  sampling_seed: Optional[int]=42
                  ):
@@ -41,6 +42,7 @@ class CellNeighborhoodDataset(Dataset):
             Sequence length of the neighborhood tokens.
         has_cls:
             If 'True', a <cls> token is included for each cell at position 0.
+        has_gene_panel:
         sampling_strategy:
             Token sampling strategy.
         sampling_seed:
@@ -53,6 +55,7 @@ class CellNeighborhoodDataset(Dataset):
         self.seq_len_neighborhood = seq_len_neighborhood
         self.seq_len = seq_len_cell + seq_len_neighborhood
         self.has_cls = has_cls
+        self.has_gene_panel = has_gene_panel
         self.sampling_strategy = sampling_strategy
         self.sampling_seed = sampling_seed
         
@@ -85,6 +88,15 @@ class CellNeighborhoodDataset(Dataset):
                                "n_nonzero_neighborhood_tokens",
                                "n_nonzero_tokens"]:
                     metadata[key] = self.dataset[item][key]
+
+            if self.has_gene_panel:
+                # If a <gene_panel> token is used, prepend it to the tokens and
+                # consider it for segment labels
+                tokens = [self.vocab_size - 
+                          (0 if self.has_cls else 1) + 
+                          int(metadata['dataset_id'])] + tokens
+
+                n_nonzero_tokens += 1
             
             if self.has_cls:
                 # If a <cls> token is used, prepend it to the tokens and
@@ -93,20 +105,17 @@ class CellNeighborhoodDataset(Dataset):
                 
                 # Set total number of nonzero tokens to include <cls> token
                 n_nonzero_tokens += 1
+
+            # Create segment labels: 0 for cls and gene panel token, 1 for cell
+            # tokens and 2 for neighborhood tokens
+            seg_labels = torch.cat(
+                (torch.zeros(self.has_cls + self.has_gene_panel),
+                 torch.ones(self.seq_len_cell),
+                 torch.ones(self.seq_len_neighborhood) * 2)).int()
                 
-                # Create segment labels: 1 for cell tokens and <cls> token and 2
-                # for neighborhood tokens (maybe this needs to be changed)
-                labels = torch.cat(
-                    (torch.ones(self.seq_len_cell + 1),
-                     torch.ones(self.seq_len_neighborhood) * 2)).int()
-            else:
-                # Create segment labels: 1 for cell tokens, 2 for neighborhood
-                # tokens
-                labels = torch.cat(
-                    (torch.ones(self.seq_len_cell),
-                    torch.ones(self.seq_len_neighborhood) * 2)).int()
-                
-            return torch.tensor(tokens), labels, metadata, n_nonzero_cell_tokens, n_nonzero_neighborhood_tokens, n_nonzero_tokens
+            return (torch.tensor(tokens), seg_labels, metadata,
+                    n_nonzero_cell_tokens, n_nonzero_neighborhood_tokens,
+                    n_nonzero_tokens)
         
         # Case 2: only cell tokens are included
         elif self.seq_len_cell > 0:
@@ -130,21 +139,31 @@ class CellNeighborhoodDataset(Dataset):
                                "n_nonzero_tokens"]:
                     metadata[key] = self.dataset[item][key]
             
+            if self.has_gene_panel:
+                            # If a <gene_panel> token is used, prepend it to the tokens and
+                            # consider it for segment labels
+                            tokens = [self.vocab_size - 
+                                      (0 if self.has_cls else 1) + 
+                                      int(metadata['dataset_id'])] + tokens
+
+                            n_nonzero_tokens += 1
+            
             if self.has_cls:
                 # If a <cls> token is used, prepend it to the tokens and
-                # consider it for segment labels  
+                # consider it for segment labels
                 tokens = [self.vocab_size] + tokens
-
+                
                 # Set total number of nonzero tokens to include <cls> token
                 n_nonzero_tokens += 1
+
+            # Create segment labels: 0 for cls and gene panel token, 1 for cell
+            # tokens
+            seg_labels = torch.cat(
+                (torch.zeros(self.has_cls + self.has_gene_panel),
+                 torch.ones(self.seq_len_cell))).int()
                 
-                # Create segment labels: 1 for cell tokens and <cls> token
-                labels = torch.ones(self.seq_len_cell + 1).int()
-            else:
-                # Create segment labels: 1 for cell tokens
-                labels = torch.ones(self.seq_len_cell).int()
-                
-            return torch.tensor(tokens), labels, metadata, n_nonzero_cell_tokens, n_nonzero_tokens
+            return (torch.tensor(tokens), seg_labels, metadata,
+                    n_nonzero_cell_tokens, n_nonzero_tokens)
         
         # Case 3: only neighborhood tokens are included
         elif self.seq_len_neighborhood > 0:
@@ -168,22 +187,31 @@ class CellNeighborhoodDataset(Dataset):
                                "n_nonzero_tokens"]:
                     metadata[key] = self.dataset[item][key]
 
+            if self.has_gene_panel:
+                # If a <gene_panel> token is used, prepend it to the tokens and
+                # consider it for segment labels
+                tokens = [self.vocab_size - 
+                          (0 if self.has_cls else 1) + 
+                          int(metadata['dataset_id'])] + tokens
+
+                n_nonzero_tokens += 1
+            
             if self.has_cls:
                 # If a <cls> token is used, prepend it to the tokens and
-                # consider it for segment labels  
+                # consider it for segment labels
                 tokens = [self.vocab_size] + tokens
-
+                
                 # Set total number of nonzero tokens to include <cls> token
                 n_nonzero_tokens += 1
                 
-                # Create segment labels: 2 for neighborhood tokens and <cls>
-                # token (maybe this needs to be changed)
-                labels = (torch.ones(self.seq_len_neighborhood + 1) * 2).int()
-            else:
-                # Create segment labels: 2 for neighborhood tokens
-                labels = (torch.ones(self.seq_len_neighborhood) * 2).int()
+            # Create segment labels: 0 for cls and gene panel token, 2 for
+            # neighborhood tokens
+            seg_labels = torch.cat(
+                (torch.zeros(self.has_cls + self.has_gene_panel),
+                 torch.ones(self.seq_len_neighborhood) * 2)).int()
 
-            return torch.tensor(tokens), labels, metadata, n_nonzero_neighborhood_tokens, n_nonzero_tokens
+            return (torch.tensor(tokens), seg_labels, metadata,
+                    n_nonzero_neighborhood_tokens, n_nonzero_tokens)
         
         # Case 4: neither cell nor neighborhood tokens are included, which is an
         # invalid state
@@ -403,6 +431,7 @@ def make_cell_neighborhood_dataset(
     seq_len_cell: int=0,
     seq_len_neighborhood: int=0,
     has_cls: bool=True,
+    has_gene_panel: bool=True,
     distributed: bool=True
     ) -> Tuple[CellNeighborhoodDataset,
                torch.utils.data.DataLoader,
@@ -438,6 +467,7 @@ def make_cell_neighborhood_dataset(
         Sequence length of the neighborhood tokens.
     has_cls:
         If 'True', a <cls> token is included for each cell at position 0.
+    has_gene_panel:
     distributed:
         If 'True', use distributed mode.
 
@@ -454,7 +484,8 @@ def make_cell_neighborhood_dataset(
                                       vocab_size,
                                       seq_len_cell=seq_len_cell,
                                       seq_len_neighborhood=seq_len_neighborhood,
-                                      has_cls=has_cls)
+                                      has_cls=has_cls,
+                                      has_gene_panel=has_gene_panel)
     
     if distributed:
         dist_sampler = CustomDistributedLengthGroupedSampler(

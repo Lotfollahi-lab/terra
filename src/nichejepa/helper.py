@@ -126,6 +126,7 @@ def init_model(device: str,
                enc_depth: int=12,
                pred_emb_dim: int=384,
                pred_depth: int=6,
+               gene_panel_size: int=0,
                pos_learnable: bool=False,
                seg_learnable: bool=False,
                has_cls: bool=False
@@ -150,6 +151,7 @@ def init_model(device: str,
         Dimension of the predictor embedding.        
     pred_depth:
         Number of transformer blocks in the predictor.
+    gene_panel_size:
     pos_learnable:
         If 'True', positional embeddings are learnable, otherwise use sin cos
         positional embeddings.
@@ -170,6 +172,7 @@ def init_model(device: str,
         vocab_size=vocab_size,
         seq_len=seq_len,
         has_cls=has_cls,
+        gene_panel_size=gene_panel_size,
         pos_learnable=pos_learnable,
         seg_learnable=seg_learnable,
         embed_dim=enc_emb_dim,
@@ -178,6 +181,7 @@ def init_model(device: str,
         embed_dim=enc_emb_dim,
         seq_len=seq_len,
         has_cls=has_cls,
+        has_gene_panel=(True if gene_panel_size >0 else False),
         pos_learnable=pos_learnable,
         seg_learnable=seg_learnable,
         predictor_embed_dim=pred_emb_dim,

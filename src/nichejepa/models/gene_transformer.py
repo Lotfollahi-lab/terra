@@ -21,7 +21,8 @@ from ..utils.tensors import (repeat_interleave_batch,
 
 def get_1d_sincos_pos_embed(embed_dim: int,
                             seq_len: int,
-                            cls_token: bool=False
+                            cls_token: bool=False,
+                            gene_panel_token: bool=False
                             ) -> np.ndarray:
     """
     Retrieve 1D sin cos positional embedding based on number of positions and
@@ -47,6 +48,9 @@ def get_1d_sincos_pos_embed(embed_dim: int,
     pos = np.arange(seq_len, dtype=float)
     pos_embed = get_1d_sincos_pos_embed_from_pos(embed_dim, pos)
     if cls_token:
+        pos_embed = np.concatenate([np.zeros([1, embed_dim]), pos_embed],
+                                   axis=0)
+    if gene_panel_token:
         pos_embed = np.concatenate([np.zeros([1, embed_dim]), pos_embed],
                                    axis=0)
 
@@ -396,6 +400,7 @@ class GeneTransformerEncoder(nn.Module):
         Length of the token sequences (w/o <cls> token).
     has_cls:
         If 'True', sequences include a <cls> token at the start.
+    gene_panel_size:
     pos_learnable:
         If 'True', positional embeddings are learnable, otherwise use sin cos
         positional embeddings.
@@ -435,6 +440,7 @@ class GeneTransformerEncoder(nn.Module):
                  vocab_size: int,
                  seq_len: int,
                  has_cls: bool=True,
+                 gene_panel_size: int=0,
                  pos_learnable: bool=False,
                  seg_learnable: bool=False,
                  embed_dim: int=768,
@@ -455,13 +461,18 @@ class GeneTransformerEncoder(nn.Module):
         super().__init__()
         self.seq_len = seq_len
         self.has_cls = has_cls
+        self.gene_panel_size = gene_panel_size
+        if gene_panel_size > 0:
+            self.has_gene_panel = True
+        else:
+            self.has_gene_panel = False 
         self.embed_dim = embed_dim
         self.num_heads = num_heads
         self.init_std = init_std
         
         # Initialize gene embeddings
         self.gene_embed = nn.Embedding(
-            vocab_size + (1 if self.has_cls else 0), # vocab_size incl. <pad>
+            vocab_size + (1 if self.has_cls else 0) + self.gene_panel_size, # vocab_size incl. <pad>
             embed_dim,
             padding_idx=0)
                                           
@@ -469,8 +480,8 @@ class GeneTransformerEncoder(nn.Module):
         # gene tokens)
         if seg_learnable:
           self.seg_embed = nn.Embedding(2 + 1, # incl. <pad>
-                                      embed_dim,
-                                      padding_idx=0)
+                                        embed_dim,
+                                        padding_idx=0)
         else:
             # If not learnable, initialize nn.Embedding with predefined values
             self.seg_embed = nn.Embedding(2+1, embed_dim, padding_idx=0)
@@ -488,18 +499,30 @@ class GeneTransformerEncoder(nn.Module):
         # Retrieve positional embeddings
         if pos_learnable:
             self.pos_embed = nn.Parameter(
-                torch.zeros(1, seq_len + (1 if has_cls else 0), embed_dim),
+                torch.zeros(1,
+                            seq_len + (1 if has_cls else 0) + (
+                                1 if self.has_gene_panel else 0),
+                            embed_dim),
                 requires_grad=True)
             trunc_normal_(self.pos_embed, std=self.init_std)
             if has_cls:
                 self.pos_embed.data[0, 0, :] = 0
+                if gene_panel_size > 0:
+                    self.pos_embed.data[0, 1, :] = 0
+            elif gene_panel_size > 0:
+                self.pos_embed.data[0, 0, :] = 0
         else:
             self.pos_embed = nn.Parameter(
-                torch.zeros(1, seq_len + (1 if has_cls else 0), embed_dim),
+                torch.zeros(1,
+                            seq_len + (1 if has_cls else 0) + (
+                                1 if self.has_gene_panel else 0),
+                            embed_dim),
                 requires_grad=False)
-            pos_embed = get_1d_sincos_pos_embed(self.pos_embed.shape[-1],
-                                                self.seq_len,
-                                                cls_token=has_cls)
+            pos_embed = get_1d_sincos_pos_embed(
+                self.pos_embed.shape[-1],
+                self.seq_len,
+                cls_token=has_cls,
+                gene_panel_token=self.has_gene_panel)
             self.pos_embed.data.copy_(
                 torch.from_numpy(pos_embed).float().unsqueeze(0))
 
@@ -591,8 +614,8 @@ class GeneTransformerEncoder(nn.Module):
 
         # Get gene embeddings for sequence of gene tokens
         x = self.gene_embed(x)
-        B, N, D = x.shape # B: BATCH_SIZE, N: SEQ_LEN (+1 if <cls>),
-                          # D: EMBED_DIM
+        B, N, D = x.shape # B: BATCH_SIZE, N: SEQ_LEN (+1 if <cls> +1 if gene
+                          # panel token), D: EMBED_DIM
         
         # Add positional and segment embeddings to gene embedding
         x = x + self.pos_embed + self.seg_embed(seg_label)
@@ -740,6 +763,7 @@ class GeneTransformerPredictor(nn.Module):
         Length of the token sequences (w/o <cls> token).
     has_cls:
         If 'True', sequences include a <cls> token at the start.
+    has_gene_panel:
     pos_learnable:
         If 'True', positional embeddings are learnable, otherwise use sin cos
         positional embeddings.
@@ -775,6 +799,7 @@ class GeneTransformerPredictor(nn.Module):
                  embed_dim: int,
                  seq_len: int,
                  has_cls: bool=True,
+                 has_gene_panel: bool=True,
                  pos_learnable: bool=False,
                  seg_learnable: bool=False,
                  predictor_embed_dim: int=384,
@@ -803,12 +828,13 @@ class GeneTransformerPredictor(nn.Module):
 
         # Define decaying drop path rate (higher drop rate in deeper blocks)
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]
+
         # Initialize segment embeddings (to differentiate cell and neighborhood
         # gene tokens)
         if seg_learnable:
-          self.seg_embed = nn.Embedding(2 + 1, # incl. <pad>
-                                      predictor_embed_dim,
-                                      padding_idx=0)
+            self.seg_embed = nn.Embedding(2 + 1, # incl. <pad>
+                                        predictor_embed_dim,
+                                        padding_idx=0)
         else:
             # If not learnable, initialize nn.Embedding with predefined values
             self.seg_embed = nn.Embedding(2+1, predictor_embed_dim, padding_idx=0)
@@ -827,21 +853,28 @@ class GeneTransformerPredictor(nn.Module):
         if pos_learnable:
             self.predictor_pos_embed = nn.Parameter(
                 torch.zeros(1,
-                            seq_len + (1 if has_cls else 0),
+                            seq_len + (1 if has_cls else 0) + (
+                                1 if has_gene_panel else 0),
                             predictor_embed_dim),
                 requires_grad=True)
             trunc_normal_(self.predictor_pos_embed, std=self.init_std)
-            if has_cls:
+            if has_cls and has_gene_panel:
+                self.predictor_pos_embed.data[0, 0, :] = 0
+                self.predictor_pos_embed.data[0, 1, :] = 0
+            if has_cls or has_gene_panel:
                 self.predictor_pos_embed.data[0, 0, :] = 0
         else:
             self.predictor_pos_embed = nn.Parameter(
-                torch.zeros(1, seq_len + (1 if has_cls else 0),
-                predictor_embed_dim),
-                requires_grad=False)
+                torch.zeros(1,
+                            seq_len + (1 if has_cls else 0) + (
+                                1 if has_gene_panel else 0),
+                            predictor_embed_dim),
+                            requires_grad=False)
             predictor_pos_embed = get_1d_sincos_pos_embed(
                 self.predictor_pos_embed.shape[-1],
                 seq_len,
-                cls_token=has_cls)
+                cls_token=has_cls,
+                gene_panel_token=has_gene_panel)
             self.predictor_pos_embed.data.copy_(
                 torch.from_numpy(predictor_pos_embed).float().unsqueeze(0))
         
@@ -948,22 +981,24 @@ class GeneTransformerPredictor(nn.Module):
 
         # Add positional embeddings to tokens from context masks
         x_pos_embed = self.predictor_pos_embed.repeat(B, 1, 1)
-        x_seg_labels = self.seg_embed(seg_label)
+        x_seg_embed = self.seg_embed(seg_label)
         x += apply_masks(x_pos_embed, masks_enc) # only keep pos from encoder
                                                  # masks
 
-        x += apply_masks(x_seg_labels, masks_enc) # only keep seg from encoder
-                                                  # masks
+        x += apply_masks(x_seg_embed, masks_enc) # only keep seg from encoder
+                                                 # masks
 
         _, N_ctxt, D = x.shape # N_ctxt: CONTEXT_MASK_SIZE, D: PRED_EMBED_DIM
 
         # Create positional embeddings for tokens from target masks
         pos_embs = self.predictor_pos_embed.repeat(B, 1, 1)
         seg_embs = self.seg_embed(seg_label)
+
         pos_embs = apply_masks(pos_embs, masks_pred) # only keep pos from
                                                      # predictor masks
         seg_embs = apply_masks(seg_embs, masks_pred) # only keep seg from
-                                                         # predictor masks
+                                                     # predictor masks
+          
         pos_embs = repeat_interleave_batch(
             pos_embs,
             B,

@@ -111,6 +111,7 @@ def train(args: dict,
     enc_emb_dim = args['meta']['enc_emb_dim']    
     pred_depth = args['meta']['pred_depth']
     pred_emb_dim = args['meta']['pred_emb_dim']
+    gene_panel_size = args['meta']['gene_panel_size']
     pos_learnable = args['meta']['pos_learnable']
     seg_learnable = args['meta']['seg_learnable']
     if not torch.cuda.is_available():
@@ -152,6 +153,7 @@ def train(args: dict,
     final_lr = args['optimization']['final_lr']
 
     seq_len = seq_len_cell + seq_len_neighborhood
+    has_gene_panel = True if gene_panel_size > 0 else False
 
     # Create folder to store artifacts
     if not save_folder_path:
@@ -212,6 +214,7 @@ def train(args: dict,
         enc_depth=enc_depth,
         pred_emb_dim=pred_emb_dim,
         pred_depth=pred_depth,
+        gene_panel_size=gene_panel_size,
         pos_learnable=pos_learnable,
         seg_learnable=seg_learnable,
         has_cls=has_cls)
@@ -225,6 +228,7 @@ def train(args: dict,
             seq_len_cell=seq_len_cell,
             seq_len_neighborhood=seq_len_neighborhood,
             has_cls=has_cls,
+            has_gene_panel=has_gene_panel,
             per_segment_mask_ratio = per_segment_mask_ratio)
     else:
         mask_collator = MaskCollator(
@@ -234,7 +238,8 @@ def train(args: dict,
             context_mask_size=context_mask_size,
             seq_len_cell=seq_len_cell,
             seq_len_neighborhood=seq_len_neighborhood,
-            has_cls=has_cls)
+            has_cls=has_cls,
+            has_gene_panel=has_gene_panel)
     
     # Initialize dataloader and -sampler
     _, train_loader, train_sampler = make_cell_neighborhood_dataset(
@@ -249,7 +254,8 @@ def train(args: dict,
         drop_last=False,
         seq_len_cell=seq_len_cell,
         seq_len_neighborhood=seq_len_neighborhood,
-        has_cls=has_cls)
+        has_cls=has_cls,
+        has_gene_panel=has_gene_panel)
 
     _, test_loader, test_sampler = make_cell_neighborhood_dataset(
         batch_size=batch_size,
@@ -263,7 +269,8 @@ def train(args: dict,
         drop_last=False,
         seq_len_cell=seq_len_cell,
         seq_len_neighborhood=seq_len_neighborhood,
-        has_cls=has_cls)
+        has_cls=has_cls,
+        has_gene_panel=has_gene_panel)
 
     ipe = len(train_loader)
 
@@ -338,16 +345,16 @@ def train(args: dict,
         maskB_meter = AverageMeter()
         time_meter = AverageMeter()
 
-        for itr, (udata, masks_enc, masks_pred,  masks_attention) in enumerate(train_loader):
+        for itr, (udata, masks_enc, masks_pred, masks_attention) in enumerate(train_loader):
             def load_cell_neighborhoods():
                 # -- unsupervised imgs
                 cell_neighborhood_tokens = udata[0].to(device,
                                                        non_blocking=True)
-                seg_label = udata[1].to(device, non_blocking=True)                 
+                seg_label = udata[1].to(device, non_blocking=True)
                 masks_1 = [u.to(device, non_blocking=True) for u in masks_enc]
                 masks_2 = [u.to(device, non_blocking=True) for u in masks_pred]
                 masks_3 = masks_attention.to(device, non_blocking=True)
-                return (cell_neighborhood_tokens, seg_label,  masks_1, masks_2, masks_3)
+                return (cell_neighborhood_tokens, seg_label, masks_1, masks_2, masks_3)
             cell_neighborhood_tokens, seg_label, masks_enc, masks_pred, masks_attention = load_cell_neighborhoods()
             maskA_meter.update(len(masks_enc[0][0]))
             maskB_meter.update(len(masks_pred[0][0]))

@@ -24,7 +24,7 @@ mask:
 meta:
   enc_depth: 3 # 3
   load_checkpoint: false
-  load_timestamp: '22092024_202626_308'
+  load_timestamp: '23092024_163002_997'
   pred_depth: 1 # 1
   pred_emb_dim: 768
   enc_emb_dim: 768
@@ -47,5 +47,3 @@ optimization:
   weight_decay: 0.04
   final_weight_decay: 0.4
   ipe_scale: 1.0
-embedding:
-  agg_type: 'avg'
