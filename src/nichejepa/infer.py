@@ -264,6 +264,12 @@ def infer(args: dict,
                     seq_len_cell=seq_len_cell,
                     has_cls=has_cls,
                     has_gene_panel=has_gene_panel)
+
+                cell_emb = compute_mean_unmasked_emb(emb,
+                                                     cell_mask)
+                neighborhood_emb = compute_mean_unmasked_emb(
+                    emb,
+                    neighborhood_mask)
             # Keep elements relevant to cell embedding
             elif (agg_type == "avg") or (agg_type == "weighted_avg"):
                 cell_mask = create_binary_selection_mask(
