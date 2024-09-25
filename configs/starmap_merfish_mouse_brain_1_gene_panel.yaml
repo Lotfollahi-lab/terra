@@ -1,14 +1,14 @@
 data:
   batch_size: 64 # 64
-  data_path: '/lustre/scratch126/cellgen/team361/am84/NicheJEPA/datasets/am84/st_data/gold/cell-neighborhood-tokenizer/merfish_mouse_brain_300k_2-gene-panels/16-shards/merfish_mouse_brain_300k_2-gene-panels_4_False_read_depth_shifted_log_2170.dataset'
+  data_path: '/lustre/scratch126/cellgen/team361/am84/NicheJEPA/datasets/am84/st_data/gold/cell-neighborhood-tokenizer/starmap_merfish_mouse_brain_harmonized_1-gene-panels/16-shards/starmap_merfish_mouse_brain_harmonized_1-gene-panels_4_False_read_depth_shifted_log_864.dataset'
   split: 0.2
   stratify: False
-  data_set_name: 'merfish_300k_2_gene_panels'
+  data_set_name: 'starmap_merfish_mouse_brain_1_gene_panel'
   num_workers: 6
   pin_mem: true
-  vocab_size: 1087
-  seq_len_cell: 160 # 321
-  seq_len_neighborhood: 324 # 649
+  vocab_size: 434
+  seq_len_cell: 151
+  seq_len_neighborhood: 248
   has_cls: True
   random_state: 0
   sample_subset: False
@@ -35,7 +35,7 @@ meta:
   use_bfloat16: True
   pos_learnable: False
   seg_learnable: False
-  gene_panel_size: 2
+  gene_panel_size: 0
 optimization:
   epochs: 20
   warmup: 3

@@ -25,7 +25,7 @@ meta:
   enc_depth: 3 # 3
   load_checkpoint: false
   pred_depth: 1 # 1
-  pred_emb_dim: 384
+  pred_emb_dim: 768
   enc_emb_dim: 768
   enc_pred_depth: 31
   top_k: 127
@@ -39,9 +39,12 @@ optimization:
   ema:
   - 0.9764319982153814
   - 1.0
-  start_lr: 5.0e-05
-  lr: 0.000001
-  final_lr: 1.0e-06
-  weight_decay: 0.04
+final_lr: 2.0e-05
   final_weight_decay: 0.4
+  grad_accum_steps: 1
   ipe_scale: 1.0
+  lr: 2.0e-05
+  start_lr: 2.0e-05
+  use_flash_attention: false
+  warmup: 3
+  weight_decay: 0.04
