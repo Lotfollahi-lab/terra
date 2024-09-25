@@ -346,9 +346,6 @@ def infer(args: dict,
    
     # Store cell and neighborhood embeddings of all observations across layers  
     for i in range(len(all_cell_emb_list)):
-        print(np.array(torch.cat(
-            all_cell_emb_list[i],
-            dim=0).cpu()).shape)
         adata.obsm[f"cell_emb_layer_{i}"] = np.array(torch.cat(
             all_cell_emb_list[i],
             dim=0).cpu())
