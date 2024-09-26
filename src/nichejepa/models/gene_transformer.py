@@ -20,39 +20,33 @@ from ..utils.tensors import (repeat_interleave_batch,
 
 
 def get_1d_sincos_pos_embed(embed_dim: int,
-                            seq_len: int,
-                            cls_token: bool=False,
-                            gene_panel_token: bool=False
+                            n_zero_pos: int,
+                            n_sincos_pos: int,
                             ) -> np.ndarray:
     """
-    Retrieve 1D sin cos positional embedding based on number of positions and
-    presence of <cls> token.
+    Retrieve 1D sin cos positional embedding.
 
     Parameters
     -----------
     embed_dim:
         Output dimension of the positional embedding (for each position). Has to
         be divisible by 2.
-    seq_len:
-        Number of positions to be embedded.
-    cls_token:
-        If 'True', considers a <cls> token and assigns a positional embedding of
-        0s.
+    n_zero_pos:
+        Number of positions to be embedded with 0s.
+    n_sincos_pos:
+        Number of positions to be embedded with sin cos positional embeddings.
 
     Returns
     -----------
     pos_embed:
-        The positional embedding with shape (1+SEQ_LEN, EMBED_DIM) w/ <cls>
-        token or shape (SEQ_LEN, EMBED_DIM) w/o <cls> token.
+        The positional embedding with shape (n_zero_pos+n_sincos_pos,
+        embed_dim).
     """
-    pos = np.arange(seq_len, dtype=float)
-    pos_embed = get_1d_sincos_pos_embed_from_pos(embed_dim, pos)
-    if cls_token:
-        pos_embed = np.concatenate([np.zeros([1, embed_dim]), pos_embed],
-                                   axis=0)
-    if gene_panel_token:
-        pos_embed = np.concatenate([np.zeros([1, embed_dim]), pos_embed],
-                                   axis=0)
+    sincos_pos = np.arange(n_sincos_pos, dtype=float)
+    pos_embed = get_1d_sincos_pos_embed_from_pos(embed_dim, sincos_pos)
+    if n_zero_pos > 0:
+        pos_embed = np.concatenate([np.zeros([n_zero_pos, embed_dim]),
+                                    pos_embed], axis=0)
 
     return pos_embed
 
@@ -70,12 +64,12 @@ def get_1d_sincos_pos_embed_from_pos(embed_dim: int,
         Output dimension of the positional embedding (for each position). Has
         to be divisible by 2.
     pos:
-        An array containing the positions to be embedded with shape (SEQ_LEN,).
+        An array containing the positions to be embedded.
         
     Returns
     -----------
     pos_emb:
-        The positional embedding with shape (SEQ_LEN, EMBED_DIM).
+        The positional embedding with shape (len(pos), embed_dim).
     """
     assert embed_dim % 2 == 0
     omega = np.arange(embed_dim // 2, dtype=float)
@@ -440,7 +434,7 @@ class GeneTransformerEncoder(nn.Module):
                  vocab_size: int,
                  seq_len: int,
                  has_cls: bool=True,
-                 gene_panel_size: int=0,
+                 special_token_size: int=0,
                  pos_learnable: bool=False,
                  seg_learnable: bool=False,
                  embed_dim: int=768,
@@ -472,7 +466,7 @@ class GeneTransformerEncoder(nn.Module):
         
         # Initialize gene embeddings
         self.gene_embed = nn.Embedding(
-            vocab_size + (1 if self.has_cls else 0) + self.gene_panel_size, # vocab_size incl. <pad>
+            vocab_size + special_token_size, # vocab_size includes <pad>
             embed_dim,
             padding_idx=0)
                                           
@@ -500,29 +494,22 @@ class GeneTransformerEncoder(nn.Module):
         if pos_learnable:
             self.pos_embed = nn.Parameter(
                 torch.zeros(1,
-                            seq_len + (1 if has_cls else 0) + (
-                                1 if self.has_gene_panel else 0),
+                            seq_len + special_token_len,
                             embed_dim),
                 requires_grad=True)
             trunc_normal_(self.pos_embed, std=self.init_std)
-            if has_cls:
-                self.pos_embed.data[0, 0, :] = 0
-                if gene_panel_size > 0:
-                    self.pos_embed.data[0, 1, :] = 0
-            elif gene_panel_size > 0:
-                self.pos_embed.data[0, 0, :] = 0
+            if special_token_len > 0:
+                self.pos_embed.data[0, 0:special_token_len, :] = 0
         else:
             self.pos_embed = nn.Parameter(
                 torch.zeros(1,
-                            seq_len + (1 if has_cls else 0) + (
-                                1 if self.has_gene_panel else 0),
+                            seq_len + special_token_len,
                             embed_dim),
                 requires_grad=False)
             pos_embed = get_1d_sincos_pos_embed(
-                self.pos_embed.shape[-1],
-                self.seq_len,
-                cls_token=has_cls,
-                gene_panel_token=self.has_gene_panel)
+                embed_dim=self.pos_embed.shape[-1],
+                n_zero_pos=special_token_len,
+                n_sincos_pos=seq_len)
             self.pos_embed.data.copy_(
                 torch.from_numpy(pos_embed).float().unsqueeze(0))
 
@@ -853,28 +840,22 @@ class GeneTransformerPredictor(nn.Module):
         if pos_learnable:
             self.predictor_pos_embed = nn.Parameter(
                 torch.zeros(1,
-                            seq_len + (1 if has_cls else 0) + (
-                                1 if has_gene_panel else 0),
+                            seq_len + special_token_len,
                             predictor_embed_dim),
                 requires_grad=True)
             trunc_normal_(self.predictor_pos_embed, std=self.init_std)
-            if has_cls and has_gene_panel:
-                self.predictor_pos_embed.data[0, 0, :] = 0
-                self.predictor_pos_embed.data[0, 1, :] = 0
-            if has_cls or has_gene_panel:
-                self.predictor_pos_embed.data[0, 0, :] = 0
+            if special_token_len > 0:
+                self.predictor_pos_embed.data[0, 0:special_token_len, :] = 0
         else:
             self.predictor_pos_embed = nn.Parameter(
                 torch.zeros(1,
-                            seq_len + (1 if has_cls else 0) + (
-                                1 if has_gene_panel else 0),
+                            seq_len + special_token_len,
                             predictor_embed_dim),
                             requires_grad=False)
             predictor_pos_embed = get_1d_sincos_pos_embed(
-                self.predictor_pos_embed.shape[-1],
-                seq_len,
-                cls_token=has_cls,
-                gene_panel_token=has_gene_panel)
+                embed_dim=self.predictor_pos_embed.shape[-1],
+                n_sincos_pos=seq_len,
+                n_zero_pos=special_token_len)
             self.predictor_pos_embed.data.copy_(
                 torch.from_numpy(predictor_pos_embed).float().unsqueeze(0))
         
