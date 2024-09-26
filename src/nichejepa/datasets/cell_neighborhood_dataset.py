@@ -23,6 +23,7 @@ class CellNeighborhoodDataset(Dataset):
                  seq_len_neighborhood: int=0,
                  has_cls: bool=True,
                  has_gene_panel: bool=True,
+                 special_token_col: str='dataset_id',
                  sampling_strategy: Optional[str]=None,
                  sampling_seed: Optional[int]=42
                  ):
@@ -94,7 +95,7 @@ class CellNeighborhoodDataset(Dataset):
                 # consider it for segment labels
                 tokens = [self.vocab_size +
                           (1 if self.has_cls else 0) + 
-                          int(metadata['dataset_id'])] + tokens
+                          int(metadata[special_token_col])] + tokens
 
                 n_nonzero_tokens += 1
             
@@ -144,7 +145,7 @@ class CellNeighborhoodDataset(Dataset):
                             # consider it for segment labels
                             tokens = [self.vocab_size + 
                                       (1 if self.has_cls else 0) + 
-                                      int(metadata['dataset_id'])] + tokens
+                                      int(metadata[special_token_col])] + tokens
 
                             n_nonzero_tokens += 1
             
@@ -192,7 +193,7 @@ class CellNeighborhoodDataset(Dataset):
                 # consider it for segment labels
                 tokens = [self.vocab_size + 
                           (1 if self.has_cls else 0) + 
-                          int(metadata['dataset_id'])] + tokens
+                          int(metadata[special_token_col])] + tokens
 
                 n_nonzero_tokens += 1
             
@@ -438,6 +439,7 @@ def make_cell_neighborhood_dataset(
     seq_len_neighborhood: int=0,
     has_cls: bool=True,
     has_gene_panel: bool=True,
+    special_token_col: str='dataset_id',
     distributed: bool=True,
     sampling_strategy: Optional[
         Literal['normalized_count_rank_sampling',
@@ -495,6 +497,7 @@ def make_cell_neighborhood_dataset(
                                       seq_len_neighborhood=seq_len_neighborhood,
                                       has_cls=has_cls,
                                       has_gene_panel=has_gene_panel,
+                                      special_token_col=special_token_col,
                                       sampling_strategy=sampling_strategy)
     
     if distributed:
