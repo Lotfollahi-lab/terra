@@ -21,7 +21,7 @@ class CellNeighborhoodDataset(Dataset):
                  vocab_size: int,
                  seq_len_cell: int=0,
                  seq_len_neighborhood: int=0,
-                 special_tokens: list=['cls'],
+                 special_tokens: list=['cls', 'assay', 'species', 'tissue', ''],
                  species_token: bool=False,
                  batch_token: bool=True,
                  gene_panel_token: bool=True,
