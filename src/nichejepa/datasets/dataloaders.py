@@ -1,7 +1,10 @@
 from typing import Optional
 
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.distributed import DistributedSampler
+
+
+_GLOBAL_SEED = 0
 
 
 def init_dataloader_and_sampler(batch_size: int,
@@ -22,14 +25,12 @@ def init_dataloader_and_sampler(batch_size: int,
     """
     Initialize dataloader and -sampler from a CellNeighborhoodDataset or 
     CellGraphDataset.
-    
+
     Parameters
     -----------
     batch_size:
         See https://pytorch.org/docs/stable/data.html#torch.utils.data.DataLoader.
-    data:
-        Huggingface dataset with cell and neighborhood tokens and cell-level
-        labels.
+    n_nonzero_cell_tokens
     vocab_size:
         Size of the vocabulary.
     collator:
@@ -48,7 +49,6 @@ def init_dataloader_and_sampler(batch_size: int,
         Sequence length of the cell tokens.
     seq_len_neighborhood:
         Sequence length of the neighborhood tokens.
-    special_tokens:
     distributed:
         If 'True', use distributed mode.
 
@@ -63,35 +63,35 @@ def init_dataloader_and_sampler(batch_size: int,
     """
     if distributed:
         dist_sampler = CustomDistributedLengthGroupedSampler(
-            dataset,
-            batch_size,
-            hugging_face_dataset=data,
+            dataset=dataset,
+            batch_size=batch_size,
+            n_nonzero_tokens_per_cell=n_nonzero_tokens_per_cell,
             num_replicas=world_size,
             rank=rank,
             seed=_GLOBAL_SEED)
 
-        data_loader = torch.utils.data.DataLoader(dataset,
-                                                  collate_fn=collator,
-                                                  sampler=dist_sampler,
-                                                  batch_size=batch_size,
-                                                  drop_last=drop_last,
-                                                  pin_memory=pin_mem,
-                                                  num_workers=num_workers,
-                                                  persistent_workers=False)
-        logger.info('Data loader created.')
+        data_loader = DataLoader(dataset,
+                                 collate_fn=collator,
+                                 sampler=dist_sampler,
+                                 batch_size=batch_size,
+                                 drop_last=drop_last,
+                                 pin_memory=pin_mem,
+                                 num_workers=num_workers,
+                                 persistent_workers=False)
+        logger.info('Dataloader and -sampler created.')
 
-        return dataset, data_loader, dist_sampler
+        return dataloader, dist_sampler
     else:
-        data_loader = torch.utils.data.DataLoader(dataset,
-                                                  collate_fn=collator,
-                                                  batch_size=batch_size,
-                                                  drop_last=drop_last,
-                                                  pin_memory=pin_mem,
-                                                  num_workers=num_workers,
-                                                  persistent_workers=False)
-        logger.info('Data loader created.')
+        data_loader = DataLoader(dataset,
+                                 collate_fn=collator,
+                                 batch_size=batch_size,
+                                 drop_last=drop_last,
+                                 pin_memory=pin_mem,
+                                 num_workers=num_workers,
+                                persistent_workers=False)
+        logger.info('Dataloader created.')
         
-        return dataset, data_loader
+        return dataloader
 
 
 class CustomDistributedLengthGroupedSampler(DistributedSampler):
@@ -102,6 +102,12 @@ class CustomDistributedLengthGroupedSampler(DistributedSampler):
     
     This class was adapted from
     https://huggingface.co/ctheodoris/Geneformer/blob/main/geneformer/pretrainer.py.
+
+    Parameters
+    -----------
+
+    Returns
+    -----------
     """
     # Copied and adapted from PyTorch DistributedSampler.
     def __init__(
@@ -113,7 +119,7 @@ class CustomDistributedLengthGroupedSampler(DistributedSampler):
         num_replicas: Optional[int]=None,
         rank: Optional[int]=None,
         seed: int=0,
-        hugging_face_dataset: Optional[Dataset]=None,
+        n_nonzero_tokens_per_cell: list,
         drop_last: bool=False,
         lengths: Optional[List[int]]=None,
         ):
@@ -146,7 +152,7 @@ class CustomDistributedLengthGroupedSampler(DistributedSampler):
             self.num_samples = math.ceil(len(self.dataset) / self.num_replicas)
         self.total_size = self.num_samples * self.num_replicas
         self.seed = seed
-        self.lengths = hugging_face_dataset['n_nonzero_tokens']
+        self.lengths = n_nonzero_tokens_per_cell
 
     def __iter__(self) -> Iterator:
         # Deterministically shuffle based on epoch and seed
@@ -182,9 +188,6 @@ class CustomDistributedLengthGroupedSampler(DistributedSampler):
         The result is the concatenation of all mega-batches, with the batch of
         :obj:`batch_size` containing the element of maximum length placed first, so
         that an OOM happens sooner rather than later.
-        
-        This class was adapted from
-        https://huggingface.co/ctheodoris/Geneformer/blob/main/geneformer/pretrainer.py.
         """
         # Default for mega_batch_mult: 50 or the number to get 4 megabatches,
         # whichever is smaller.
