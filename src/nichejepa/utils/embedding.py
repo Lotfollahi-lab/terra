@@ -148,7 +148,7 @@ def create_binary_selection_mask(tokens: torch.Tensor,
     if selection_type == 'cls':
         # Select only the first token in each sequence
         selection_mask = torch.zeros_like(tokens, dtype=torch.bool)
-        selection_mask[:, 0] = True
+        selection_mask[:, 1] = True
         return selection_mask
     elif selection_type == 'agg_cell':
         selection_mask = torch.zeros_like(tokens, dtype=torch.bool)
