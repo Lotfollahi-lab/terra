@@ -171,8 +171,6 @@ class CellNeighborhoodDataset(Dataset):
             Size of the sampled subset.
         sampling_strategy:
             Sampling strategy for the token selection.
-        seed:
-            Seed for token sampling.
             
         Returns
         --------
@@ -180,9 +178,6 @@ class CellNeighborhoodDataset(Dataset):
             List of sampled tokens.
         """
         if sampling_strategy == 'normalized_count_rank_sampling':
-            # Set seed for sampling
-            np.random.seed(seed)
-            
             # Calculate weights based on rank and number of nonzero tokens
             # Higher the rank, higher the weight
             # a = [4, 1, 3, 2, 5, 0, 0, 0]
