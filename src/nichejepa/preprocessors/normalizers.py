@@ -3,13 +3,12 @@ from pathlib import Path
 
 import numpy as np
 import scanpy as sc
-import scipy
 import scipy.sparse as sp
 from skmisc.loess import loess
 
 
 def normalize_by_analytic_pearson_residuals(x: sp.csr_matrix,
-                                            theta: float=100
+                                            theta: float=100,
                                             ) -> sp.csr_matrix:
     """
     Normalize gene expression counts per gene (within the dataset) and cell
@@ -60,7 +59,7 @@ def normalize_by_analytic_pearson_residuals(x: sp.csr_matrix,
 
 
 def normalize_by_cell_area(x: sp.csr_matrix,
-                           cell_areas: np.ndarray
+                           cell_areas: np.ndarray,
                            ) -> sp.csr_matrix:
     """
     Normalize gene expression counts per cell by cell area.
@@ -90,7 +89,7 @@ def normalize_by_cell_area(x: sp.csr_matrix,
 
 def normalize_by_mean(x: sp.csr_matrix,
                       gene_means_file: Path | str,
-                      probed_genes: np.ndarray
+                      probed_genes: np.ndarray,
                       ) -> sp.csr_matrix:
     """
     Normalize gene expression counts per gene (across datasets in the corpus) by
@@ -130,9 +129,9 @@ def normalize_by_mean(x: sp.csr_matrix,
 
 
 def normalize_by_nonzero_mean(x: sp.csr_matrix,
-                                gene_nzmeans_file: Path | str,
-                                probed_genes: np.ndarray
-                                ) -> sp.csr_matrix:
+                              gene_nzmeans_file: Path | str,
+                              probed_genes: np.ndarray,
+                              ) -> sp.csr_matrix:
     """
     Normalize gene expression counts per gene (across datasets in the corpus) by
     non-zero mean expression.
@@ -171,7 +170,7 @@ def normalize_by_nonzero_mean(x: sp.csr_matrix,
 
 
 def normalize_by_read_depth(x: sp.csr_matrix,
-                            target_size: int=10_000
+                            target_size: int=10_000,
                             ) -> sp.csr_matrix:
     """
     Normalize gene expression counts per cell by read depth.
@@ -228,8 +227,8 @@ def normalize_by_seurat(x: sp.csr_matrix) -> sp.csr_matrix:
         A sparse matrix containing the normalized features.
     """
 
-    if (type(x) == scipy.sparse._csr.csr_matrix or 
-    type(x) == scipy.sparse._csc.csc_matrix):
+    if (type(x) == sp._csr.csr_matrix or 
+    type(x) == sp._csc.csc_matrix):
         x = x.toarray()
     elif type(x) == np.matrix:
         x = np.array(x)
@@ -282,7 +281,7 @@ def normalize_by_shifted_log(x: sp.csr_matrix) -> sp.csr_matrix:
 
 def normalize_by_shifted_log_mean(x: sp.csr_matrix,
                                   gene_logmeans_file: Path | str,
-                                  probed_genes: np.ndarray
+                                  probed_genes: np.ndarray,
                                   ) -> sp.csr_matrix:
     """
     Normalize gene expression counts per gene (across datasets in the corpus) by

@@ -1,11 +1,9 @@
 import anndata as ad
-import numpy as np
-import scipy.sparse  as sp
 import squidpy as sq
 
 
 def aggregate_neighbors(adata: ad.AnnData,
-                        radius=27.5: float
+                        radius: float=27.5,
                         ) -> ad.AnnData:
     """
     Aggregate cell features by neighborhood radius.
@@ -17,8 +15,8 @@ def aggregate_neighbors(adata: ad.AnnData,
         `adata.obsm["spatial"]`.
     radius:
         Radius within which neighboring cells will be aggregated, in um.
-        Defaults to 27.5 um, which corresponds to the 10x Visium spot size of 55
-        um.
+        Defaults to 27.5um, which corresponds to the 10x Visium spot size of
+        55um.
 
     Returns
     ----------
