@@ -393,7 +393,7 @@ def train(args: dict,
                 def forward_context():
                     # Encode only context cell neighborhood tokens
                     z = encoder(
-                        cell_neighborhood_tokens,
+                        tokens,
                         seg_label,
                         masks_enc) # output (BATCH_SIZE, MIN_CONTEXT_SIZE,
                                    # EMB_DIM) where MIN_CONTEXT_SIZE is minmum

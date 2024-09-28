@@ -6,7 +6,7 @@ import yaml
 from collections import defaultdict
 from typing import List, Literal, Optional
 
-import anndata
+import anndata as ad
 import numpy as np
 import pandas as pd
 import torch
@@ -25,6 +25,7 @@ from .utils.distributed import init_distributed
 from .utils.embedding import (create_binary_selection_mask,
                               compute_mean_unmasked_emb,
                               compute_unmasked_rank_based_weights,
+                              collect_adata_from_folder,
                               retrieve_gene_emb)
 from .utils.logging import CSVLogger
 
@@ -43,12 +44,12 @@ logger = logging.getLogger()
 def infer(args: dict,
           dataset: CellNeighborhoodDataset,
           load_folder_path: str,
-          cell_gene_ids: list=[],
-          neighborhood_gene_ids: list=[],
+          cell_gene_ids: List=[],
+          neighborhood_gene_ids: List=[],
           agg_type: Literal['cls', 'avg', 'weighted_avg']='avg',
           agg_excluded_tokens: Optional[List]=None,
           feature_norm: bool=False
-          ) -> anndata.AnnData:
+          ) -> ad.AnnData:
     """
     Use a trained model for inference. Run forward pass on a given dataset and
     return cell, neighborhood and (optionally) gene embeddings (cell and
@@ -93,6 +94,7 @@ def infer(args: dict,
     seg_learnable = args['meta']['seg_learnable']
 
     # Load data params
+    raw_data_folder_path = args['data']['raw_data_folder_path']
     batch_size = args['data']['batch_size']
     vocab_size = args['data']['vocab_size']
     pin_mem = args['data']['pin_mem']
@@ -151,6 +153,7 @@ def infer(args: dict,
         device=device,
         vocab_size=vocab_size,
         seq_len=seq_len,
+        n_special_tokens=n_special_tokens,
         enc_emb_dim=enc_emb_dim,
         enc_depth=enc_depth,
         pred_emb_dim=pred_emb_dim,
@@ -172,8 +175,6 @@ def infer(args: dict,
             n_contexts=n_contexts,
             seq_len_cell=seq_len_cell,
             seq_len_neighborhood=seq_len_neighborhood,
-            has_cls=has_cls,
-            has_gene_panel=has_gene_panel,
             per_segment_mask_ratio = per_segment_mask_ratio)
     else:
         mask_collator = MaskCollator(
@@ -182,26 +183,27 @@ def infer(args: dict,
             target_mask_size=target_mask_size,
             context_mask_size=context_mask_size,
             seq_len_cell=seq_len_cell,
-            seq_len_neighborhood=seq_len_neighborhood,
-            has_cls=has_cls,
-            has_gene_panel=has_gene_panel)
+            seq_len_neighborhood=seq_len_neighborhood)
 
-    # Initialize dataloader
-    _, loader = make_cell_neighborhood_dataset(
-        batch_size=batch_size,
-        data=dataset,
+    # Initialize train and test datasets, dataloaders and samplers
+    cell_dataset = make_cell_dataset(
+        dataset=dataset,
         vocab_size=vocab_size,
-        collator=mask_collator,
-        pin_mem=pin_mem,
-        num_workers=num_workers,
+        tokenizer_type=tokenizer_type,
+        special_tokens=special_tokens,
+        sampling_strategy=sampling_strategy)
+
+    loader = init_dataloader_and_sampler(
+        cell_dataset=train_cell_dataset,
+        batch_size=batch_size,
+        distributed=False,
         world_size=world_size,
         rank=rank,
+        collator_fn=mask_collator
+        pin_memory=pin_memory,
+        num_workers=num_workers,
         drop_last=False,
-        seq_len_cell=seq_len_cell,
-        seq_len_neighborhood=seq_len_neighborhood,
-        has_cls=has_cls,
-        has_gene_panel=has_gene_panel,
-        distributed=False)
+        persistent_workers=False)
     
     _, _, target_encoder, _, _, start_epoch = load_checkpoint(
             device=device,
@@ -309,7 +311,6 @@ def infer(args: dict,
                         emb=emb,
                         gene_id=gene_id,
                         gene_type="cell",
-                        has_cls=has_cls,
                         seq_len_cell=seq_len_cell)
                     if itr == 0:
                         all_cell_gene_emb_dict[gene_id] = [gene_emb]
@@ -321,16 +322,21 @@ def infer(args: dict,
                         emb=emb,
                         gene_id=gene_id,
                         gene_type="neighborhood",
-                        has_cls=has_cls,
                         seq_len_cell=seq_len_cell)
                     if itr == 0:
                         all_neighborhood_gene_emb_dict[gene_id] = [gene_emb]
                     else:
                         all_neighborhood_gene_emb_dict[gene_id].append(gene_emb)                  
                     
-    adata = anndata.AnnData(
+    adata = ad.AnnData(
         obs=pd.DataFrame(metadata,
         index=range(len(list(metadata.values())[0]))))
+
+    # Add metadata
+    adata_metadata = collect_adata_from_folder(raw_data_folder_path)
+    adata = ad.merge(adata.obs,
+                     adata_metadata.obs,
+                     on='cell_id')
    
     # Store cell and neighborhood embeddings of all observations across layers  
     for i in range(len(all_cell_emb_list)):

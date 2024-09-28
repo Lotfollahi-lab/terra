@@ -1,8 +1,11 @@
+
+import os
 from typing import List, Literal, Optional
 
-import anndata
+import anndata as ad
 import numpy as np
 import pandas as pd
+import scanpy as sc
 import torch
 
 
@@ -102,8 +105,6 @@ def compute_mean_unmasked_emb(emb: torch.Tensor,
 
 def create_binary_selection_mask(tokens: torch.Tensor,
                                  seq_len_cell: int,
-                                 has_cls: bool,
-                                 has_gene_panel: bool,
                                  selection_type: Literal['cls',
                                                          'agg_cell',
                                                          'agg_neighborhood',
@@ -123,9 +124,6 @@ def create_binary_selection_mask(tokens: torch.Tensor,
         A 2D tensor where each row represents a sequence of tokens.
     seq_len_cell:
         The length of cell tokens in the sequence.
-    has_cls:
-        If 'True', sequence contains a <cls> token at position 0.
-    has_gene_panel:
     selection_type:
         Defines the type of embedding, which is relevant for the mask creation.
     excluded_tokens:
@@ -252,3 +250,29 @@ def retrieve_gene_emb(tokens: torch.Tensor,
         gene_emb.device)
 
     return gene_emb
+
+
+def collect_adata_from_folder(load_folder_path: str) -> ad.AnnData:
+    """
+    Loop through folder, read all '.h5ad' files and concatenate them as adata
+    objects.
+
+    Parameters
+    --------
+
+    Returns
+    --------
+    """
+    adata_list = []
+
+    # Walk through the load folder path and read files
+    for subdir, _, files in os.walk(root_folder):
+        for file in files:
+            if file.endswith('.h5ad'):
+                file_path = os.path.join(subdir, file)
+                adata = sc.read_h5ad(file_path)
+                adata_list.append(adata)
+
+    concatenated_adata = ad.concat(adata_list, join='outer', index_unique=None)
+    
+    return concatenated_adata
