@@ -37,8 +37,8 @@ from datasets import dataset, load_from_disk
 from torch.nn.parallel import DistributedDataParallel
 from tqdm import tqdm
 
-from .datasets.cell_neighborhood_dataset import (CellNeighborhoodDataset,
-                                                 make_cell_neighborhood_dataset)
+from .datasets.cell_datasets import make_cell_dataset
+from datasets.dataloaders import init_dataloader_and_sampler
 from .helper import (init_model,
                      init_opt,
                      load_checkpoint)
@@ -55,8 +55,6 @@ from .utils.tensors import repeat_interleave_batch
 
 
 log_timings = True
-log_freq = 10
-checkpoint_freq = 5
 
 
 _GLOBAL_SEED = 0
@@ -107,6 +105,8 @@ def train(args: dict,
     use_bfloat16 = args['meta']['use_bfloat16']
     load_model = args['meta']['load_checkpoint'] or resume_preempt
     r_file = args['meta']['read_checkpoint']
+    checkpoint_freq = args['meta']['checkpoint_freq']
+    log_freq = args['meta']['log_freq']
     enc_depth = args['meta']['enc_depth'] 
     enc_emb_dim = args['meta']['enc_emb_dim']    
     pred_depth = args['meta']['pred_depth']
@@ -130,6 +130,7 @@ def train(args: dict,
     data_set_name = args['data']['data_set_name']
     vocab_size = args['data']['vocab_size']
     sampling_strategy = args['data']['sampling_strategy']
+    tokenizer_type = args['data']['tokenizer_type']
 
     # Load mask params
     n_targets = args['mask']['n_targets']
@@ -154,7 +155,6 @@ def train(args: dict,
     final_lr = args['optimization']['final_lr']
 
     seq_len = seq_len_cell + seq_len_neighborhood
-    has_gene_panel = True if gene_panel_size > 0 else False
 
     # Create folder to store artifacts
     if not save_folder_path:
@@ -238,13 +238,15 @@ def train(args: dict,
             has_gene_panel=has_gene_panel)
     
     # Initialize dataset, dataloader and sampler
-    dataset = CellNeighborhoodDataset(data,
-                                      vocab_size,
-                                      seq_len_cell=seq_len_cell,
-                                      seq_len_neighborhood=seq_len_neighborhood,
-                                      special_tokens=special_tokens,
-                                      sampling_strategy=sampling_strategy)
+    train_cell_dataset = make_cell_dataset(dataset=train_dataset,
+                                           vocab_size=vocab_size,
+                                           tokenizer_type=tokenizer_type)
 
+    test_cell_dataset = make_cell_dataset(dataset=test_dataset,
+                                           vocab_size=vocab_size,
+                                           tokenizer_type=tokenizer_type)
+
+    train_loader, train_sampler = init_dataloader_and_sampler()
 
     _, train_loader, train_sampler = make_cell_neighborhood_dataset(
         batch_size=batch_size,

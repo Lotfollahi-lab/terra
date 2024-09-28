@@ -1,27 +1,27 @@
-from typing import Optional
+from typing import List, Optional, Union
 
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.distributed import DistributedSampler
+
+from ..masks import MaskCollator, SegmentMaskCollator
 
 
 _GLOBAL_SEED = 0
 
 
-def init_dataloader_and_sampler(batch_size: int,
-                                dataset: CellBaseDataset,
-                                vocab_size: int,
-                                collator=None,
+def init_dataloader_and_sampler(dataset: CellBaseDataset,
+                                batch_size: int,
+                                n_nonzero_tokens_per_cell: List,
+                                collator: Optional[Union[
+                                    MaskCollator, SegmentMaskCollator]]=None,
                                 pin_mem: bool=True,
                                 num_workers: int=8,
                                 world_size: int=1,
                                 rank: int=0,
                                 drop_last: bool=True,
-                                seq_len_cell: int=0,
-                                seq_len_neighborhood: int=0,
-                                special_tokens: list
                                 distributed: bool=True,
     ) -> Tuple[torch.utils.data.DataLoader,
-               Optional[torch.utils.data.distributed.DistributedSampler]]:):
+               Optional[torch.utils.data.distributed.DistributedSampler]]:
     """
     Initialize dataloader and -sampler from a CellNeighborhoodDataset or 
     CellGraphDataset.
@@ -31,8 +31,6 @@ def init_dataloader_and_sampler(batch_size: int,
     batch_size:
         See https://pytorch.org/docs/stable/data.html#torch.utils.data.DataLoader.
     n_nonzero_cell_tokens
-    vocab_size:
-        Size of the vocabulary.
     collator:
         See https://pytorch.org/docs/stable/data.html#torch.utils.data.DataLoader.
     pin_mem:
@@ -45,10 +43,6 @@ def init_dataloader_and_sampler(batch_size: int,
         See https://pytorch.org/docs/stable/data.html#torch.utils.data.distributed.DistributedSampler.
     drop_last:
         See https://pytorch.org/docs/stable/data.html#torch.utils.data.DataLoader.
-    seq_len_cell:
-        Sequence length of the cell tokens.
-    seq_len_neighborhood:
-        Sequence length of the neighborhood tokens.
     distributed:
         If 'True', use distributed mode.
 
@@ -88,7 +82,7 @@ def init_dataloader_and_sampler(batch_size: int,
                                  drop_last=drop_last,
                                  pin_memory=pin_mem,
                                  num_workers=num_workers,
-                                persistent_workers=False)
+                                 persistent_workers=False)
         logger.info('Dataloader created.')
         
         return dataloader
@@ -179,27 +173,28 @@ class CustomDistributedLengthGroupedSampler(DistributedSampler):
                                     generator=None
                                     ):
         """
-        Return a list of indices so that each slice of :obj:`batch_size` consecutive
-        indices correspond to elements of
-        similar lengths. To do this, the indices are:
-        - randomly permuted
-        - grouped in mega-batches of size :obj:`mega_batch_mult * batch_size`
-        - sorted by length in each mega-batch
+        Return a list of indices so that each slice of :obj:`batch_size`
+        consecutive indices correspond to elements of similar lengths. To do
+        this, the indices are:
+            - randomly permuted
+            - grouped in mega-batches of size :obj:`mega_batch_mult * batch_size`
+            - sorted by length in each mega-batch
         The result is the concatenation of all mega-batches, with the batch of
-        :obj:`batch_size` containing the element of maximum length placed first, so
-        that an OOM happens sooner rather than later.
+        :obj:`batch_size` containing the element of maximum length placed first,
+        so that an OOM happens sooner rather than later.
         """
         # Default for mega_batch_mult: 50 or the number to get 4 megabatches,
         # whichever is smaller.
         if mega_batch_mult is None:
             # mega_batch_mult = min(len(lengths) // (batch_size * 4), 50)
-            mega_batch_mult = min(len(self.lengths) // (self.batch_size * 4), 1000)
+            mega_batch_mult = min(
+                len(self.lengths) // (self.batch_size * 4), 1000)
             # Just in case, for tiny datasets
             if mega_batch_mult == 0:
                 mega_batch_mult = 1
 
-        # We need to use torch for the random part as a distributed sampler will set
-        # the random seed for torch.
+        # We need to use torch for the random part as a distributed sampler will
+        # set the random seed for torch.
         indices = torch.randperm(len(self.lengths), generator=generator)
         megabatch_size = mega_batch_mult * self.batch_size
         megabatches = [
@@ -214,7 +209,8 @@ class CustomDistributedLengthGroupedSampler(DistributedSampler):
         # The rest is to get the biggest batch first.
         # Since each megabatch is sorted by descending length, the longest element
         # is the first
-        megabatch_maximums = [self.lengths[megabatch[0]] for megabatch in megabatches]
+        megabatch_maximums = [
+            self.lengths[megabatch[0]] for megabatch in megabatches]
         max_idx = torch.argmax(torch.tensor(megabatch_maximums)).item()
         # Switch to put the longest element in first position
         megabatches[0][0], megabatches[max_idx][0] = (
