@@ -8,7 +8,7 @@ https://github.com/facebookresearch/ijepa/blob/main/src/utils/distributed.py
 
 import math
 import os
-from typing import Iterator, List, Optional
+from typing import List, Optional
 
 import torch
 import torch.distributed as dist

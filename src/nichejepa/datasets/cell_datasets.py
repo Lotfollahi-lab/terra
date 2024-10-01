@@ -1,4 +1,4 @@
-from typing import Optional, List, Literal
+from typing import List, Literal, Optional, Tuple, Union
 
 import datasets
 import numpy as np
@@ -13,7 +13,13 @@ class CellBaseDataset(Dataset):
                  seq_len_cell: int,
                  seq_len_neighborhood: int,
                  special_tokens: List=[
-                    'cls', 'assay', 'species', 'tissue', 'gene_panel', 'batch'],
+                    'cls_cell',
+                    'cls_neighborhood',
+                    'assay',
+                    'species',
+                    'tissue',
+                    'gene_panel',
+                    'batch'],
                  sampling_strategy: Optional[
                     Literal['norm_count_rank_sampling',
                             'norm_count_rank_sampling_rep',
@@ -44,8 +50,8 @@ class CellBaseDataset(Dataset):
         self.len = len(self.dataset)
         self.n_nonzero_tokens = self.dataset["n_nonzero_tokens"]
         self.vocab_size = vocab_size
-        self.seq_len_cell = self.seq_len_cell
-        self.seq_len_neighborhood = self.seq_len_neighborhood
+        self.seq_len_cell = seq_len_cell
+        self.seq_len_neighborhood = seq_len_neighborhood
         self.n_special_tokens = len(special_tokens)
         self.seq_len = (seq_len_cell +
                         seq_len_neighborhood +
@@ -56,7 +62,8 @@ class CellBaseDataset(Dataset):
     def __len__(self):
         return self.len
 
-    def _add_special_tokens_to_seq(seq_tokens: list,
+    def _add_special_tokens_to_seq(self,
+                                   seq_tokens: List,
                                    item: int,
                                    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -86,8 +93,12 @@ class CellBaseDataset(Dataset):
             seq_tokens = self.dataset[item]["species_token"] + seq_tokens
         if 'assay' in self.special_tokens:
             seq_tokens = self.dataset[item]["assay_token"] + seq_tokens
-        if 'cls' in self.special_tokens:
-            seq_tokens = self.dataset[item]["cls_tokens"] + seq_tokens
+        if 'cls_neighborhood' in self.special_tokens:
+            seq_tokens = self.dataset[item][
+                "cls_neighborhood_token"] + seq_tokens
+        if 'cls_cell' in self.special_tokens:
+            seq_tokens = self.dataset[item][
+                "cls_cell_token"] + seq_tokens
         seq_tokens = torch.tensor(seq_tokens)
         seg_tokens = torch.cat(
             (torch.zeros(self.n_special_tokens),
@@ -176,8 +187,9 @@ class CellBaseDataset(Dataset):
             List of tokens for a given segment.
         """
         # Only keep gene tokens in specified segment
-        segment_gene_tokens = self.dataset[item]["gene_tokens"][
-            self.dataset[item]["seg_tokens"] == segment_idx]
+        segment_gene_tokens = [gene_token for gene_token, seg_token in zip(
+            self.dataset[item]["gene_tokens"], self.dataset[item]["seg_tokens"])
+            if seg_token == segment_idx]
 
         # Validate that segment sequence length is specified correctly
         if 'rep' in self.sampling_strategy:
@@ -277,6 +289,8 @@ class CellNeighborhoodDataset(CellBaseDataset):
         seq_tokens, seg_tokens = self._add_special_tokens_to_seq(
             seq_tokens=seq_tokens,
             item=item)
+
+        return seq_tokens, seq_tokens
 
 
 def make_cell_dataset(tokenizer_type: Literal['cell_graph',

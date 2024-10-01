@@ -24,13 +24,14 @@ import yaml
 from datetime import datetime
 from typing import Optional
 
+import datasets
 import numpy as np
 import pandas as pd
 import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
 import wandb
-from datasets import dataset, load_from_disk
+from datasets import load_from_disk
 from torch.nn.parallel import DistributedDataParallel
 from tqdm import tqdm
 
@@ -59,8 +60,8 @@ logger = logging.getLogger()
 
 
 def train(args: dict,
-          train_dataset: datasets.dataset,
-          test_dataset: datasets.dataset,
+          train_dataset: datasets.Dataset,
+          test_dataset: datasets.Dataset,
           resume_preempt: bool=False,
           save_folder_path: Optional[str]=None,
           ):
@@ -95,15 +96,16 @@ def train(args: dict,
         torch.cuda.set_device(device)
 
     # Load params from config file
-    data_set_name = args['data']['dataset_name']
+    dataset_name = args['data']['dataset_name']
     tokenizer_type = args['data']['tokenizer_type']
     vocab_size = args['data']['vocab_size']
     seq_len_cell = args['data']['seq_len_cell']
     seq_len_neighborhood = args['data']['seq_len_neighborhood']
+    n_segments = args['data']['n_segments']
     sampling_strategy = args['data']['sampling_strategy']
     batch_size = args['data']['batch_size']
     num_workers = args['data']['num_workers']
-    pin_mem = args['data']['pin_mem']
+    pin_memory = args['data']['pin_memory']
 
     use_bfloat16 = args['meta']['use_bfloat16']
     load_model = args['meta']['load_checkpoint'] or resume_preempt
@@ -141,8 +143,8 @@ def train(args: dict,
     write_tag = args['logging']['write_tag']
 
     # Get token sequence length and number of special tokens
-    seq_len = seq_len_cell + seq_len_neighborhood
     n_special_tokens = len(special_tokens)
+    seq_len = seq_len_cell + seq_len_neighborhood + n_special_tokens
 
     # Create folder to store artifacts
     if not save_folder_path:
@@ -153,7 +155,7 @@ def train(args: dict,
             datetime.now().strftime("%d%m%Y_%H%M%S") +
             f"_{datetime.now().microsecond // 1000:03d}")
         save_folder_path = os.path.join(artifact_folder_path,
-                                        data_set_name,
+                                        dataset_name,
                                         current_timestamp)
     os.makedirs(save_folder_path, exist_ok=True)
 
@@ -199,6 +201,7 @@ def train(args: dict,
         vocab_size=vocab_size,
         seq_len=seq_len,
         n_special_tokens=n_special_tokens,
+        n_segments=n_segments,
         enc_emb_dim=enc_emb_dim,
         enc_depth=enc_depth,
         pred_emb_dim=pred_emb_dim,
@@ -214,6 +217,7 @@ def train(args: dict,
             n_contexts=n_contexts,
             seq_len_cell=seq_len_cell,
             seq_len_neighborhood=seq_len_neighborhood,
+            n_special_tokens=n_special_tokens,
             per_segment_mask_ratio=per_segment_mask_ratio)
     else:
         mask_collator = MaskCollator(
@@ -221,6 +225,7 @@ def train(args: dict,
             n_contexts=n_contexts,
             seq_len_cell=seq_len_cell,
             seq_len_neighborhood=seq_len_neighborhood,
+            n_special_tokens=n_special_tokens,
             target_mask_size=target_mask_size,
             context_mask_size=context_mask_size,)
     
@@ -228,6 +233,8 @@ def train(args: dict,
     train_cell_dataset = make_cell_dataset(
         dataset=train_dataset,
         vocab_size=vocab_size,
+        seq_len_cell=seq_len_cell,
+        seq_len_neighborhood=seq_len_neighborhood,
         tokenizer_type=tokenizer_type,
         special_tokens=special_tokens,
         sampling_strategy=sampling_strategy)
@@ -235,6 +242,8 @@ def train(args: dict,
     test_cell_dataset = make_cell_dataset(
         dataset=test_dataset,
         vocab_size=vocab_size,
+        seq_len_cell=seq_len_cell,
+        seq_len_neighborhood=seq_len_neighborhood,
         tokenizer_type=tokenizer_type,
         special_tokens=special_tokens,
         sampling_strategy=sampling_strategy)
@@ -245,7 +254,7 @@ def train(args: dict,
         distributed=True,
         world_size=world_size,
         rank=rank,
-        collator_fn=mask_collator
+        collate_fn=mask_collator,
         pin_memory=pin_memory,
         num_workers=num_workers,
         drop_last=False,
@@ -257,7 +266,7 @@ def train(args: dict,
         distributed=True,
         world_size=world_size,
         rank=rank,
-        collator_fn=mask_collator
+        collate_fn=mask_collator,
         pin_memory=pin_memory,
         num_workers=num_workers,
         drop_last=False,

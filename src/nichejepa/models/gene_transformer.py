@@ -31,6 +31,8 @@ class GeneTransformerEncoder(nn.Module):
         Size of the token vocabulary. Includes <pad> token.
     seq_len:
         Length of the token sequences.
+    n_special_tokens:
+    n_segments:
     pos_learnable:
         If 'True', positional embeddings are learnable, otherwise use sin cos
         positional embeddings.
@@ -70,6 +72,7 @@ class GeneTransformerEncoder(nn.Module):
                  vocab_size: int,
                  seq_len: int,
                  n_special_tokens: int,
+                 n_segments: int,
                  pos_learnable: bool=False,
                  seg_learnable: bool=False,
                  embed_dim: int=768,
@@ -123,7 +126,7 @@ class GeneTransformerEncoder(nn.Module):
             if n_special_tokens > 0:
                 self.pos_embed.data[0, 0:n_special_tokens, :] = 0
         else:
-            self.pos_embed.weight.requires_grad = False
+            self.pos_embed.requires_grad = False
             pos_embed = get_1d_sincos_pos_embed(
                 embed_dim=self.pos_embed.shape[-1],
                 n_zero_pos=n_special_tokens,
@@ -215,8 +218,7 @@ class GeneTransformerEncoder(nn.Module):
 
         # Get gene embeddings for sequence of gene tokens
         x = self.gene_embed(x)
-        B, N, D = x.shape # B: BATCH_SIZE, N: SEQ_LEN (+1 if <cls> +1 if gene
-                          # panel token), D: EMBED_DIM
+        B, N, D = x.shape # B: BATCH_SIZE, N: SEQ_LEN, D: EMBED_DIM
         
         # Add positional and segment embeddings to gene embedding
         x = x + self.pos_embed + self.seg_embed(seg_label)
@@ -359,7 +361,9 @@ class GeneTransformerPredictor(nn.Module):
     embed_dim:
         Dimension of the input embedding.
     seq_len:
-        Length of the token sequences (w/o <cls> token).
+        Length of the token sequences.
+    n_special_tokens:
+    n_segments:
     pos_learnable:
         If 'True', positional embeddings are learnable, otherwise use sin cos
         positional embeddings.
@@ -395,6 +399,7 @@ class GeneTransformerPredictor(nn.Module):
                  embed_dim: int,
                  seq_len: int,
                  n_special_tokens: int,
+                 n_segments: int,
                  pos_learnable: bool=False,
                  seg_learnable: bool=False,
                  predictor_embed_dim: int=384,
@@ -452,7 +457,7 @@ class GeneTransformerPredictor(nn.Module):
             if n_special_tokens > 0:
                 self.predictor_pos_embed.data[0, 0:n_special_tokens, :] = 0
         else:
-            self.predictor_pos_embed.weight.requires_grad = False
+            self.predictor_pos_embed.requires_grad = False
             predictor_pos_embed = get_1d_sincos_pos_embed(
                 embed_dim=self.predictor_pos_embed.shape[-1],
                 n_zero_pos=n_special_tokens,

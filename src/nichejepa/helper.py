@@ -11,7 +11,7 @@ from typing import Tuple
 
 import torch
 
-import .models.gene_transformer as gt
+import nichejepa.models.gene_transformer as gt
 from .models.utils import trunc_normal_
 from .utils.schedulers import (CosineWDSchedule,
                                WarmupCosineSchedule)
@@ -122,6 +122,7 @@ def init_model(device: str,
                vocab_size: int,
                seq_len: int,
                n_special_tokens: int,
+               n_segments: int,
                enc_emb_dim: int=768, 
                enc_depth: int=12,
                pred_emb_dim: int=384,
@@ -169,6 +170,7 @@ def init_model(device: str,
         vocab_size=vocab_size,
         seq_len=seq_len,
         n_special_tokens=n_special_tokens,
+        n_segments=n_segments,
         pos_learnable=pos_learnable,
         seg_learnable=seg_learnable,
         embed_dim=enc_emb_dim,
@@ -177,6 +179,7 @@ def init_model(device: str,
         embed_dim=enc_emb_dim,
         seq_len=seq_len,
         n_special_tokens=n_special_tokens,
+        n_segments=n_segments,
         pos_learnable=pos_learnable,
         seg_learnable=seg_learnable,
         predictor_embed_dim=pred_emb_dim,

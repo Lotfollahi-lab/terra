@@ -1,5 +1,5 @@
 from .cell_datasets import (CellBaseDataset,
-                            CellGraphDataset
+                            CellGraphDataset,
                             CellNeighborhoodDataset,
                             make_cell_dataset)
 from .dataloaders import (CustomDistributedLengthGroupedSampler,

@@ -16,8 +16,7 @@ from datasets import load_from_disk
 from torch.nn.parallel import DistributedDataParallel
 from tqdm import tqdm
 
-from .datasets.cell_neighborhood_dataset import (CellNeighborhoodDataset,
-                                                 make_cell_neighborhood_dataset)
+from .datasets.cell_datasets import CellBaseDataset, make_cell_dataset
 from .helper import init_model, load_checkpoint
 from .masks.multigene import MaskCollator
 from .masks.segment_masking  import SegmentMaskCollator
@@ -42,7 +41,7 @@ logger = logging.getLogger()
 
 @torch.no_grad()
 def infer(args: dict,
-          dataset: CellNeighborhoodDataset,
+          dataset: CellBaseDataset,
           load_folder_path: str,
           cell_gene_ids: List=[],
           neighborhood_gene_ids: List=[],
@@ -60,7 +59,7 @@ def infer(args: dict,
     args:
         Dictionary containing the hyperparameters from the config file.
     dataset:
-        CellNeighborhoodDataset for which embeddings will be inferred.
+        Cell dataset for which embeddings will be inferred.
     cell_gene_ids:
         List with gene IDs for which cell gene embeddings will be retrived.
     neighborhood_gene_ids:
@@ -199,7 +198,7 @@ def infer(args: dict,
         distributed=False,
         world_size=world_size,
         rank=rank,
-        collator_fn=mask_collator
+        collate_fn=mask_collator,
         pin_memory=pin_memory,
         num_workers=num_workers,
         drop_last=False,

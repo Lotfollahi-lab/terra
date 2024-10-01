@@ -9,13 +9,16 @@ data:
   vocab_size: 1671
   seq_len_cell: 176 # 353
   seq_len_neighborhood: 309 # 619
-  sampling_strategy: 'normalized_count_rank_sampling' # null, 'random_sampling', 'normalized_count_rank_sampling', 'random_sampling_rep', 'normalized_count_rank_sampling_rep'
+  n_segments: 2
+  sampling_strategy: 'norm_count_rank_sampling' # null, 'random_sampling', 'norm_count_rank_sampling', 'random_sampling_rep', 'norm_count_rank_sampling_rep'
   batch_size: 64 # 64
   num_workers: 6
-  pin_mem: true
+  pin_memory: true
 meta:
-  special_tokens: ['cls', 'assay', 'species', 'tissue', 'gene_panel', 'batch']
+  special_tokens: ['cls_cell', 'cls_neighborhood', 'assay', 'species', 'tissue', 'gene_panel', 'batch']
   enc_depth: 3 # 3
+  checkpoint_freq: 5
+  log_freq: 1
   load_checkpoint: false
   load_timestamp: ''
   pred_depth: 1 # 1

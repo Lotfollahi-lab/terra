@@ -1,4 +1,6 @@
-from typing import List, Optional, Union
+import math
+from logging import getLogger
+from typing import Iterator, List, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -9,6 +11,9 @@ from .cell_datasets import CellBaseDataset
 from ..masks import MaskCollator, SegmentMaskCollator
 
 
+logger = getLogger()
+
+
 _GLOBAL_SEED = 0
 
 
@@ -16,11 +21,9 @@ class CustomDistributedLengthGroupedSampler(DistributedSampler):
     def __init__(self,
                  cell_dataset: Dataset,
                  batch_size: int,
-                 seq_len_cell: int,
-                 seq_len_neighborhood: int,
                  num_replicas: Optional[int]=None,
                  rank: Optional[int]=None,
-                 seed: int,
+                 seed: int=0,
                  drop_last: bool=False,
                  lengths: Optional[List[int]]=None,
                  ):
@@ -80,7 +83,7 @@ class CustomDistributedLengthGroupedSampler(DistributedSampler):
         g = torch.Generator()
         g.manual_seed(self.seed + self.epoch)
 
-        indices = _get_length_grouped_indices(generator=g)
+        indices = self._get_length_grouped_indices(generator=g)
 
         if not self.drop_last:
             # Add extra samples to make it evenly divisible
@@ -96,7 +99,8 @@ class CustomDistributedLengthGroupedSampler(DistributedSampler):
 
         return iter(indices)
 
-    def _get_length_grouped_indices(mega_batch_mult: Optional[int]=None,
+    def _get_length_grouped_indices(self,
+                                    mega_batch_mult: Optional[int]=None,
                                     generator: Optional[torch.Generator]=None,
                                     ) -> List[int]:
         """
@@ -125,7 +129,7 @@ class CustomDistributedLengthGroupedSampler(DistributedSampler):
             indices[i : i + megabatch_size].tolist()
             for i in range(0, len(self.lengths), megabatch_size)]
         megabatches = [
-            list(sorted(megabatch, key=lambda i: lengths[i], reverse=True))
+            list(sorted(megabatch, key=lambda i: self.lengths[i], reverse=True))
             for megabatch in megabatches]
 
         # The rest is to get the biggest batch first.
@@ -183,17 +187,17 @@ def init_dataloader_and_sampler(cell_dataset: CellBaseDataset,
             rank=rank,
             seed=_GLOBAL_SEED)
 
-        data_loader = DataLoader(cell_dataset,
-                                 batch_size=batch_size,
-                                 sampler=dist_sampler,
-                                 **dataloader_kwargs)
+        dataloader = DataLoader(cell_dataset,
+                                batch_size=batch_size,
+                                sampler=dist_sampler,
+                                **dataloader_kwargs)
         logger.info('Dataloader and -sampler created.')
 
         return dataloader, dist_sampler
     else:
-        data_loader = DataLoader(cell_dataset,
-                                 batch_size=batch_size,
-                                 **dataloader_kwargs)
+        dataloader = DataLoader(cell_dataset,
+                                batch_size=batch_size,
+                                **dataloader_kwargs)
         logger.info('Dataloader created.')
         
         return dataloader

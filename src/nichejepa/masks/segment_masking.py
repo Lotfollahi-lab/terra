@@ -41,6 +41,7 @@ class SegmentMaskCollator:
                  context_mask_size: int=10,
                  seq_len_cell: int=0,
                  seq_len_neighborhood: int=0,
+                 n_special_tokens: int=0,
                  per_segment_mask_ratio: float=0.3):
         self.n_targets = n_targets
         self.n_contexts = n_contexts
@@ -48,12 +49,13 @@ class SegmentMaskCollator:
         self.context_mask_size = context_mask_size
         self.seq_len_cell = seq_len_cell
         self.seq_len_neighborhood = seq_len_neighborhood
-        self.seq_len = self.seq_len_cell + self.seq_len_neighborhood
+        self.seq_len_gene_tokens = self.seq_len_cell + self.seq_len_neighborhood
+        self.n_special_tokens = n_special_tokens
         self.per_segment_mask_ratio = per_segment_mask_ratio
 
-        # Determine the valid start position for the mask based on the presence
-        # of a <cls> token
-        self.valid_min_start = 1
+        # Determine the valid start position for the mask based on number of
+        # special tokens
+        self.valid_min_start = self.n_special_tokens
 
     def segment_masking(self,
                         sequence,
@@ -110,7 +112,7 @@ class SegmentMaskCollator:
                 masked_indices = segment_non_zero_indices[mask_indices].tolist()  # Convert to list
                 context_mask[masked_indices] = 0  # Set masked indices to 0 in the context mask
                 keep_tokens_target = min(keep_tokens_target, len(masked_indices))  # Update minimum tokens target
-                masked_indices = [0] + masked_indices # include <cls> token
+                masked_indices = list(range(self.n_special_tokens)) + masked_indices # include special tokens
                 segment_masks.append(torch.tensor(masked_indices))  # Append the masked indices io the list
             else:
                 segment_masks.append(torch.tensor([]))  # If no elements to mask, append an empty list
@@ -119,11 +121,9 @@ class SegmentMaskCollator:
         # We avoid always discarding the last items of a sequence, as this may be problematic.
         context_mask = torch.nonzero(context_mask).squeeze()
         context_mask = context_mask[torch.randperm(len(context_mask))]
-        # Add cls to context if it exist
-        if self.has_cls and self.has_gene_panel:
-            context_mask = torch.cat((torch.tensor([0, 1]), context_mask))
-        elif self.has_cls or self.has_gene_panel:
-            context_mask = torch.cat((torch.tensor([0]), context_mask))
+        
+        # Add special tokens to context
+        context_mask = torch.cat((torch.arange(self.n_special_tokens), context_mask))
         return segment_masks, [context_mask], keep_tokens_target
 
     def _sample_gene_mask(self, sequence):
@@ -178,8 +178,8 @@ class SegmentMaskCollator:
         collated_masks_target, collated_masks_context, collated_masks_attention = [], [], []
 
         # Variables to track the minimum length of masks across the batch
-        keep_tokens_target = self.seq_len
-        keep_tokens_context = self.seq_len
+        keep_tokens_target = self.seq_len_gene_tokens
+        keep_tokens_context = self.seq_len_gene_tokens
 
         for i in range(B):
             # Initialize lists to store target and context masks for each observation
