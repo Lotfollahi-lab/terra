@@ -259,15 +259,15 @@ def infer(args: dict,
         # Aggregate gene embeddings into cell and neighborhood embeddings
         for i, emb in enumerate(emb_list):
             # Keep only <cls> token; at the moment there is only 1 <cls> token
-            if (agg_type == 'cls_cell') or (agg_type == 'cls_neighborhood'):
+            if agg_type == 'cls':
                 cell_mask = create_binary_selection_mask(
                     tokens,
-                    selection_type=agg_type,
+                    selection_type='cls_cell',
                     seq_len_cell=seq_len_cell,
                     n_special_tokens=n_special_tokens)
                 neighborhood_mask = create_binary_selection_mask(
                     tokens,
-                    selection_type=agg_type,
+                    selection_type='cls_neighborhood',
                     seq_len_cell=seq_len_cell,
                     n_special_tokens=n_special_tokens)
 
@@ -344,18 +344,16 @@ def infer(args: dict,
                     else:
                         all_neighborhood_gene_emb_dict[gene_id].append(gene_emb)                  
 
-    print("UNTIL HERE IS OK")
-
     adata = ad.AnnData(
         obs=pd.DataFrame({'cell_id': all_cell_ids},
         index=range(len(all_cell_ids))))
 
     # Add metadata
     adata_metadata = collect_adata_from_folder(raw_data_folder_path)
-    print(adata_metadata.obs)
-    adata.obs = pd.merge(adata.obs,
+    merged_obs = pd.merge(adata.obs,
                          adata_metadata.obs,
                          on='cell_id')
+    adata.obs = merged_obs.set_index('cell_id')
    
     # Store cell and neighborhood embeddings of all observations across layers  
     for i in range(len(all_cell_emb_list)):
