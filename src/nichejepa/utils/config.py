@@ -2,40 +2,6 @@ import yaml
 import logging
 
 
-def setup_batch_size(enc_pred_depth:int,
-                     is_training:bool
-                     ):
-    """
-    Determine and set the appropriate batch size based on the encoder depth and
-    whether the model is training.
-
-    Parameters
-    -----------
-    enc_pred_depth:
-        The depth of the encoder and prediction. This influences the batch size
-        selection.
-    is_training:
-        Indicates if the model is in training mode (True) or evaluation mode
-        (False).
-
-    Returns
-    -----------
-    The computed batch size based on the provided encoder depth and training
-    status.
-    """
-    # Adjust batch size if we are in evaluation mode
-    if not is_training:
-        return 200
-
-    # Default batch size assignment based on the encoder prediction depth
-    if enc_pred_depth < 41:
-        return 20
-    elif 41 <= enc_pred_depth < 51:
-        return 40
-    else:
-        return 70
-
-
 def create_params_from_YAML_wandb_config(YAML_file:str,
                                          logger: logging.RootLogger,
                                          sweep_config=None,
@@ -104,10 +70,6 @@ def create_params_from_YAML_wandb_config(YAML_file:str,
         params['optimization']['ema'] = sweep_config.ema
         params['optimization']['epochs'] = sweep_config.epochs
         params['optimization']['learnable'] = sweep_config.learnable
-
-    # Set batch size
-    # params['data']['batch_size'] = setup_batch_size(
-    #    params['meta']['enc_pred_depth'], is_training)
 
     # Return the updated params dictionary
     return params

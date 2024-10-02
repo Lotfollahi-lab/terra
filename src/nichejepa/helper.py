@@ -12,29 +12,28 @@ from typing import Tuple
 import torch
 
 import nichejepa.models.gene_transformer as gt
-from .utils.schedulers import (WarmupCosineSchedule,
-                               CosineWDSchedule)
-from .utils.tensors import trunc_normal_
+from .models.utils import trunc_normal_
+from .utils.schedulers import (CosineWDSchedule,
+                               WarmupCosineSchedule)
 
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logger = logging.getLogger()
 
 
-def load_checkpoint(
-    device: str,
-    r_path: str,
-    encoder: gt.GeneTransformerEncoder,
-    predictor: gt.GeneTransformerPredictor,
-    target_encoder: gt.GeneTransformerEncoder,
-    opt: torch.optim.AdamW,
-    scaler: torch.cuda.amp.GradScaler
-    ) -> Tuple[gt.GeneTransformerEncoder,
-               gt.GeneTransformerPredictor,
-               gt.GeneTransformerEncoder,
-               torch.optim.AdamW,
-               torch.cuda.amp.GradScaler,
-               int]:
+def load_checkpoint(device: str,
+                    r_path: str,
+                    encoder: gt.GeneTransformerEncoder,
+                    predictor: gt.GeneTransformerPredictor,
+                    target_encoder: gt.GeneTransformerEncoder,
+                    opt: torch.optim.AdamW,
+                    scaler: torch.cuda.amp.GradScaler
+                    ) -> Tuple[gt.GeneTransformerEncoder,
+                               gt.GeneTransformerPredictor,
+                               gt.GeneTransformerEncoder,
+                               torch.optim.AdamW,
+                               torch.cuda.amp.GradScaler,
+                               int]:
     """
     Load model checkpoint from stored file.
 
@@ -122,14 +121,14 @@ def load_checkpoint(
 def init_model(device: str,
                vocab_size: int,
                seq_len: int,
+               n_special_tokens: int,
+               n_segments: int,
                enc_emb_dim: int=768, 
                enc_depth: int=12,
                pred_emb_dim: int=384,
                pred_depth: int=6,
-               gene_panel_size: int=0,
                pos_learnable: bool=False,
                seg_learnable: bool=False,
-               has_cls: bool=False
                ) -> Tuple[gt.GeneTransformerEncoder,
                           gt.GeneTransformerPredictor]:
     """
@@ -151,7 +150,6 @@ def init_model(device: str,
         Dimension of the predictor embedding.        
     pred_depth:
         Number of transformer blocks in the predictor.
-    gene_panel_size:
     pos_learnable:
         If 'True', positional embeddings are learnable, otherwise use sin cos
         positional embeddings.
@@ -171,8 +169,8 @@ def init_model(device: str,
     encoder = gt.__dict__["gt_encoder"](
         vocab_size=vocab_size,
         seq_len=seq_len,
-        has_cls=has_cls,
-        gene_panel_size=gene_panel_size,
+        n_special_tokens=n_special_tokens,
+        n_segments=n_segments,
         pos_learnable=pos_learnable,
         seg_learnable=seg_learnable,
         embed_dim=enc_emb_dim,
@@ -180,8 +178,8 @@ def init_model(device: str,
     predictor = gt.__dict__["gt_predictor"](
         embed_dim=enc_emb_dim,
         seq_len=seq_len,
-        has_cls=has_cls,
-        has_gene_panel=(True if gene_panel_size >0 else False),
+        n_special_tokens=n_special_tokens,
+        n_segments=n_segments,
         pos_learnable=pos_learnable,
         seg_learnable=seg_learnable,
         predictor_embed_dim=pred_emb_dim,

@@ -1,8 +1,11 @@
+
+import os
 from typing import List, Literal, Optional
 
-import anndata
+import anndata as ad
 import numpy as np
 import pandas as pd
+import scanpy as sc
 import torch
 
 
@@ -102,9 +105,9 @@ def compute_mean_unmasked_emb(emb: torch.Tensor,
 
 def create_binary_selection_mask(tokens: torch.Tensor,
                                  seq_len_cell: int,
-                                 has_cls: bool,
-                                 has_gene_panel: bool,
-                                 selection_type: Literal['cls',
+                                 n_special_tokens: int,
+                                 selection_type: Literal['cls_cell',
+                                                         'cls_neighborhood',
                                                          'agg_cell',
                                                          'agg_neighborhood',
                                                          'gene_cell',
@@ -123,9 +126,6 @@ def create_binary_selection_mask(tokens: torch.Tensor,
         A 2D tensor where each row represents a sequence of tokens.
     seq_len_cell:
         The length of cell tokens in the sequence.
-    has_cls:
-        If 'True', sequence contains a <cls> token at position 0.
-    has_gene_panel:
     selection_type:
         Defines the type of embedding, which is relevant for the mask creation.
     excluded_tokens:
@@ -141,14 +141,17 @@ def create_binary_selection_mask(tokens: torch.Tensor,
     selection_mask:
         The resulting 2D selection mask tensor.
     """
-    selection_start_idx = (1 if has_cls else 0)
-    if has_gene_panel:
-        selection_start_idx += 1
+    selection_start_idx = n_special_tokens
 
-    if selection_type == 'cls':
+    if selection_type == 'cls_cell':
         # Select only the first token in each sequence
         selection_mask = torch.zeros_like(tokens, dtype=torch.bool)
         selection_mask[:, 0] = True
+        return selection_mask
+    elif selection_type == 'cls_neighborhood':
+        # Select only the first token in each sequence
+        selection_mask = torch.zeros_like(tokens, dtype=torch.bool)
+        selection_mask[:, 1] = True
         return selection_mask
     elif selection_type == 'agg_cell':
         selection_mask = torch.zeros_like(tokens, dtype=torch.bool)
@@ -252,3 +255,32 @@ def retrieve_gene_emb(tokens: torch.Tensor,
         gene_emb.device)
 
     return gene_emb
+
+
+def collect_adata_from_folder(load_folder_path: str) -> ad.AnnData:
+    """
+    Loop through folder, read all '.h5ad' files and concatenate them as adata
+    objects.
+
+    Parameters
+    --------
+
+    Returns
+    --------
+    """
+    adata_list = []
+
+    # Walk through the load folder path and read files
+    for subdir, _, files in os.walk(load_folder_path):
+        for file_idx, file in enumerate(files):
+            if file.endswith('.h5ad'):
+                file_path = os.path.join(subdir, file)
+                adata = sc.read_h5ad(file_path)
+                adata.obs['cell_id'] = [
+                    str(1 - file_idx) + '_' + row['batch'] + '_' + str(row_idx)
+                    for row_idx, (_, row) in enumerate(adata.obs.iterrows())] # temp, should be added in silver data 
+                adata_list.append(adata)
+
+    concatenated_adata = ad.concat(adata_list, join='outer', index_unique=None)
+    
+    return concatenated_adata
