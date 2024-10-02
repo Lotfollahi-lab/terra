@@ -1,16 +1,20 @@
-import torch
-import numpy as np
+from typing import List, Literal, Optional, Tuple
+
 from logging import getLogger
 from multiprocessing import Value
-from typing import Literal, Optional, Tuple
+
+import numpy as np
+import torch
+
 
 logger = getLogger()
-
 _GLOBAL_SEED = 0
+
 
 class SegmentMaskCollator:
     """
-    SegmentMaskCollator class for sampling target and context masks from cell and neighborhood segments.
+    SegmentMaskCollator class for sampling target and context masks from cell
+    and neighborhood segments.
     
     Parameters
     ----------
@@ -26,59 +30,47 @@ class SegmentMaskCollator:
         The length of the token sequence representing the cell segment.
     seq_len_neighborhood: int
         The length of the token sequence representing the neighborhood segment.
-    has_cls: bool
-        If True, the sequence contains a <cls> token at the 0th index, included in the masks.
     per_segment_mask_ratio: float
         The ratio of elements to be masked in each segment.
     """
     
     def __init__(self,
-                 n_targets: int = 2,
-                 n_contexts: int = 1,
-                 target_mask_size: int = 2,
-                 context_mask_size: int = 10,
-                 seq_len_cell: int = 0,
-                 seq_len_neighborhood: int = 0,
-                 has_cls: bool = False,
-                 per_segment_mask_ratio: float = 0.3):
+                 n_targets: int=2,
+                 n_contexts: int=1,
+                 target_mask_size: int=2,
+                 context_mask_size: int=10,
+                 seq_len_cell: int=0,
+                 seq_len_neighborhood: int=0,
+                 n_special_tokens: int=0,
+                 per_segment_mask_ratio: float=0.3):
         self.n_targets = n_targets
         self.n_contexts = n_contexts
         self.target_mask_size = target_mask_size
         self.context_mask_size = context_mask_size
         self.seq_len_cell = seq_len_cell
         self.seq_len_neighborhood = seq_len_neighborhood
-        self.seq_len = self.seq_len_cell + self.seq_len_neighborhood
-        self.has_cls = has_cls
+        self.seq_len_gene_tokens = self.seq_len_cell + self.seq_len_neighborhood
+        self.n_special_tokens = n_special_tokens
         self.per_segment_mask_ratio = per_segment_mask_ratio
 
-        # Determine the valid start position for the mask based on the presence of a CLS token
-        self.valid_min_start = 1 if self.has_cls else 0
-        
-        # Shared counter to manage iterations across multiple processes
-        self._itr_counter = Value('i', -1)
+        # Determine the valid start position for the mask based on number of
+        # special tokens
+        self.valid_min_start = self.n_special_tokens
 
-    def step(self):
-        """ 
-        Increment the iteration counter. This ensures each worker process generates a unique seed for random sampling.
+    def segment_masking(self,
+                        sequence,
+                        mask_ratio: float,
+                        ) -> List:
         """
-        i = self._itr_counter
-        with i.get_lock():
-            i.value += 1
-            v = i.value
-        return v
-
-    def segment_masking(self, sequence, mask_ratio, generator):
-        """
-        Perform segment masking on the sequence based on the number of targets and per-segment mask ratio.
+        Perform segment masking on the sequence based on the number of targets
+        and per-segment mask ratio.
 
         Parameters
         ----------
         sequence: Tensor, shape (n_samples,)
             The input sequence that needs to be masked.
-        mask_ratio: float
+        mask_ratio:
             Ratio of elements to be masked in each segment.
-        generator: torch.Generator
-            Generator for reproducibility.
 
         Returns
         ----------
@@ -116,12 +108,11 @@ class SegmentMaskCollator:
             if num_to_mask > 0:
                 # Randomly choose indices to mask within the segment
                 # DON'T USE torch.rand as it could produce repeated indices
-                mask_indices = torch.randperm(segment_size, generator=generator)[:num_to_mask]
+                mask_indices = torch.randperm(segment_size)[:num_to_mask]
                 masked_indices = segment_non_zero_indices[mask_indices].tolist()  # Convert to list
                 context_mask[masked_indices] = 0  # Set masked indices to 0 in the context mask
                 keep_tokens_target = min(keep_tokens_target, len(masked_indices))  # Update minimum tokens target
-                if self.has_cls: # add index of cls
-                    masked_indices = [0] + masked_indices
+                masked_indices = list(range(self.n_special_tokens)) + masked_indices # include special tokens
                 segment_masks.append(torch.tensor(masked_indices))  # Append the masked indices io the list
             else:
                 segment_masks.append(torch.tensor([]))  # If no elements to mask, append an empty list
@@ -129,25 +120,23 @@ class SegmentMaskCollator:
         # We randomly permut data so if we trim last item with keep_tokens_context
         # We avoid always discarding the last items of a sequence, as this may be problematic.
         context_mask = torch.nonzero(context_mask).squeeze()
-        context_mask = context_mask[torch.randperm(len(context_mask), generator=generator)]
-        # Add cls to context if it exist
-        if self.has_cls:
-            context_mask = torch.cat((torch.tensor([0]), context_mask))
+        context_mask = context_mask[torch.randperm(len(context_mask))]
+        
+        # Add special tokens to context
+        context_mask = torch.cat((torch.arange(self.n_special_tokens), context_mask))
         return segment_masks, [context_mask], keep_tokens_target
 
-    def _sample_gene_mask(self, sequence, generator: torch.Generator):
+    def _sample_gene_mask(self, sequence):
         """
         Sample context or target gene masks, considering both cell and neighborhood segments.
 
         Parameters
         ----------
-        generator: torch.Generator
-            Pseudorandom number generator to ensure reproducibility.
+        sequence: Tensor
+            A sequence of tokens as input
 
         Returns
         ----------
-        sequence: Tensor
-            A sequence of tokens as input
         target_masks: List[List[int]]
             A list of target masks per segment.
         context_mask: Tensor
@@ -157,7 +146,7 @@ class SegmentMaskCollator:
         """
         # Apply segment masking on the full sequence
         target_masks, context_mask, keep_tokens_target = self.segment_masking(
-            sequence, self.per_segment_mask_ratio, generator)
+            sequence, self.per_segment_mask_ratio)
 
         return target_masks, context_mask, keep_tokens_target
 
@@ -189,27 +178,22 @@ class SegmentMaskCollator:
         collated_masks_target, collated_masks_context, collated_masks_attention = [], [], []
 
         # Variables to track the minimum length of masks across the batch
-        keep_tokens_target = self.seq_len
-        keep_tokens_context = self.seq_len
-
-        # Create a pseudorandom number generator for sampling
-        seed = self.step()  # Get a unique seed for this iteration
-        g = torch.Generator()
-        g.manual_seed(seed)  # Ensure reproducibility by setting the seed
+        keep_tokens_target = self.seq_len_gene_tokens
+        keep_tokens_context = self.seq_len_gene_tokens
 
         for i in range(B):
             # Initialize lists to store target and context masks for each observation
             masks_target, masks_context = [], []
             
             # Sample target and context masks for the current observation
-            masks_target, masks_context, keep_tokens_target_current_batch = self._sample_gene_mask(batch[i][0], generator=g)
+            masks_target, masks_context, keep_tokens_target_current_batch = self._sample_gene_mask(batch[i][0])
             keep_tokens_target = min(keep_tokens_target, keep_tokens_target_current_batch)
             keep_tokens_context = min(keep_tokens_context, len(masks_context[0]))
 
             # Append the masks for the current observation to the collated lists
             collated_masks_target.append(masks_target)
             collated_masks_context.append(masks_context)
-            collated_masks_attention.append((batch[i][0]!=0).int())
+            collated_masks_attention.append((batch[i][0] != 0).int())
 
         # Trim masks to the minimum size across the batch and collate them
         collated_masks_target = [[cm[:keep_tokens_target] for cm in cm_list] for cm_list in collated_masks_target]
