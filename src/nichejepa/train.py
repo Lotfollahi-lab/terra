@@ -348,6 +348,7 @@ def train(args: dict,
         train_loader):
             tokens = udata[0].to(device, non_blocking=True)
             seg_label = udata[1].to(device, non_blocking=True)
+            counts = udata[2].to(device, non_blocking=True)
             masks_enc = [u.to(device, non_blocking=True) for u in masks_enc]
             masks_pred = [u.to(device, non_blocking=True) for u in masks_pred]
             masks_attention = masks_attention.to(device, non_blocking=True)
@@ -363,6 +364,7 @@ def train(args: dict,
                         # Target encorder forward pass with output dim 
                         # (BATCH_SIZE, SEQ_LEN, EMBED_DIM)
                         h = target_encoder(tokens,
+                                           counts,
                                            seg_label,
                                            masks_attention=masks_attention)
 
@@ -393,6 +395,7 @@ def train(args: dict,
                     # overlapping targets
                     z = encoder(
                         tokens,
+                        counts,
                         seg_label,
                         masks_enc)
 
@@ -400,6 +403,7 @@ def train(args: dict,
                     # N_TARGETS * N_CONTEXTS, TARGET_MASK_SIZE, EMB_DIM)
                     z = predictor(
                         z,
+                        counts,
                         seg_label,
                         masks_enc,
                         masks_pred) # output 

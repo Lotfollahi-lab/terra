@@ -184,6 +184,7 @@ class GeneTransformerEncoder(nn.Module):
 
     def forward(self,
                 x: torch.Tensor,
+                counts: torch.Tensor,
                 seg_label: torch.Tensor,
                 masks: Optional[Union[List[torch.Tensor], torch.Tensor]]=None,
                 masks_attention: Optional[torch.Tensor]=None 
@@ -218,6 +219,7 @@ class GeneTransformerEncoder(nn.Module):
 
         # Get gene embeddings for sequence of gene tokens
         x = self.gene_embed(x)
+
         B, N, D = x.shape # B: BATCH_SIZE, N: SEQ_LEN, D: EMBED_DIM
         
         # Add positional and segment embeddings to gene embedding
@@ -288,6 +290,7 @@ class GeneTransformerEncoder(nn.Module):
     @torch.no_grad()
     def return_multi_layer_emb(self,
                                x: torch.Tensor,
+                               counts: torch.Tensor,
                                seg_label: torch.Tensor,
                                masks: Optional[Union[
                                    List[torch.Tensor], torch.Tensor]]=None,
@@ -518,7 +521,8 @@ class GeneTransformerPredictor(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def forward(self,
-                x: torch.Tensor, 
+                x: torch.Tensor,
+                counts: torch.Tensor,
                 seg_label: torch.Tensor,
                 masks_enc: Union[List[torch.Tensor], torch.Tensor],
                 masks_pred: Union[List[torch.Tensor], torch.Tensor]

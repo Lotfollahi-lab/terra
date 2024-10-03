@@ -334,7 +334,7 @@ class CellNeighborhoodCountDataset(CellBaseDataset):
             self.dataset[item]["gene_tokens"], self.dataset[item]["seg_tokens"])
             if seg_token == segment_idx]
 
-        segment_counts = [count for counts, seg_token in zip(
+        segment_counts = [count for count, seg_token in zip(
             self.dataset[item]["gene_expr"], self.dataset[item]["seg_tokens"])
             if seg_token == segment_idx]
 
@@ -344,40 +344,41 @@ class CellNeighborhoodCountDataset(CellBaseDataset):
                 'segment size when not sampling with replacement.')
 
         segment_gene_tokens = segment_gene_tokens[:segment_seq_len]
-        segment_gene_expr = segment_gene_expr[:segment_seq_len]
+        segment_counts = segment_counts[:segment_seq_len]
                 
-        return segment_gene_tokens, segment_gene_expr
+        return segment_gene_tokens, segment_counts
 
-        def __getitem__(self,
-                        item: int
-                        ) -> Tuple[torch.Tensor, torch.Tensor]:
-            # Get (sampled) gene tokens
-            gene_tokens_cell, gene_expr_cell = self._get_gene_tokens_and_counts_for_segment(
-                item=item,
-                segment_idx=1, # cell seg
-                segment_seq_len=self.seq_len_cell)
-            gene_tokens_neighborhood, gene_expr_neighborhood = self._get_gene_tokens_and_counts_for_segment(
-                item=item,
-                segment_idx=2, # neighborhood seg
-                segment_seq_len=self.seq_len_neighborhood)
-            seq_tokens = gene_tokens_cell + gene_tokens_neighborhood
-            gene_expr = gene_expr_cell + gene_expr_neighborhood
-            seg_tokens = [1] * len(gene_tokens_cell) + [2] * len(
-                gene_tokens_neighborhood)
+    def __getitem__(self,
+                    item: int
+                    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        # Get (sampled) gene tokens
+        gene_tokens_cell, gene_expr_cell = self._get_gene_tokens_and_counts_for_segment(
+            item=item,
+            segment_idx=1, # cell seg
+            segment_seq_len=self.seq_len_cell)
+        gene_tokens_neighborhood, gene_expr_neighborhood = self._get_gene_tokens_and_counts_for_segment(
+            item=item,
+            segment_idx=2, # neighborhood seg
+            segment_seq_len=self.seq_len_neighborhood)
+        seq_tokens = gene_tokens_cell + gene_tokens_neighborhood
+        gene_expr = gene_expr_cell + gene_expr_neighborhood
+        seg_tokens = [1] * len(gene_tokens_cell) + [2] * len(
+            gene_tokens_neighborhood)
 
-            # Add special tokens
-            seq_tokens, seg_tokens = self._add_special_tokens_to_seq(
-                seq_tokens=seq_tokens,
-                seg_tokens=seg_tokens,
-                item=item)
+        # Add special tokens
+        seq_tokens, seg_tokens = self._add_special_tokens_to_seq(
+            seq_tokens=seq_tokens,
+            seg_tokens=seg_tokens,
+            item=item)
 
-            seq_tokens = torch.tensor(seq_tokens)
-            seg_tokens = torch.tensor(seg_tokens).int()
+        # Add 1s for special tokens
+        gene_expr = [1] * self.n_special_tokens + gene_expr
 
-            # Add 1s for special tokens
-            gene_expr = [1] * self.n_special_tokens + gene_expr
+        seq_tokens = torch.tensor(seq_tokens).int()
+        seg_tokens = torch.tensor(seg_tokens).int()
+        gene_expr = torch.tensor(gene_expr).int()
 
-            return seq_tokens, seg_tokens, self.dataset[item]["cell_id"], gene_expr
+        return seq_tokens, seg_tokens, gene_expr, self.dataset[item]["cell_id"]
 
 
 def make_cell_dataset(tokenizer_type: Literal['cell_graph_rank',
