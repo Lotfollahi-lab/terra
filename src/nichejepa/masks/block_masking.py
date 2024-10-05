@@ -111,8 +111,8 @@ class BlockMaskCollator:
                 mask_indices = torch.randperm(block_size)[:num_to_mask]
                 masked_indices = block_non_zero_indices[mask_indices].tolist()  # Convert to list
                 context_mask[masked_indices] = 0  # Set masked indices to 0 in the context mask
-                keep_tokens_target = min(keep_tokens_target, len(masked_indices))  # Update minimum tokens target
                 masked_indices = list(range(self.n_special_tokens)) + masked_indices # include special tokens
+                keep_tokens_target = min(keep_tokens_target, len(masked_indices))  # Update minimum tokens target
                 block_masks.append(torch.tensor(masked_indices))  # Append the masked indices io the list
             else:
                 block_masks.append(torch.tensor([]))  # If no elements to mask, append an empty list
