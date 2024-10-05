@@ -17,7 +17,7 @@ import anndata as ad
 import pandas as pd
 import wandb
 
-from src.nichejepa.datasets.prepare_dataset import prepare_dataset
+from src.nichejepa.datasets.utils import prepare_dataset
 from src.nichejepa.infer import infer
 from src.nichejepa.train import train
 from src.nichejepa.utils.config import create_params_from_YAML_wandb_config
@@ -47,7 +47,7 @@ def process_main(rank, args, params, world_size, devices, logger, folder_path, i
     logger.setLevel(logging.INFO if rank == 0 else logging.ERROR)
 
     world_size, rank = init_distributed(
-        rank_and_world_size=(rank, world_size), port=40002)
+        rank_and_world_size=(rank, world_size), port=40003)
     logger.info(f'Running... (rank: {rank}/{world_size})')
 
     # Execute training or evaluation
@@ -65,17 +65,18 @@ def process_main(rank, args, params, world_size, devices, logger, folder_path, i
             adata_combined,
             emb_key=f"cell_emb_layer_{params['meta']['enc_depth'] - 1}",
             label_col='cell_type')
+        '''
         niche_nmi_ari = clustering_metrics(
             adata_combined,
             emb_key=f"neighborhood_emb_layer_{params['meta']['enc_depth'] - 1}",
-            label_col='niche')
+            label_col='major_brain_region')
         wandb.log(
             {"folder_path": folder_path,
              "niche_nmi": niche_nmi_ari['nmi'],
              "niche_ari": niche_nmi_ari['ari'],
              'cell_type_nmi': cell_type_nmi_ari['nmi'],
              'cell_type_ari': cell_type_nmi_ari['ari']})
-
+        '''
 
 # Function to manage sweeping process
 def sweep_func(args):
@@ -104,7 +105,7 @@ def sweep_func(args):
         datetime.now().strftime("%d%m%Y_%H%M%S") +
         f"_{datetime.now().microsecond // 1000:03d}")
     folder_path = os.path.join(artifact_folder_path,
-                            params['data']['data_set_name'],
+                            params['data']['dataset_name'],
                             current_timestamp)
 
     # Run the process_main function in a single or multi-GPU setting
@@ -144,7 +145,7 @@ if __name__ == '__main__':
             'enc_pred_depth': {'values': [31,32,41]},
             'pos_learnable': {'values': [1,0]},
             'ema': {'distribution': 'uniform', "max": 1, "min": 0},
-            'per_segment_mask_ratio': {'distribution': 'uniform',
+            'per_block_mask_ratio': {'distribution': 'uniform',
                                        "max": 0.6, "min": 0.1},
             'n_targets': {'distribution': 'int_uniform', 'min': 1, 'max': 9},
         }
