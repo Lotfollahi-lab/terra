@@ -21,7 +21,41 @@ from .utils import (get_1d_sincos_pos_embed,
 from ..masks.utils import apply_masks
 
 
-class GeneTransformerEncoder(nn.Module):
+class GeneTransformerBaseEncoder(nn.Module):
+    """
+    GeneTransformerBaseEncoder class to encode contexts or targets.
+    """
+    def __init__(self,
+                 vocab_size: int,
+                 seq_len: int,
+                 n_special_tokens: int,
+                 n_segments: int,
+                 pos_learnable: bool=False,
+                 seg_learnable: bool=False,
+                 embed_dim: int=768,
+                 depth: int=12,
+                 predictor_embed_dim: int=384,
+                 predictor_depth: int=12,
+                 num_heads: int=12,
+                 mlp_ratio: float=4.0,
+                 qkv_bias: bool=True,
+                 qk_scale: Optional[float]=None,
+                 drop_rate: float=0.0,
+                 attn_drop_rate: float=0.0,
+                 drop_path_rate: float=0.0,
+                 norm_layer: nn.modules.normalization=nn.LayerNorm,
+                 init_std: float=0.02,
+                 **kwargs
+                 ):
+    super().__init__()
+    self.seq_len = seq_len
+    self.n_special_tokens = n_special_tokens
+    self.embed_dim = embed_dim
+    self.num_heads = num_heads
+    self.init_std = init_std
+
+
+class GeneTransformerEncoder(GeneTransformerBaseEncoder):
     """
     GeneTransformerEncoder class to encode contexts or targets.
     
@@ -350,13 +384,19 @@ class GeneTransformerEncoder(nn.Module):
             if not isinstance(masks, list):
                 masks = [masks]
 
-        x[:, 2] = 436 # temp
+        # x[:, 2] = 436 # temp, remove later
 
         # Get gene embeddings for sequence of gene tokens
         x = self.gene_embed(x)
 
-        a = self.count_projection(counts.float().unsqueeze(dim=-1))
+        a = self.count_projection(counts.unsqueeze(dim=-1))
         values = torch.matmul(a, self.value_embed)
+
+        # Add 0s to value embeddings for special tokens
+        values = torch.cat((torch.zeros(values.shape[0],
+                                        self.n_special_tokens,
+                                        values.shape[2]).to(values.device),
+                            values), dim=1)
 
         B, N, D = x.shape
 
