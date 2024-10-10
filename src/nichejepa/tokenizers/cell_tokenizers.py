@@ -1023,7 +1023,17 @@ class CellNeighborhoodRankTokenizer:
             else:
                 cell_metadata = None
 
-        # Hardcoding dataset ID, assay, species, and tissue values for now
+        # Get number of cells in this file
+        n_cells = len(adata)
+
+        # ------------------------------------------------------------------------------------ 
+        try:
+            dataset_id = adata.uns['dataset_id']
+        except:
+            pass
+        # ------------------------------------------------------------------------------------
+        # TODO: Remove this block once data harmonization is complete
+        # Hardcoding dataset ID, assay, species, and tissue values
         if "merfish" in str(adata_file_path):
             dataset_id = 0
             assay_key = "merfish"
@@ -1034,44 +1044,57 @@ class CellNeighborhoodRankTokenizer:
             assay_key = "starmap"
             species_key = "mus_musculus"
             tissue_key = "brain"
-        elif "sim" in str(adata_file_path):
+        elif "sim1_1105fts" in str(adata_file_path):
             dataset_id = 2
+            assay_key = "sim"
+            species_key = "sim"
+            tissue_key = "sim"
+        elif "sim1_1105genes" in str(adata_file_path):
+            dataset_id = 3
             assay_key = "sim"
             species_key = "sim"
             tissue_key = "sim"
         else:
             raise ValueError("Dataset ID not recognized.")
-
-        # Get batch IDs
-        n_cells = len(adata)
-        if "batch" not in adata.obs.keys():
-            batch_IDs = ["batch1"] * n_cells
-        else:
-            batch_IDs = adata.obs["batch"].tolist()
+        # ------------------------------------------------------------------------------------ 
+        try:
+            batch_id = adata.uns['batch']
+        except:
+            batch_id = "batch1"
         
         # Set cell IDs
-        cell_IDs = []
-        batch_tokens = []
-        for cell_idx, batch_id in enumerate(batch_IDs):
-            cell_IDs.append(f"{dataset_id}_{batch_id}_{cell_idx}")
-            batch_tokens.append(self.token_dict[f"{dataset_id}_{batch_id}"])
-            
-        gene_panel_tokens = [self.token_dict[self.file_path_to_gene_panel_ID_dict[str(adata_file_path)]]] * n_cells
         try:
-            assay_tokens = [self.token_dict[assay] for assay in adata.obs["assay"].tolist()]
+            cell_IDs = adata.obs["cell_ID"].values
+        except:
+            cell_IDs = [f"{dataset_id}_{batch_id}_{cell_idx}" for cell_idx in range(n_cells)]
+        # ------------------------------------------------------------------------------------                 
+        # Prepare special tokens for this file
+        
+        # Batch
+        batch_id_key = f"{dataset_id}_{batch_id}"
+        batch_tokens = [self.token_dict[batch_id_key]] * n_cells
+        
+        # Gene Panel
+        gene_panel_tokens = [self.token_dict[self.file_path_to_gene_panel_ID_dict[str(adata_file_path)]]] * n_cells
+        
+        # Assay
+        try:
+            assay_tokens = [self.token_dict[adata.uns["assay"]]] * n_cells
         except:
             assay_tokens = [self.token_dict[assay_key]] * n_cells
         
-        # Hardcoding species and tissue values for now
+        # Species
         try:
-            species_tokens = [self.token_dict[species] for species in adata.uns["species"]]
+            species_tokens = [self.token_dict[adata.uns["species"]]] * n_cells
         except:
             species_tokens = [self.token_dict[species_key]] * n_cells
         
+        # Tissue
         try:
-            tissue_tokens = [self.token_dict[tissue] for tissue in adata.uns["tissue"]]
+            tissue_tokens = [self.token_dict[adata.uns["tissue"]]] * n_cells
         except:
             tissue_tokens = [self.token_dict[tissue_key]] * n_cells
+        # ------------------------------------------------------------------------------------                     
         
         special_tokens_dict = {'batch_token': batch_tokens,
                                  'gene_panel_token': gene_panel_tokens,
