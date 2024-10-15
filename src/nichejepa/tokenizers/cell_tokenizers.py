@@ -1023,54 +1023,18 @@ class CellNeighborhoodRankTokenizer:
             else:
                 cell_metadata = None
 
+        # ------------------------------------------------------------------------------------ 
         # Get number of cells in this file
         n_cells = len(adata)
 
-        # ------------------------------------------------------------------------------------ 
-        try:
-            dataset_id = adata.uns['dataset_id']
-        except:
-            pass
-        # ------------------------------------------------------------------------------------
-        # TODO: Remove this block once data harmonization is complete
-        # Hardcoding dataset ID, assay, species, and tissue values
-        if "merfish" in str(adata_file_path):
-            dataset_id = 0
-            assay_key = "merfish"
-            species_key = "mus_musculus"
-            tissue_key = "brain"
-        elif "starmap" in str(adata_file_path):
-            dataset_id = 1
-            assay_key = "starmap"
-            species_key = "mus_musculus"
-            tissue_key = "brain"
-        elif "sim1_1105fts" in str(adata_file_path):
-            dataset_id = 2
-            assay_key = "sim"
-            species_key = "sim"
-            tissue_key = "sim"
-        elif "sim1_1105genes" in str(adata_file_path):
-            dataset_id = 3
-            assay_key = "sim"
-            species_key = "sim"
-            tissue_key = "sim"
-        else:
-            raise ValueError("Dataset ID not recognized.")
-        # ------------------------------------------------------------------------------------ 
-        try:
-            batch_id = adata.uns['batch']
-        except:
-            batch_id = "batch1"
-        
-        # Set cell IDs
-        try:
-            cell_IDs = adata.obs["cell_ID"].values
-        except:
-            cell_IDs = [f"{dataset_id}_{batch_id}_{cell_idx}" for cell_idx in range(n_cells)]
-        # ------------------------------------------------------------------------------------                 
-        # Prepare special tokens for this file
+        # Dataset ID
+        dataset_id = adata.uns['dataset_id']
+
+        # Cell IDs
+        cell_IDs = adata.obs["cell_ID"].values
         
         # Batch
+        batch_id = adata.uns['batch']
         batch_id_key = f"{dataset_id}_{batch_id}"
         batch_tokens = [self.token_dict[batch_id_key]] * n_cells
         
@@ -1078,22 +1042,13 @@ class CellNeighborhoodRankTokenizer:
         gene_panel_tokens = [self.token_dict[self.file_path_to_gene_panel_ID_dict[str(adata_file_path)]]] * n_cells
         
         # Assay
-        try:
-            assay_tokens = [self.token_dict[adata.uns["assay"]]] * n_cells
-        except:
-            assay_tokens = [self.token_dict[assay_key]] * n_cells
+        assay_tokens = [self.token_dict[adata.uns["assay"]]] * n_cells
         
         # Species
-        try:
-            species_tokens = [self.token_dict[adata.uns["species"]]] * n_cells
-        except:
-            species_tokens = [self.token_dict[species_key]] * n_cells
+        species_tokens = [self.token_dict[adata.uns["species"]]] * n_cells
         
         # Tissue
-        try:
-            tissue_tokens = [self.token_dict[adata.uns["tissue"]]] * n_cells
-        except:
-            tissue_tokens = [self.token_dict[tissue_key]] * n_cells
+        tissue_tokens = [self.token_dict[adata.uns["tissue"]]] * n_cells
         # ------------------------------------------------------------------------------------                     
         
         special_tokens_dict = {'batch_token': batch_tokens,
@@ -1152,12 +1107,9 @@ class CellNeighborhoodRankTokenizer:
                         "gene_tokens_neighborhood": gene_tokens_neighborhood}
         if self.custom_attr_name_dict is not None:
             dataset_dict.update(cell_metadata)
-        # dataset_dict["dataset_id"] = dataset_IDs
         dataset_dict["cell_id"] = cell_IDs
 
-        # special tokens include:
-        # `cls = [`cls_cell`, `cls_neighborhood`]`
-        # `gene_panel_token = []`
+        # special tokens
         if special_tokens_dict is not None:
             for k, v in special_tokens_dict.items():
                 dataset_dict[k] = v
