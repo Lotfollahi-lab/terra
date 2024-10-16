@@ -18,6 +18,7 @@ data:
   pin_memory: True
   separate_cls: True
 meta:
+  gt_type: 'rank' # 'rank', 'count'
   enc_depth: 3
   enc_emb_dim: 768
   pred_depth: 1

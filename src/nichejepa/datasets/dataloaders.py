@@ -107,10 +107,11 @@ class CustomDistributedLengthGroupedSampler(DistributedSampler):
         Return a list of indices so that each slice of :obj:`batch_size`
         consecutive indices correspond to elements of similar lengths. To do
         this, the indices are (1) randomly permuted, (2) grouped in mega-batches
-        of size :obj:`mega_batch_mult * batch_size`, (3) sorted by length in each mega-batch
-        The result is the concatenation of all mega-batches, with the batch of
-        :obj:`batch_size` containing the element of maximum length placed first,
-        so that an OOM error would happens earlier rather than later.
+        of size :obj:`mega_batch_mult * batch_size`, (3) sorted by length in
+        each mega-batch. The result is the concatenation of all mega-batches,
+        with the batch of :obj:`batch_size` containing the element of maximum
+        length placed first, so that an OOM error would happens earlier rather
+        than later.
         """
         if mega_batch_mult is None:
             # Default for mega_batch_mult: 1000 or the number to get 4

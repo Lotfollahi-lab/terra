@@ -7,11 +7,11 @@ https://github.com/facebookresearch/ijepa/blob/main/src/helper.py (05.06.2024).
 
 import logging
 import sys
-from typing import Tuple
+from typing import Literal, Tuple
 
 import torch
 
-import nichejepa.models.gene_transformer as gt
+import nichejepa.models.gene_transformers as gt
 from .models.utils import trunc_normal_
 from .utils.schedulers import (CosineWDSchedule,
                                WarmupCosineSchedule)
@@ -23,14 +23,14 @@ logger = logging.getLogger()
 
 def load_checkpoint(device: str,
                     r_path: str,
-                    encoder: gt.GeneTransformerEncoder,
-                    predictor: gt.GeneTransformerPredictor,
-                    target_encoder: gt.GeneTransformerEncoder,
+                    encoder: gt.GeneTransformerBaseEncoder,
+                    predictor: gt.GeneTransformerBasePredictor,
+                    target_encoder: gt.GeneTransformerBaseEncoder,
                     opt: torch.optim.AdamW,
                     scaler: torch.cuda.amp.GradScaler
-                    ) -> Tuple[gt.GeneTransformerEncoder,
-                               gt.GeneTransformerPredictor,
-                               gt.GeneTransformerEncoder,
+                    ) -> Tuple[gt.GeneTransformerBaseEncoder,
+                               gt.GeneTransformerBasePredictor,
+                               gt.GeneTransformerBaseEncoder,
                                torch.optim.AdamW,
                                torch.cuda.amp.GradScaler,
                                int]:
@@ -118,7 +118,8 @@ def load_checkpoint(device: str,
     return encoder, predictor, target_encoder, opt, scaler, epoch
 
 
-def init_model(device: str,
+def init_model(gt_type: Literal['rank', 'count'],
+               device: str,
                vocab_size: int,
                seq_len: int,
                n_special_tokens: int,
@@ -129,13 +130,15 @@ def init_model(device: str,
                pred_depth: int=6,
                pos_learnable: bool=False,
                seg_learnable: bool=False,
-               ) -> Tuple[gt.GeneTransformerEncoder,
-                          gt.GeneTransformerPredictor]:
+               ) -> Tuple[gt.GeneTransformerBaseEncoder,
+                          gt.GeneTransformerBasePredictor]:
     """
     Initialize model.
 
     Parameters
     -----------
+    gt_type:
+        Gene transformer type.
     device:
         Device on which the model will be initialized.
     vocab_size:
@@ -166,7 +169,8 @@ def init_model(device: str,
     predictor:
         Initialized GeneTransformerPredictor module.
     """
-    encoder = gt.__dict__["gt_encoder"](
+    encoder = gt.__dict__["init_gt_encoder"](
+        encoder_type=gt_type,
         vocab_size=vocab_size,
         seq_len=seq_len,
         n_special_tokens=n_special_tokens,
@@ -175,7 +179,8 @@ def init_model(device: str,
         seg_learnable=seg_learnable,
         embed_dim=enc_emb_dim,
         depth=enc_depth)
-    predictor = gt.__dict__["gt_predictor"](
+    predictor = gt.__dict__["init_gt_predictor"](
+        predictor_type=gt_type,
         embed_dim=enc_emb_dim,
         seq_len=seq_len,
         n_special_tokens=n_special_tokens,
@@ -207,8 +212,8 @@ def init_model(device: str,
     return encoder, predictor
 
     
-def init_opt(encoder: gt.GeneTransformerEncoder,
-             predictor: gt.GeneTransformerPredictor,
+def init_opt(encoder: gt.GeneTransformerBaseEncoder,
+             predictor: gt.GeneTransformerBasePredictor,
              iterations_per_epoch: int,
              start_lr: float,
              ref_lr: float,
