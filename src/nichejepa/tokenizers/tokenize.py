@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import numpy as np
 
@@ -6,10 +6,9 @@ import numpy as np
 def process_gene_tokens(gene_tokens: List,
                         length: int,
                         token_dict: dict,
-                        ) -> List:
+                        ) -> Tuple[np.ndarray, int]:
     """
-    Add pad tokens or truncate gene token list based on length and add special
-    tokens if defined.
+    Add pad tokens or truncate gene token list based on length.
 
     Parameters
     ----------
@@ -23,11 +22,11 @@ def process_gene_tokens(gene_tokens: List,
     Returns
     ----------
     processed_gene_tokens:
-       List containing padded or truncated (ranked) gene tokens, including
-       special tokens if defined.       
+       Array containing padded or truncated (ranked) gene tokens.
+    num_nonzero_tokens:
+       Number of nonzero gene tokens.
     """
-    # Convert to np.int64 to ensure all elements are of the same type.
-    processed_gene_tokens = np.array(gene_tokens, dtype=np.int64)
+    processed_gene_tokens = np.array(gene_tokens)
     
     pad_size = int(length - len(processed_gene_tokens))
     if pad_size < 0:
@@ -48,7 +47,7 @@ def process_gene_tokens(gene_tokens: List,
 
 def process_gene_expr(gene_expr: List,
                       length: int,
-                      ) -> List:
+                      ) -> np.ndarray:
     """
     This needs to be updated.   
     """

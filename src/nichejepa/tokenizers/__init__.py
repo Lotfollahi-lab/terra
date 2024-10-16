@@ -1,7 +1,6 @@
 from .cell_tokenizers import (CellBaseTokenizer,
-                              CellGraphRankTokenizer,
-                              CellNeighborhoodRankTokenizer,
-                              CellNeighborhoodCountTokenizer)
+                              CellGraphTokenizer,
+                              CellNeighborhoodTokenizer)
 from ..preprocessors.aggregators import aggregate_neighbors
 from ..preprocessors.filters import filter_poor_quality_cells
 from ..preprocessors.normalizers import (normalize_by_analytic_pearson_residuals,
