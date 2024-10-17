@@ -42,7 +42,7 @@ def normalize_by_analytic_pearson_residuals(x: sp.csr_matrix,
     """
 
     if theta <= 0:
-        raise ValueError("Pearson residuals require theta > 0")
+        raise ValueError('Pearson residuals require theta > 0')
 
     cell_sums = np.sum(x, axis=1).reshape(-1, 1)
     gene_sums = np.sum(x, axis=0).reshape(1, -1)
@@ -116,7 +116,7 @@ def normalize_by_mean(x: sp.csr_matrix,
     """
 
     # Load dictionary of gene means
-    with open(gene_means_file, "rb") as f:
+    with open(gene_means_file, 'rb') as f:
         gene_means_dict = pickle.load(f)
 
     # Retrieve gene means for probed genes
@@ -157,7 +157,7 @@ def normalize_by_nonzero_mean(x: sp.csr_matrix,
     """
 
     # Load dictionary of gene non-zero means
-    with open(gene_nzmeans_file, "rb") as f:
+    with open(gene_nzmeans_file, 'rb') as f:
         gene_nzmeans_dict = pickle.load(f)
 
     # Retrieve gene non-zero means
@@ -242,7 +242,7 @@ def normalize_by_seurat(x: sp.csr_matrix) -> sp.csr_matrix:
 
     model = loess(gene_log_means,
                   gene_log_variances,
-                  options={"span": 0.3, "degree": 2})
+                  options={'span': 0.3, 'degree': 2})
     model.fit()
 
     expected_log_variances = np.zeros(x.shape[1], dtype=np.float64)
@@ -310,7 +310,7 @@ def normalize_by_shifted_log_mean(x: sp.csr_matrix,
     log_normalized = sc.pp.log1p(x)
 
     # Load dictionary of gene logmeans
-    with open(gene_logmeans_file, "rb") as f:
+    with open(gene_logmeans_file, 'rb') as f:
         gene_logmeans_dict = pickle.load(f)
 
     gene_logmeans = np.array(

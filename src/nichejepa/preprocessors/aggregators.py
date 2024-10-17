@@ -2,8 +2,7 @@ import anndata as ad
 import squidpy as sq
 
 
-def aggregate_neighbors(adata: ad.AnnData,
-                        ) -> ad.AnnData:
+def aggregate_neighbors(adata: ad.AnnData) -> ad.AnnData:
     """
     Aggregate cell features by neighborhood radius.
 
@@ -21,8 +20,8 @@ def aggregate_neighbors(adata: ad.AnnData,
     """
     # Compute spatial neighborhood graph with delaunay triangulation
     sq.gr.spatial_neighbors(adata,
-                            coord_type="generic",
-                            spatial_key="spatial",
+                            coord_type='generic',
+                            spatial_key='spatial',
                             delaunay=True,
                             set_diag=True)
 
