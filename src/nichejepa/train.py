@@ -352,8 +352,7 @@ def train(args: dict,
         train_loader):
             tokens = udata[0].to(device, non_blocking=True)
             segments = udata[1].to(device, non_blocking=True)
-            if gt_type == 'count':
-                counts = udata[2].to(device, non_blocking=True)
+            counts = udata[2].to(device, non_blocking=True)
             masks_enc = [u.to(device, non_blocking=True) for u in masks_enc]
             masks_pred = [u.to(device, non_blocking=True) for u in masks_pred]
             masks_attention = masks_attention.to(device, non_blocking=True)
@@ -368,14 +367,10 @@ def train(args: dict,
                     with torch.no_grad(): # no backward pass for target encoder
                         # Target encorder forward pass with output dim 
                         # (BATCH_SIZE, SEQ_LEN, EMBED_DIM)
-                        target_encoder_inputs = {}
-                        target_encoder_inputs['tokens'] = tokens
-                        target_encoder_inputs['segments'] = segments
-                        target_encoder_inputs['masks_attention'] = masks_attention
-                        if gt_type == 'counts':
-                            target_encoder_inputs['counts'] = counts
-
-                        h = target_encoder(**target_encoder_inputs)
+                        h = target_encoder(tokens=tokens,
+                                           segments=segments,
+                                           counts=counts,
+                                           masks_attention=masks_attention)
 
                         # Normalize over feature dim
                         h = F.layer_norm(h, (h.size(-1),))
@@ -398,23 +393,19 @@ def train(args: dict,
                         return h
 
                 def forward_context():
-                    context_encoder_inputs = {}
-                    context_encoder_inputs['tokens'] = tokens
-                    context_encoder_inputs['segments'] = segments
-                    context_encoder_inputs['masks'] = masks_enc
-                    if gt_type == 'counts':
-                        context_encoder_inputs['counts'] = counts
-
                     # Context encoder forward pass with output dim (BATCH_SIZE,
                     # MIN_CONTEXT_SIZE, EMB_DIM) where MIN_CONTEXT_SIZE is
                     # minmum context size in the batch after removal of
                     # overlapping targets
-                    x = encoder(**context_encoder_inputs)
+                    z = encoder(tokens=tokens,
+                                segments=segments,
+                                counts=counts,
+                                masks=masks_enc)
 
                     # Predictor forward pass with output dim (BATCH_SIZE *
                     # N_TARGETS * N_CONTEXTS, TARGET_MASK_SIZE, EMB_DIM)
                     predictor_inputs = {}
-                    predictor_inputs['x'] = x
+                    predictor_inputs['z'] = z
                     predictor_inputs['segments'] = segments
                     predictor_inputs['masks_enc'] = masks_enc
                     predictor_inputs['masks_pred'] = masks_pred
