@@ -367,10 +367,15 @@ def train(args: dict,
                     with torch.no_grad(): # no backward pass for target encoder
                         # Target encorder forward pass with output dim 
                         # (BATCH_SIZE, SEQ_LEN, EMBED_DIM)
-                        h = target_encoder(tokens=tokens,
-                                           segments=segments,
-                                           counts=counts,
-                                           masks_attention=masks_attention)
+                        if gt_type == 'rank':
+                            h = target_encoder(tokens=tokens,
+                                               segments=segments,
+                                               masks_attention=masks_attention)
+                        elif gt_type == 'counts':
+                            h = target_encoder(tokens=tokens,
+                                               segments=segments,
+                                               counts=counts,
+                                               masks_attention=masks_attention)
 
                         # Normalize over feature dim
                         h = F.layer_norm(h, (h.size(-1),))
@@ -397,26 +402,33 @@ def train(args: dict,
                     # MIN_CONTEXT_SIZE, EMB_DIM) where MIN_CONTEXT_SIZE is
                     # minmum context size in the batch after removal of
                     # overlapping targets
-                    z = encoder(tokens=tokens,
-                                segments=segments,
-                                counts=counts,
-                                masks=masks_enc)
+                    if gt_type == 'rank':
+                        z = encoder(tokens=tokens,
+                                    segments=segments,
+                                    masks=masks_enc)                       
+                    elif gt_type == 'counts':
+                        z = encoder(tokens=tokens,
+                                    segments=segments,
+                                    counts=counts,
+                                    masks=masks_enc)
 
                     # Predictor forward pass with output dim (BATCH_SIZE *
                     # N_TARGETS * N_CONTEXTS, TARGET_MASK_SIZE, EMB_DIM)
-                    predictor_inputs = {}
-                    predictor_inputs['z'] = z
-                    predictor_inputs['segments'] = segments
-                    predictor_inputs['masks_enc'] = masks_enc
-                    predictor_inputs['masks_pred'] = masks_pred
-                    predictor_inputs['enc_seg_embed'] = encoder.module.seg_embed
-                    if gt_type == 'counts':
-                        predictor_inputs['tokens'] = tokens
-                        predictor_inputs['enc_token_embed'] = encoder.module.token_embed
-                    elif gt_type == 'rank':
-                        predictor_inputs['enc_pos_embed'] = encoder.module.pos_embed
-
-                    x = predictor(**predictor_inputs) # output 
+                    if gt_type == 'rank':
+                        x = predictor(z=z,
+                                      segments=segments,
+                                      masks_enc=masks_enc,
+                                      masks_pred=masks_pred,
+                                      enc_seg_embed=encoder.module.seg_embed,
+                                      enc_pos_embed=encoder.module.pos_embed)
+                    elif gt_type == 'counts':
+                        x = predictor(z=z,
+                                      segments=segments,
+                                      tokens=tokens,
+                                      masks_enc=masks_enc,
+                                      masks_pred=masks_pred,
+                                      enc_seg_embed=encoder.module.seg_embed,
+                                      enc_token_embed=encoder.module.token_embed)
                     return x
 
                 def loss_fn(z, h):

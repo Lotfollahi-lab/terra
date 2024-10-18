@@ -225,8 +225,7 @@ def infer(args: dict,
         # Load gene tokens and segmentation label to the specified device
         tokens = udata[0].to(device, non_blocking=True)
         segments = udata[1].to(device, non_blocking=True)
-        if gt_type == 'count':
-            counts = udata[2].to(device, non_blocking=True)
+        counts = udata[2].to(device, non_blocking=True)
         masks_attention = masks_attention.to(device, non_blocking=True)
 
         # Collect cell IDs to join metadata
@@ -236,15 +235,17 @@ def infer(args: dict,
         with torch.cuda.amp.autocast(dtype=torch.bfloat16,
                                      enabled=args['meta']['use_bfloat16']):
 
-            target_encoder_inputs = {}
-            target_encoder_inputs['tokens'] = tokens
-            target_encoder_inputs['segments'] = segments
-            target_encoder_inputs['masks_attention'] = masks_attention
-            if gt_type == 'counts':
-                target_encoder_inputs['counts'] = counts
-
-            emb_list = target_encoder.module.return_multi_layer_emb(
-                **target_encoder_inputs)
+            if gt_type == 'rank':
+                emb_list = target_encoder.module.return_multi_layer_emb(
+                    tokens=tokens,
+                    segments=segments,
+                    masks_attention=masks_attention)
+            elif gt_type == 'counts':
+                emb_list = target_encoder.module.return_multi_layer_emb(
+                    tokens=tokens,
+                    segments=segments,
+                    counts=counts,
+                    masks_attention=masks_attention)
         
             if feature_norm:
                 # Normalize last layer like in training

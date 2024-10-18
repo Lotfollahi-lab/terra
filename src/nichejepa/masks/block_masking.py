@@ -36,7 +36,6 @@ class BlockMaskCollator:
         This will determine whether we add the CLS of  cell only to cell blocks and
         the CLS of  neighborhood only to the neighborhood or not.
     """
-    
     def __init__(self,
                  n_targets: int=2,
                  n_contexts: int=1,
@@ -62,9 +61,9 @@ class BlockMaskCollator:
         self.valid_min_start = self.n_special_tokens
 
     def block_masking(self,
-                      sequence,
+                      sequence: torch.Tensor,
                       mask_ratio: float,
-                      ) -> List:
+                      ) -> List[torch.Tensor]:
         """
         Perform block masking on the sequence based on the number of targets
         and per-block mask ratio.
@@ -85,13 +84,18 @@ class BlockMaskCollator:
         keep_tokens_target: int
             Minimum number of tokens kept across all target masks.
         """
-        non_zero_indices = torch.nonzero(sequence[self.valid_min_start:]).squeeze()  # Indices where sequence is non-zero
-        total_non_zero = len(non_zero_indices)  # Total non-zero elements in the sequence
+        non_zero_indices = torch.nonzero(
+            sequence[self.valid_min_start:]).squeeze()
+        total_non_zero = len(non_zero_indices)
     
         # Initialize a list to store masked indices for each block
         block_masks = []
-        context_mask = torch.zeros(len(sequence), dtype=torch.int32)  # Initialize context mask
-        keep_tokens_target = float('inf')  # Keep track of the minimum number of target tokens across blocks
+
+        # Initialize context mask
+        context_mask = torch.zeros(len(sequence), dtype=torch.int32)
+        
+        # Keep track of the minimum number of target tokens across blocks
+        keep_tokens_target = float('inf')
 
         # Compute block length based on the number of targets
         block_length = max(1, total_non_zero // self.n_targets)  # Avoid dividing by zero

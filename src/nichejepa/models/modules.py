@@ -196,7 +196,6 @@ class CountProjection(nn.Module):
         out = self.linear1(x)
         out = self.leaky_relu(out)
         out = self.linear2(out)
-        out = out + x
         out = self.softmax(out)
         
         return out

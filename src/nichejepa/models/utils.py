@@ -85,6 +85,9 @@ def drop_path(x: torch.Tensor,
 
 
 def repeat_interleave_batch(x, B, repeat):
+    """
+    Helper function to repeat tensors across batch dimension.
+    """
     N = len(x) // B
     x = torch.cat(
             [torch.cat([x[i*B:(i+1)*B] for _ in range(repeat)], dim=0)
@@ -95,6 +98,9 @@ def repeat_interleave_batch(x, B, repeat):
 
 
 def trunc_normal_(tensor, mean=0., std=1., a=-2., b=2.):
+    """
+    Helper function to initialize tensors with truncated normal distribution.
+    """
     # type: (Tensor, float, float, float, float) -> Tensor
     return _no_grad_trunc_normal_(tensor, mean, std, a, b)
 
@@ -168,4 +174,5 @@ def _no_grad_trunc_normal_(tensor, mean, std, a, b):
 
         # Clamp to ensure it's in the proper range
         tensor.clamp_(min=a, max=b)
+        
         return tensor
