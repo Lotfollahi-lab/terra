@@ -188,14 +188,15 @@ class CountProjection(nn.Module):
         """
         super().__init__()
         self.linear1 = nn.Linear(1, dim)
-        self.leaky_relu = nn.LeakyReLU(negative_slope=0.01)
+        self.leaky_relu = nn.LeakyReLU(negative_slope=0.1)
         self.linear2 = nn.Linear(dim, dim)
         self.softmax = nn.Softmax(dim=-1)
     
     def forward(self, x):
-        out = self.linear1(x)
-        out = self.leaky_relu(out)
-        out = self.linear2(out)
+        x = self.linear1(x)
+        x = self.leaky_relu(x)
+        out = self.linear2(x)
+        out = x + out # residual connection
         out = self.softmax(out)
         
         return out

@@ -144,6 +144,8 @@ class CellBaseTokenizer(ABC):
         self.gene_panel_ID_to_gene_panel_dict_file = gene_panel_ID_to_gene_panel_dict_file
         self.file_path_to_gene_panel_ID_dict_file = file_path_to_gene_panel_ID_dict_file
 
+        print(token_dictionary_file)
+
         # Load token dictionary
         with open(token_dictionary_file, 'rb') as f:
             self.token_dict = pickle.load(f)
@@ -547,17 +549,24 @@ class CellGraphTokenizer(CellBaseTokenizer):
         
         # Add special tokens
         n_cells = len(adata)
+        adata_dict['batch_token'] = [self.token_dict['batch']] * n_cells
+        adata_dict['gene_panel_token'] = [self.token_dict['gene_panel']] * n_cells
+        adata_dict['assay_token'] = [self.token_dict['assay']] * n_cells
+        adata_dict['species_token'] = [self.token_dict['species']] * n_cells
+        adata_dict['tissue_token'] = [self.token_dict['tissue']] * n_cells
+
+        # Add special token values
         batch_id_key = f"{adata.uns['dataset_id']}_{adata.uns['batch']}"
-        adata_dict['batch_token'] = [self.token_dict[batch_id_key]] * n_cells
-        adata_dict['gene_panel_token'] = [
+        adata_dict['batch_value'] = [self.token_dict[batch_id_key]] * n_cells
+        adata_dict['gene_panel_value'] = [
             self.token_dict[
                 self.file_path_to_gene_panel_ID_dict[
                     str(adata_file_path)]]] * n_cells
-        adata_dict['assay_token'] = [
+        adata_dict['assay_value'] = [
             self.token_dict[adata.uns['assay']]] * n_cells
-        adata_dict['species_token'] = [
+        adata_dict['species_value'] = [
             self.token_dict[adata.uns['species']]] * n_cells
-        adata_dict['tissue_token'] = [
+        adata_dict['tissue_value'] = [
             self.token_dict[adata.uns['tissue']]] * n_cells
 
         return adata_dict
@@ -661,6 +670,13 @@ class CellGraphTokenizer(CellBaseTokenizer):
         example['tissue_token'] = [example['tissue_token']]
         example['gene_panel_token'] = [example['gene_panel_token']]
         example['batch_token'] = [example['batch_token']]
+
+        # Retrieve special values
+        example['assay_value'] = [example['assay_value']]
+        example['species_value'] = [example['species_value']]
+        example['tissue_value'] = [example['tissue_value']]
+        example['gene_panel_value'] = [example['gene_panel_value']]
+        example['batch_value'] = [example['batch_value']]
 
         return example
 
@@ -860,17 +876,24 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
         
         # Add special tokens
         n_cells = len(adata)
+        adata_dict['batch_token'] = [self.token_dict['batch']] * n_cells
+        adata_dict['gene_panel_token'] = [self.token_dict['gene_panel']] * n_cells
+        adata_dict['assay_token'] = [self.token_dict['assay']] * n_cells
+        adata_dict['species_token'] = [self.token_dict['species']] * n_cells
+        adata_dict['tissue_token'] = [self.token_dict['tissue']] * n_cells
+
+        # Add special token values
         batch_id_key = f"{adata.uns['dataset_id']}_{adata.uns['batch']}"
-        adata_dict['batch_token'] = [self.token_dict[batch_id_key]] * n_cells
-        adata_dict['gene_panel_token'] = [
+        adata_dict['batch_value'] = [self.token_dict[batch_id_key]] * n_cells
+        adata_dict['gene_panel_value'] = [
             self.token_dict[
                 self.file_path_to_gene_panel_ID_dict[
                     str(adata_file_path)]]] * n_cells
-        adata_dict['assay_token'] = [
+        adata_dict['assay_value'] = [
             self.token_dict[adata.uns['assay']]] * n_cells
-        adata_dict['species_token'] = [
+        adata_dict['species_value'] = [
             self.token_dict[adata.uns['species']]] * n_cells
-        adata_dict['tissue_token'] = [
+        adata_dict['tissue_value'] = [
             self.token_dict[adata.uns['tissue']]] * n_cells
 
         return adata_dict
@@ -928,5 +951,12 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
         example['tissue_token'] = [example['tissue_token']]
         example['gene_panel_token'] = [example['gene_panel_token']]
         example['batch_token'] = [example['batch_token']]
+
+        # Retrieve special values
+        example['assay_value'] = [example['assay_value']]
+        example['species_value'] = [example['species_value']]
+        example['tissue_value'] = [example['tissue_value']]
+        example['gene_panel_value'] = [example['gene_panel_value']]
+        example['batch_value'] = [example['batch_value']]
 
         return example
