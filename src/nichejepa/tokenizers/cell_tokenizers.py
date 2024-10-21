@@ -144,8 +144,6 @@ class CellBaseTokenizer(ABC):
         self.gene_panel_ID_to_gene_panel_dict_file = gene_panel_ID_to_gene_panel_dict_file
         self.file_path_to_gene_panel_ID_dict_file = file_path_to_gene_panel_ID_dict_file
 
-        print(token_dictionary_file)
-
         # Load token dictionary
         with open(token_dictionary_file, 'rb') as f:
             self.token_dict = pickle.load(f)
@@ -845,31 +843,34 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
         # Divide cells into chunks and loop through chunks
         print('Ranking gene tokens based on normalized counts.')
         for i in range(0, len(adata), self.chunk_size):
-            norm_counts_cell = sp.csr_matrix(adata[
-                i : i + self.chunk_size, coding_miRNA_idx].X)
-            norm_counts_neighborhood = sp.csr_matrix(adata[
+            norm_counts_cell = adata[
+                i : i + self.chunk_size, coding_miRNA_idx].X.toarray()
+            norm_counts_neighborhood = adata[
                 i : i + self.chunk_size, coding_miRNA_idx].layers[
-                    'X_neighborhood'])
+                    'X_neighborhood'].toarray()
 
             # Rank gene tokens and append across chunks
             adata_dict['gene_tokens_cell'] += [
-                rank_gene_tokens(norm_counts_cell[j].data,
-                coding_miRNA_tokens_cell[norm_counts_cell[j].indices])
+                rank_gene_tokens(norm_counts_cell[j].tolist()[0],
+                coding_miRNA_tokens_cell)
                 for j in range(norm_counts_cell.shape[0])]
             adata_dict['gene_tokens_neighborhood'] += [
-                rank_gene_tokens(norm_counts_neighborhood[j].data,
-                coding_miRNA_tokens_neighborhood[
-                    norm_counts_neighborhood[j].indices])
+                rank_gene_tokens(norm_counts_neighborhood[j].tolist()[0],
+                coding_miRNA_tokens_neighborhood)
                 for j in range(norm_counts_neighborhood.shape[0])]
 
             # Rank gene expression and append across chunks
             adata_dict['gene_expr_cell'] += [
-                norm_counts_cell[j].data[np.argsort(-norm_counts_cell[j].data)]
+                norm_counts_cell[j].tolist()[0][np.argsort(-norm_counts_cell[j].tolist()[0])]
                 for j in range(norm_counts_cell.shape[0])]
             adata_dict['gene_expr_neighborhood'] += [
-                norm_counts_neighborhood[j].data[
-                    np.argsort(-norm_counts_neighborhood[j].data)]
+                norm_counts_neighborhood[j].tolist()[0][
+                    np.argsort(-norm_counts_neighborhood[j].tolist()[0])]
                 for j in range(norm_counts_neighborhood.shape[0])]
+
+        print(adata_dict['gene_tokens_cell'][0])
+        print(adata_dict['gene_expr_cell'][0])
+
 
         # Add cell IDs for collecting metadata at inference time
         adata_dict['cell_id'] = adata.obs['cell_id'].values.tolist()
