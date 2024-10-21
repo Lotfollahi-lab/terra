@@ -705,7 +705,7 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
 
         tokens[:, 2] = 0
         segments[:, 2] = 0
-        counts[:, :3] = 0.0
+        #counts[:, :3] = 0.0
         #self.special_value_embed.weight[0, :] = 0
 
         # Get token embeddings for sequence of tokens
