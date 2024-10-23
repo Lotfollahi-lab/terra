@@ -110,6 +110,7 @@ def infer(args: dict,
     seq_len_cell = args['data']['seq_len_cell']
     seq_len_neighborhood = args['data']['seq_len_neighborhood']
     n_segments = args['data']['n_segments']
+    separate_cls = args['data']['separate_cls']
 
     n_contexts = args['mask']['n_contexts']
     n_targets = args['mask']['n_targets']

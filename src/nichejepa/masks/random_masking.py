@@ -185,7 +185,7 @@ class RandomMaskCollator:
                 ) -> Tuple[torch.Tensor,
                            torch.Tensor,
                            torch.Tensor,
-                           torch.Tensors]:
+                           torch.Tensor]:
         """
         Create context and target masks when collating tokens into a batch.
         # 1. sample several target masks
