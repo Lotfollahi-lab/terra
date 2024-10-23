@@ -109,6 +109,7 @@ class CellBaseTokenizer(ABC):
             'sequential', 'parallel']]='sequential',
         chunk_size: int=512,
         model_input_size: int=2048,
+        include_zero_expr_genes: bool=True,
         norm_factor: Optional[Literal['read_depth', 'cell_area']]=None,
         norm_method: Optional[Literal['analytic_pearson_residuals',
                                       'mean',
@@ -133,6 +134,7 @@ class CellBaseTokenizer(ABC):
         self.processing_mode = processing_mode
         self.chunk_size = chunk_size
         self.model_input_size = model_input_size
+        self.include_zero_expr_genes = include_zero_expr_genes
         self.norm_factor = norm_factor
         self.norm_method = norm_method
         self.cell_gene_means_file = cell_gene_means_file
@@ -497,19 +499,34 @@ class CellGraphTokenizer(CellBaseTokenizer):
         # Divide cells into chunks and loop through chunks
         print('Ranking gene tokens based on normalized counts.')
         for i in range(0, len(adata), self.chunk_size):
-            norm_counts_cell = sp.csr_matrix(adata[
-                i : i + self.chunk_size, coding_miRNA_idx].X)
+            if self.include_zero_expr_genes:
+                norm_counts_cell = adata[
+                    i : i + self.chunk_size, coding_miRNA_idx].X.toarray()
 
-            # Rank gene tokens and append across chunks
-            adata_dict['gene_tokens_cell'] += [
-                rank_gene_tokens(norm_counts_cell[j].data,
-                coding_miRNA_tokens_cell[norm_counts_cell[j].indices])
-                for j in range(norm_counts_cell.shape[0])]
+                # Rank gene tokens and append across chunks
+                adata_dict['gene_tokens_cell'] += [
+                    rank_gene_tokens(norm_counts_cell[j],
+                    coding_miRNA_tokens_cell)
+                    for j in range(norm_counts_cell.shape[0])]
 
-            # Rank gene expression and append across chunks
-            adata_dict['gene_expr_cell'] += [
-                norm_counts_cell[j].data[np.argsort(-norm_counts_cell[j].data)]
-                for j in range(norm_counts_cell.shape[0])]
+                # Rank gene expression and append across chunks
+                adata_dict['gene_expr_cell'] += [
+                    norm_counts_cell[j][np.argsort(-norm_counts_cell[j])]
+                    for j in range(norm_counts_cell.shape[0])]
+            else:
+                norm_counts_cell = sp.csr_matrix(adata[
+                    i : i + self.chunk_size, coding_miRNA_idx].X)
+
+                # Rank gene tokens and append across chunks
+                adata_dict['gene_tokens_cell'] += [
+                    rank_gene_tokens(norm_counts_cell[j].data,
+                    coding_miRNA_tokens_cell[norm_counts_cell[j].indices])
+                    for j in range(norm_counts_cell.shape[0])]
+
+                # Rank gene expression and append across chunks
+                adata_dict['gene_expr_cell'] += [
+                    norm_counts_cell[j].data[np.argsort(-norm_counts_cell[j].data)]
+                    for j in range(norm_counts_cell.shape[0])]
 
         print('Retrieving tokens for neighborhood cells.')
         adata_dict['gene_tokens_neighborhood'] = [
@@ -540,25 +557,52 @@ class CellGraphTokenizer(CellBaseTokenizer):
                      adata_dict['gene_expr_cell'][k]))
                 adata_dict['seg_tokens_neighborhood'][i] = np.hstack(
                     (adata_dict['seg_tokens_neighborhood'][i],
-                     [j+3] * len(adata_dict['gene_tokens_cell'][k])))
+                     [j+11] * len(adata_dict['gene_tokens_cell'][k])))
 
         # Add cell IDs for collecting metadata at inference time
         adata_dict['cell_id'] = adata.obs['cell_id'].values.tolist()
         
-        # Add special tokens
+        # Add special tokens (positional tokens and value tokens)
         n_cells = len(adata)
         batch_id_key = f"{adata.uns['dataset_id']}_{adata.uns['batch']}"
-        adata_dict['batch_token'] = [self.token_dict[batch_id_key]] * n_cells
+
+        adata_dict['batch_token'] = [self.token_dict['spt_batch']] * n_cells
         adata_dict['gene_panel_token'] = [
+            self.token_dict['spt_gene_panel']] * n_cells
+        adata_dict['assay_token'] = [self.token_dict['spt_assay']] * n_cells
+        adata_dict['species_token'] = [self.token_dict['spt_species']] * n_cells
+        adata_dict['tissue_token'] = [self.token_dict['spt_tissue']] * n_cells
+
+        adata_dict['batch_value_token'] = [
+            self.token_dict[f'spv_{batch_id_key}']] * n_cells
+        adata_dict['gene_panel_value_token'] = [self.token_dict[
+            f'spv_{self.file_path_to_gene_panel_ID_dict[str(adata_file_path)]}']
+            ] * n_cells
+        adata_dict['assay_value_token'] = [
+            self.token_dict[f'spv_{adata.uns["assay"]}']] * n_cells
+        adata_dict['species_value_token'] = [
+            self.token_dict[f'spv_{adata.uns["species"]}']] * n_cells
+        adata_dict['tissue_value_token'] = [
+            self.token_dict[f'spv_{adata.uns["tissue"]}']] * n_cells
+
+        # Store values with right embedding index for count tokenizer
+        spv_dict = {
+            k: v for k, v in self.token_dict.items() if k.startswith('spv_')}
+        spv_start_idx = min(spv_dict.values())
+        spv_idx_subtract = spv_start_idx - 4 # leave space for <cls> tokens
+
+        adata_dict['batch_value'] = [
+            self.token_dict[f'spv_{batch_id_key}'] - spv_idx_subtract] * n_cells
+        adata_dict['gene_panel_value'] = [self.token_dict[
+            f'spv_{self.file_path_to_gene_panel_ID_dict[str(adata_file_path)]}']
+            - spv_idx_subtract] * n_cells
+        adata_dict['assay_value'] = [
             self.token_dict[
-                self.file_path_to_gene_panel_ID_dict[
-                    str(adata_file_path)]]] * n_cells
-        adata_dict['assay_token'] = [
-            self.token_dict[adata.uns['assay']]] * n_cells
-        adata_dict['species_token'] = [
-            self.token_dict[adata.uns['species']]] * n_cells
-        adata_dict['tissue_token'] = [
-            self.token_dict[adata.uns['tissue']]] * n_cells
+                f'spv_{adata.uns["assay"]}'] - spv_idx_subtract] * n_cells
+        adata_dict['species_value'] = [self.token_dict[
+            f'spv_{adata.uns["species"]}'] - spv_idx_subtract] * n_cells
+        adata_dict['tissue_value'] = [self.token_dict[
+            f'spv_{adata.uns["tissue"]}'] - spv_idx_subtract] * n_cells
 
         return adata_dict
             
@@ -589,7 +633,7 @@ class CellGraphTokenizer(CellBaseTokenizer):
         n_nonzero_neighborhood_tokens = 0
 
         if n_gene_segments > 1:
-            for segment in range(2, n_gene_segments + 1):
+            for segment in range(11, n_gene_segments + 10):
                 gene_tokens_neighborhood_segment = [
                     example['gene_tokens_neighborhood'][i] for i in range(
                         len(example['gene_tokens_neighborhood']))
@@ -633,7 +677,7 @@ class CellGraphTokenizer(CellBaseTokenizer):
         # Define segments
         seg_tokens_neighborhood_iter = iter(example['seg_tokens_neighborhood'])
         example['seg_tokens'] = np.concatenate(
-            (np.array([2 if gene_token != 0 else 0 for gene_token in
+            (np.array([10 if gene_token != 0 else 0 for gene_token in
                        gene_tokens_cell]),
              [next(seg_tokens_neighborhood_iter) if gene_token != 0 else 0 for
               gene_token in gene_tokens_neighborhood])).astype(int)
@@ -661,6 +705,19 @@ class CellGraphTokenizer(CellBaseTokenizer):
         example['tissue_token'] = [example['tissue_token']]
         example['gene_panel_token'] = [example['gene_panel_token']]
         example['batch_token'] = [example['batch_token']]
+
+        example['assay_value_token'] = [example['assay_value_token']]
+        example['species_value_token'] = [example['species_value_token']]
+        example['tissue_value_token'] = [example['tissue_value_token']]
+        example['gene_panel_value_token'] = [example['gene_panel_value_token']]
+        example['batch_value_token'] = [example['batch_value_token']] 
+
+        # Retrieve special token values
+        example['assay_value'] = [example['assay_value']]
+        example['species_value'] = [example['species_value']]
+        example['tissue_value'] = [example['tissue_value']]
+        example['gene_panel_value'] = [example['gene_panel_value']]
+        example['batch_value'] = [example['batch_value']]
 
         return example
 
@@ -829,49 +886,102 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
         # Divide cells into chunks and loop through chunks
         print('Ranking gene tokens based on normalized counts.')
         for i in range(0, len(adata), self.chunk_size):
-            norm_counts_cell = sp.csr_matrix(adata[
-                i : i + self.chunk_size, coding_miRNA_idx].X)
-            norm_counts_neighborhood = sp.csr_matrix(adata[
-                i : i + self.chunk_size, coding_miRNA_idx].layers[
-                    'X_neighborhood'])
+            if self.include_zero_expr_genes:
+                norm_counts_cell = adata[
+                    i : i + self.chunk_size, coding_miRNA_idx].X.toarray()
+                norm_counts_neighborhood = adata[
+                    i : i + self.chunk_size, coding_miRNA_idx].layers[
+                        'X_neighborhood'].toarray()
 
-            # Rank gene tokens and append across chunks
-            adata_dict['gene_tokens_cell'] += [
-                rank_gene_tokens(norm_counts_cell[j].data,
-                coding_miRNA_tokens_cell[norm_counts_cell[j].indices])
-                for j in range(norm_counts_cell.shape[0])]
-            adata_dict['gene_tokens_neighborhood'] += [
-                rank_gene_tokens(norm_counts_neighborhood[j].data,
-                coding_miRNA_tokens_neighborhood[
-                    norm_counts_neighborhood[j].indices])
-                for j in range(norm_counts_neighborhood.shape[0])]
+                # Rank gene tokens and append across chunks
+                adata_dict['gene_tokens_cell'] += [
+                    rank_gene_tokens(norm_counts_cell[j],
+                    coding_miRNA_tokens_cell)
+                    for j in range(norm_counts_cell.shape[0])]
+                adata_dict['gene_tokens_neighborhood'] += [
+                    rank_gene_tokens(norm_counts_neighborhood[j],
+                    coding_miRNA_tokens_neighborhood)
+                    for j in range(norm_counts_neighborhood.shape[0])]
 
-            # Rank gene expression and append across chunks
-            adata_dict['gene_expr_cell'] += [
-                norm_counts_cell[j].data[np.argsort(-norm_counts_cell[j].data)]
-                for j in range(norm_counts_cell.shape[0])]
-            adata_dict['gene_expr_neighborhood'] += [
-                norm_counts_neighborhood[j].data[
-                    np.argsort(-norm_counts_neighborhood[j].data)]
-                for j in range(norm_counts_neighborhood.shape[0])]
+                # Rank gene expression and append across chunks
+                adata_dict['gene_expr_cell'] += [
+                    norm_counts_cell[j][np.argsort(-norm_counts_cell[j])]
+                    for j in range(norm_counts_cell.shape[0])]
+                adata_dict['gene_expr_neighborhood'] += [
+                    norm_counts_neighborhood[j][
+                        np.argsort(-norm_counts_neighborhood[j])]
+                    for j in range(norm_counts_neighborhood.shape[0])]
+            else:
+                norm_counts_cell = sp.csr_matrix(adata[
+                    i : i + self.chunk_size, coding_miRNA_idx].X)
+                norm_counts_neighborhood = sp.csr_matrix(adata[
+                    i : i + self.chunk_size, coding_miRNA_idx].layers[
+                        'X_neighborhood'])
+
+                # Rank gene tokens and append across chunks
+                adata_dict['gene_tokens_cell'] += [
+                    rank_gene_tokens(norm_counts_cell[j].data,
+                    coding_miRNA_tokens_cell[norm_counts_cell[j].indices])
+                    for j in range(norm_counts_cell.shape[0])]
+                adata_dict['gene_tokens_neighborhood'] += [
+                    rank_gene_tokens(norm_counts_neighborhood[j].data,
+                    coding_miRNA_tokens_neighborhood[
+                        norm_counts_neighborhood[j].indices])
+                    for j in range(norm_counts_neighborhood.shape[0])]
+
+                # Rank gene expression and append across chunks
+                adata_dict['gene_expr_cell'] += [
+                    norm_counts_cell[j].data[np.argsort(-norm_counts_cell[j].data)]
+                    for j in range(norm_counts_cell.shape[0])]
+                adata_dict['gene_expr_neighborhood'] += [
+                    norm_counts_neighborhood[j].data[
+                        np.argsort(-norm_counts_neighborhood[j].data)]
+                    for j in range(norm_counts_neighborhood.shape[0])]
 
         # Add cell IDs for collecting metadata at inference time
         adata_dict['cell_id'] = adata.obs['cell_id'].values.tolist()
         
-        # Add special tokens
+        # Add special tokens (positional tokens and value tokens)
         n_cells = len(adata)
         batch_id_key = f"{adata.uns['dataset_id']}_{adata.uns['batch']}"
-        adata_dict['batch_token'] = [self.token_dict[batch_id_key]] * n_cells
+
+        adata_dict['batch_token'] = [self.token_dict['spt_batch']] * n_cells
         adata_dict['gene_panel_token'] = [
+            self.token_dict['spt_gene_panel']] * n_cells
+        adata_dict['assay_token'] = [self.token_dict['spt_assay']] * n_cells
+        adata_dict['species_token'] = [self.token_dict['spt_species']] * n_cells
+        adata_dict['tissue_token'] = [self.token_dict['spt_tissue']] * n_cells
+
+        adata_dict['batch_value_token'] = [
+            self.token_dict[f'spv_{batch_id_key}']] * n_cells
+        adata_dict['gene_panel_value_token'] = [self.token_dict[
+            f'spv_{self.file_path_to_gene_panel_ID_dict[str(adata_file_path)]}']
+            ] * n_cells
+        adata_dict['assay_value_token'] = [
+            self.token_dict[f'spv_{adata.uns["assay"]}']] * n_cells
+        adata_dict['species_value_token'] = [
+            self.token_dict[f'spv_{adata.uns["species"]}']] * n_cells
+        adata_dict['tissue_value_token'] = [
+            self.token_dict[f'spv_{adata.uns["tissue"]}']] * n_cells
+
+        # Store values with right embedding index for count tokenizer
+        spv_dict = {
+            k: v for k, v in self.token_dict.items() if k.startswith('spv_')}
+        spv_start_idx = min(spv_dict.values())
+        spv_idx_subtract = spv_start_idx - 4 # leave space for <cls> tokens
+
+        adata_dict['batch_value'] = [
+            self.token_dict[f'spv_{batch_id_key}'] - spv_idx_subtract] * n_cells
+        adata_dict['gene_panel_value'] = [self.token_dict[
+            f'spv_{self.file_path_to_gene_panel_ID_dict[str(adata_file_path)]}']
+            - spv_idx_subtract] * n_cells
+        adata_dict['assay_value'] = [
             self.token_dict[
-                self.file_path_to_gene_panel_ID_dict[
-                    str(adata_file_path)]]] * n_cells
-        adata_dict['assay_token'] = [
-            self.token_dict[adata.uns['assay']]] * n_cells
-        adata_dict['species_token'] = [
-            self.token_dict[adata.uns['species']]] * n_cells
-        adata_dict['tissue_token'] = [
-            self.token_dict[adata.uns['tissue']]] * n_cells
+                f'spv_{adata.uns["assay"]}'] - spv_idx_subtract] * n_cells
+        adata_dict['species_value'] = [self.token_dict[
+            f'spv_{adata.uns["species"]}'] - spv_idx_subtract] * n_cells
+        adata_dict['tissue_value'] = [self.token_dict[
+            f'spv_{adata.uns["tissue"]}'] - spv_idx_subtract] * n_cells
 
         return adata_dict
             
@@ -912,11 +1022,11 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
         example['n_nonzero_tokens'] = (
             n_nonzero_cell_tokens + n_nonzero_neighborhood_tokens)
 
-        # Define segments
+        # Define segments (leave space for special token segments)
         example['seg_tokens'] = np.concatenate(
-            (np.array([2 if gene_token != 0 else 0 for gene_token in
+            (np.array([10 if gene_token != 0 else 0 for gene_token in
                        gene_tokens_cell]),
-             np.array([3 if gene_token != 0 else 0 for gene_token in
+             np.array([11 if gene_token != 0 else 0 for gene_token in
                        gene_tokens_neighborhood]))).astype(int)
         
         # Retrieve special tokens
@@ -928,5 +1038,18 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
         example['tissue_token'] = [example['tissue_token']]
         example['gene_panel_token'] = [example['gene_panel_token']]
         example['batch_token'] = [example['batch_token']]
+
+        example['assay_value_token'] = [example['assay_value_token']]
+        example['species_value_token'] = [example['species_value_token']]
+        example['tissue_value_token'] = [example['tissue_value_token']]
+        example['gene_panel_value_token'] = [example['gene_panel_value_token']]
+        example['batch_value_token'] = [example['batch_value_token']]        
+
+        # Retrieve special token values
+        example['assay_value'] = [example['assay_value']]
+        example['species_value'] = [example['species_value']]
+        example['tissue_value'] = [example['tissue_value']]
+        example['gene_panel_value'] = [example['gene_panel_value']]
+        example['batch_value'] = [example['batch_value']]
 
         return example

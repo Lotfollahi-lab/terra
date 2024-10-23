@@ -1,20 +1,15 @@
 from typing import List, Literal, Optional, Tuple
 
 from logging import getLogger
-from multiprocessing import Value
 
 import numpy as np
 import torch
 
 
-logger = getLogger()
-_GLOBAL_SEED = 0
-
-
 class BlockMaskCollator:
     """
-    BlockMaskCollator class for sampling target and context masks from cell
-    and neighborhood blocks.
+    BlockMaskCollator class for sampling target and context blocks masks from
+    cell and neighborhood segments.
     
     Parameters
     ----------

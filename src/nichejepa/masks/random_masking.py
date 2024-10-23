@@ -9,7 +9,6 @@ https://github.com/facebookresearch/ijepa/blob/main/src/masks/multiblock.py
 """
 
 from logging import getLogger
-from multiprocessing import Value
 from typing import Literal, Optional, Tuple
 
 import torch
@@ -21,7 +20,7 @@ _GLOBAL_SEED = 0
 logger = getLogger()
 
 
-class MaskCollator:
+class RandomMaskCollator:
     """
     MaskCollator class for sampling target and context masks from cell and
     neighborhood segments.
@@ -51,7 +50,7 @@ class MaskCollator:
                  context_mask_size: int=10,
                  seq_len_cell: int=0,
                  seq_len_neighborhood: int=0,
-                 has_cls: bool = False
+                 n_special_tokens: int=0,
                  ):
         self.n_targets = n_targets
         self.n_contexts = n_contexts
@@ -60,10 +59,8 @@ class MaskCollator:
         self.seq_len_cell = seq_len_cell
         self.seq_len_neighborhood = seq_len_neighborhood
         self.seq_len = self.seq_len_cell + self.seq_len_neighborhood
-        self.has_cls = has_cls
-        # Determine the valid minimum start position for the mask based on the
-        # presence of a <cls> token
-        self.valid_min_start = 1 if self.has_cls else 0
+        self.n_special_tokens = n_special_tokens
+        self.valid_min_start = self.n_special_tokens
 
     def _sample_gene_mask(self,
                           non_zero_seq_len_cell: int,
@@ -168,14 +165,13 @@ class MaskCollator:
             mask[start:mask_size + start] = 1
             mask_complement[start:mask_size + start] = 0
 
-        # Include the CLS token in the mask if applicable
-        if self.has_cls:
-            mask[0] = 1
-
         # Constrain the mask to valid token positions if provided
         if valid_token_masks is not None:
             for valid_mask in valid_token_masks:
                 mask *= valid_mask
+
+        # Include the CLS token in the mask if applicable
+        mask = torch.cat((torch.tensor(list(range(self.n_special_tokens)), dtype=mask.dtype, device=mask.device), mask)) # include special tokens including both cls_neighborhood and cls_cell.
 
         # Convert the mask to a tensor of indices where the mask is applied
         mask = torch.nonzero(mask).squeeze()

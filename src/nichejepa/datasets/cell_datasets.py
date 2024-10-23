@@ -12,6 +12,7 @@ class CellBaseDataset(Dataset):
                  vocab_size: int,
                  seq_len_cell: int,
                  seq_len_neighborhood: int,
+                 gt_type: Literal['rank', 'counts'],
                  special_tokens: List=[
                     'cls_cell',
                     'cls_neighborhood',
@@ -40,18 +41,24 @@ class CellBaseDataset(Dataset):
             Sequence length of the (index) cell tokens.
         seq_len_neighborhood:
             Sequence length of the neighborhood tokens.
+        gt_type:
+            Gene transformer type.
         special_tokens:
             Special tokens to be included in the sequence processed by the
             model.
         sampling_strategy:
             Token sampling strategy.
         """
+        if gt_type not in ['rank', 'counts']:
+            raise ValueError(f'Invalid "gt_type": {gt_type}.')
+
         self.dataset = dataset
         self.len = len(self.dataset)
         self.n_nonzero_tokens = self.dataset['n_nonzero_tokens']
         self.vocab_size = vocab_size
         self.seq_len_cell = seq_len_cell
         self.seq_len_neighborhood = seq_len_neighborhood
+        self.gt_type = gt_type
         self.n_special_tokens = len(special_tokens)
         self.seq_len = (seq_len_cell +
                         seq_len_neighborhood +
@@ -66,6 +73,7 @@ class CellBaseDataset(Dataset):
                                    tokens: List,
                                    segments: List,
                                    positions: List,
+                                   gene_expr: List,
                                    item: int,
                                    ) -> Tuple[List[int], List[int]]:
         """
@@ -79,6 +87,8 @@ class CellBaseDataset(Dataset):
             Segment tokens including all segments.
         positions:
             Position tokens including all segments.
+        gene_expr:
+            Gene expression values including all segments.
         item:
             Index of the cell in the Hugging Face dataset.
 
@@ -90,24 +100,46 @@ class CellBaseDataset(Dataset):
             Segment labels with 0s for special tokens at sequence start.
         """
         if 'batch' in self.special_tokens:
-            tokens = self.dataset[item]["batch_token"] + tokens
+            if self.gt_type == 'rank':
+                tokens = self.dataset[item]["batch_value_token"] + tokens
+            elif self.gt_type == 'counts':
+                tokens = self.dataset[item]["batch_token"] + tokens
+            gene_expr = self.dataset[item]["batch_value"] + gene_expr
         if 'gene_panel' in self.special_tokens:
-            tokens = self.dataset[item]["gene_panel_token"] + tokens
+            if self.gt_type == 'rank':
+                tokens = self.dataset[item]["gene_panel_value_token"] + tokens
+            elif self.gt_type == 'counts':
+                tokens = self.dataset[item]["gene_panel_token"] + tokens
+            gene_expr = self.dataset[item]["gene_panel_value"] + gene_expr
         if 'tissue' in self.special_tokens:
-            tokens = self.dataset[item]["tissue_token"] + tokens
+            if self.gt_type == 'rank':
+                tokens = self.dataset[item]["tissue_value_token"] + tokens
+            elif self.gt_type == 'counts':
+                tokens = self.dataset[item]["tissue_token"] + tokens
+            gene_expr = self.dataset[item]["tissue_value"] + gene_expr
         if 'species' in self.special_tokens:
-            tokens = self.dataset[item]["species_token"] + tokens
+            if self.gt_type == 'rank':
+                tokens = self.dataset[item]["species_value_token"] + tokens
+            elif self.gt_type == 'counts':
+                tokens = self.dataset[item]["species_token"] + tokens
+            gene_expr = self.dataset[item]["species_value"] + gene_expr
         if 'assay' in self.special_tokens:
-            tokens = self.dataset[item]["assay_token"] + tokens
+            if self.gt_type == 'rank':
+                tokens = self.dataset[item]["assay_value_token"] + tokens
+            elif self.gt_type == 'counts':
+                tokens = self.dataset[item]["assay_token"] + tokens
+            gene_expr = self.dataset[item]["assay_value"] + gene_expr
         if 'cls_neighborhood' in self.special_tokens:
             tokens = self.dataset[item]["cls_neighborhood_token"] + tokens
+            gene_expr = [0] + gene_expr
         if 'cls_cell' in self.special_tokens:
             tokens = self.dataset[item]["cls_cell_token"] + tokens
+            gene_expr = [0] + gene_expr
                 
-        segments = [1] * self.n_special_tokens + segments
+        segments = list(range(1, self.n_special_tokens + 1)) + segments
         positions = list(range(1, self.n_special_tokens + 1)) + positions
 
-        return tokens, segments, positions
+        return tokens, segments, positions, gene_expr
 
     def _create_sampled_token_and_count_seq(self,
                                             tokens: List,
@@ -264,14 +296,14 @@ class CellGraphDataset(CellBaseDataset):
             item=item,
             segment=2, # index cell seg
             segment_seq_len=self.seq_len_cell)
-        segments = [2 if gene_token != 0 else 0 for gene_token in
+        segments = [10 if gene_token != 0 else 0 for gene_token in
                     gene_tokens_cell]
         positions = list(range(1, len(gene_tokens_cell) + 1))
         gene_tokens_neighborhood = []
         gene_expr_neighborhood = []
         for segment in np.unique(self.dataset[item]["seg_tokens"]):
-            if segment > 2: # 2 is index cell segment, higher segments are
-                            # neighbor cell segments
+            if segment > 10: # 10 is index cell segment, higher segments are
+                             # neighbor cell segments
                 segment_gene_tokens, segment_gene_expr = self._get_gene_tokens_and_counts_for_segment(
                     item=item,
                     segment=segment, # neighbor cell segs
@@ -283,7 +315,7 @@ class CellGraphDataset(CellBaseDataset):
                 positions.extend(list(range(1, len(segment_gene_tokens) + 1)))
         tokens = gene_tokens_cell + gene_tokens_neighborhood
         positions = [position if tokens[i] != 0 else 0 for i, position in 
-                enumerate(positions)]
+                     enumerate(positions)]
         gene_expr = gene_expr_cell + gene_expr_neighborhood
 
         # Add special tokens
@@ -324,16 +356,16 @@ class CellNeighborhoodDataset(CellBaseDataset):
         # Get (sampled) gene tokens and counts
         gene_tokens_cell, gene_expr_cell = self._get_gene_tokens_and_counts_for_segment(
             item=item,
-            segment=2, # cell seg
+            segment=10, # cell seg
             segment_seq_len=self.seq_len_cell)
         gene_tokens_neighborhood, gene_expr_neighborhood = self._get_gene_tokens_and_counts_for_segment(
             item=item,
-            segment=3, # neighborhood seg
+            segment=11, # neighborhood seg
             segment_seq_len=self.seq_len_neighborhood)
         tokens = gene_tokens_cell + gene_tokens_neighborhood
         gene_expr = gene_expr_cell + gene_expr_neighborhood
-        segments = [2 if gene_token != 0 else 0 for gene_token in
-                    gene_tokens_cell] + [3 if gene_token != 0 else 0 for
+        segments = [10 if gene_token != 0 else 0 for gene_token in
+                    gene_tokens_cell] + [11 if gene_token != 0 else 0 for
                     gene_token in gene_tokens_neighborhood]
         positions = list(range(1, len(gene_tokens_cell) + 1)) + list(
             range(1, len(gene_tokens_neighborhood) + 1))
@@ -341,10 +373,11 @@ class CellNeighborhoodDataset(CellBaseDataset):
                      enumerate(positions)]
 
         # Add special tokens
-        tokens, segments, positions = self._add_special_tokens_to_seq(
+        tokens, segments, positions, gene_expr = self._add_special_tokens_to_seq(
             tokens=tokens,
             segments=segments,
             positions=positions,
+            gene_expr=gene_expr,
             item=item)
 
         tokens = torch.tensor(tokens)

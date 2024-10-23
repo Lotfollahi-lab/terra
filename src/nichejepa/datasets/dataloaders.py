@@ -8,7 +8,6 @@ from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
 from .cell_datasets import CellBaseDataset
-from ..masks import MaskCollator, BlockMaskCollator 
 
 
 logger = getLogger()
