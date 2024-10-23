@@ -85,7 +85,8 @@ class BlockMaskCollator:
             Minimum number of tokens kept across all target masks.
         """
         non_zero_indices = torch.nonzero(
-            sequence[self.valid_min_start:]).squeeze()
+            sequence).squeeze()
+        non_zero_indices = non_zero_indices[self.valid_min_start:]
         total_non_zero = len(non_zero_indices)
     
         # Initialize a list to store masked indices for each block
@@ -103,7 +104,7 @@ class BlockMaskCollator:
 
         for i in range(num_blocks):
             # Determine the range of indices for the current block
-            start_idx = i * block_length + self.valid_min_start
+            start_idx = i * block_length
             end_idx = min(start_idx + block_length, total_non_zero)
         
             # Extract the non-zero indices for the current block
