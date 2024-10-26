@@ -30,6 +30,8 @@ class BlockMaskCollator:
     separate_cls: bool
         This will determine whether we add the CLS of  cell only to cell blocks and
         the CLS of  neighborhood only to the neighborhood or not.
+    controlled_attention_pattern: torch.Tensor
+        The pattern that the model used to generate the attention matrix.
     """
     def __init__(self,
                  n_targets: int=2,
@@ -40,7 +42,8 @@ class BlockMaskCollator:
                  seq_len_neighborhood: int=0,
                  n_special_tokens: int=0,
                  per_block_mask_ratio: float=0.3,
-                 separate_cls: bool=True):
+                 separate_cls: bool=True,
+                 controlled_attention_pattern: torch.Tensor=None):
         self.n_targets = n_targets
         self.n_contexts = n_contexts
         self.target_mask_size = target_mask_size
@@ -54,7 +57,7 @@ class BlockMaskCollator:
         # Determine the valid start position for the mask based on number of
         # special tokens
         self.valid_min_start = self.n_special_tokens
-
+        self.controlled_attention_pattern = controlled_attention_pattern
     def block_masking(self,
                       sequence: torch.Tensor,
                       mask_ratio: float,

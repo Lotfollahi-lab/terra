@@ -124,7 +124,8 @@ def train(args: dict,
     context_mask_size = args['mask']['context_mask_size']
     target_mask_size = args['mask']['target_mask_size']
     per_block_mask_ratio = args['mask']['per_block_mask_ratio']
-
+    controlled_attention_pattern = torch.tensor(args['mask']['controlled_attention_pattern'])
+    
     warmup = args['optimization']['warmup']
     num_epochs = args['optimization']['epochs']
     if isinstance(args['optimization']['ema'], list):
@@ -222,7 +223,8 @@ def train(args: dict,
             seq_len_neighborhood=seq_len_neighborhood,
             n_special_tokens=n_special_tokens,
             per_block_mask_ratio=per_block_mask_ratio,
-            separate_cls=separate_cls)
+            separate_cls=separate_cls,
+            controlled_attention_pattern=controlled_attention_pattern)
     else:
         mask_collator = RandomMaskCollator(
             n_targets=n_targets,
