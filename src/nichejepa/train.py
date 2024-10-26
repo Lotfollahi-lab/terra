@@ -421,12 +421,14 @@ def train(args: dict,
                         z = encoder(tokens=tokens,
                                     segments=segments,
                                     positions=positions,
-                                    masks=masks_enc)                       
+                                    masks=masks_enc,
+                                    masks_attention=masks_attention_enc)                       
                     elif gt_type == 'counts':
                         z = encoder(tokens=tokens,
                                     segments=segments,
                                     counts=counts,
-                                    masks=masks_enc)
+                                    masks=masks_enc,
+                                    masks_attention=masks_attention_enc)
 
                     # Predictor forward pass with output dim (BATCH_SIZE *
                     # N_TARGETS * N_CONTEXTS, TARGET_MASK_SIZE, EMB_DIM)
@@ -437,7 +439,8 @@ def train(args: dict,
                                       masks_enc=masks_enc,
                                       masks_pred=masks_pred,
                                       enc_seg_embed=encoder.module.seg_embed,
-                                      enc_pos_embed=encoder.module.pos_embed)
+                                      enc_pos_embed=encoder.module.pos_embed,
+                                      masks_attention_pred=masks_attention_pred)
                     elif gt_type == 'counts':
                         x = predictor(z=z,
                                       segments=segments,
@@ -445,7 +448,8 @@ def train(args: dict,
                                       masks_enc=masks_enc,
                                       masks_pred=masks_pred,
                                       enc_seg_embed=encoder.module.seg_embed,
-                                      enc_token_embed=encoder.module.token_embed)
+                                      enc_token_embed=encoder.module.token_embed,
+                                      masks_attention_pred=masks_attention_pred)
                     return x
 
                 def loss_fn(z, h):

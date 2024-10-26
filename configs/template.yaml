@@ -18,7 +18,7 @@ data:
   pin_memory: True
   separate_cls: True
 meta:
-  gt_type: 'rank' # 'rank', 'count'
+  gt_type: 'counts' # 'rank', 'counts'
   enc_depth: 3
   enc_emb_dim: 768
   pred_depth: 1
@@ -37,7 +37,7 @@ mask:
   per_block_mask_ratio: 0.5
   #controlled_attention_pattern: 
     # Similarly, for the columns, we have the same order, and a 1 indicates attention get masked  between those two parts.
-     # 'Matrix', 'null'
+    # 'Matrix', 'null'
     #- [0, 1, 0, 1]  # cls_cell
     #- [1, 0, 1, 0]  # cls_neighborhood
     #- [0, 1, 0, 1]  # cell
