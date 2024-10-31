@@ -354,7 +354,7 @@ def train(args: dict,
         maskB_meter = AverageMeter()
         time_meter = AverageMeter()
 
-        for itr, (udata, masks_enc, masks_pred, masks_attention) in enumerate(
+        for itr, (udata, masks_enc, masks_pred, masks_attention, masks_controlled_attention) in enumerate(
         train_loader):
             tokens = udata[0].to(device, non_blocking=True)
             segments = udata[1].to(device, non_blocking=True)
@@ -363,9 +363,28 @@ def train(args: dict,
             masks_enc = [u.to(device, non_blocking=True) for u in masks_enc]
             masks_pred = [u.to(device, non_blocking=True) for u in masks_pred]
             masks_attention = masks_attention.to(device, non_blocking=True)
+            masks_controlled_attention = masks_controlled_attention.to(device, non_blocking=True)
+
             if args['mask']['controlled_attention_pattern'] is not None:
-                masks_attention_enc = create_controlled_mask_context_target(masks_attention, context_masks=masks_enc)
-                masks_attention_pred = create_controlled_mask_context_target(masks_attention, masks_pred, masks_enc)
+                if args['mask']['controlled_attention_type'] == 'enc':
+                    masks_attention_enc = create_controlled_mask_context_target(
+                        masks_controlled_attention,
+                        context_masks=masks_enc)
+                    masks_attention_pred = None
+                elif args['mask']['controlled_attention_type'] == 'pred':
+                    masks_attention_pred = create_controlled_mask_context_target(
+                        masks_controlled_attention,
+                        target_masks=masks_pred,
+                        context_masks=masks_enc)
+                    masks_attention_enc = None
+                elif args['mask']['controlled_attention_type'] == 'enc_pred':
+                    masks_attention_enc = create_controlled_mask_context_target(
+                        masks_controlled_attention,
+                        context_masks=masks_enc)
+                    masks_attention_pred = create_controlled_mask_context_target(
+                        masks_controlled_attention,
+                        target_masks=masks_pred,
+                        context_masks=masks_enc)
             else:
                 masks_attention_enc = None
                 masks_attention_pred = None
@@ -384,12 +403,12 @@ def train(args: dict,
                             h = target_encoder(tokens=tokens,
                                                segments=segments,
                                                positions=positions,
-                                               masks_attention=masks_attention)
+                                               masks_attention=(masks_controlled_attention if 'enc' in args['mask']['controlled_attention_type'] else masks_attention))
                         elif gt_type == 'counts':
                             h = target_encoder(tokens=tokens,
                                                segments=segments,
                                                counts=counts,
-                                               masks_attention=masks_attention)
+                                               masks_attention=(masks_controlled_attention if 'enc' in args['mask']['controlled_attention_type'] else masks_attention))
 
                         # Normalize over feature dim
                         h = F.layer_norm(h, (h.size(-1),))

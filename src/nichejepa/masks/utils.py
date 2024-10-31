@@ -1,3 +1,5 @@
+from typing import Optional
+
 import torch
 
 
@@ -33,9 +35,9 @@ def apply_attention_mask(attention_matrix, indices):
     ----------
     attention_matrix : Tensor of shape (B, N, N)
         The input attention matrix.
-
-    indices : Tensor of shape (B, M)
-        Indices of tokens for which the attention should happen.
+    indices:
+        Tensor of shape (B, M). Indices of tokens for which the attention should
+        happen.
 
     Returns
     -------
@@ -58,16 +60,17 @@ def apply_attention_mask(attention_matrix, indices):
     return selected_submatrix
 
 
-def create_controlled_mask_context_target(attention_matrix,
-                                          target_masks=None,
-                                          context_masks=None):
+def create_controlled_mask_context_target(
+    attention_matrix: torch.Tensor,
+    target_masks: Optional[torch.Tensor]=None,
+    context_masks: Optional[torch.Tensor]=None):
     """
-    Apply context_masks and/or target_masks to the input attention matrix by gathering rows and columns based 
-    on the given indices.
+    Apply context_masks and/or target_masks to the input attention matrix by
+    gathering rows and columns based on the given indices.
 
     Parameters
     ----------
-    attention_matrix : Tensor of shape (B, 1, N, N)
+    attention_matrix: Tensor of shape (B, 1, N, N)
         The input attention matrix where B is the batch size and N is the sequence length.
 
     target_masks : List[Tensor]
@@ -87,12 +90,13 @@ def create_controlled_mask_context_target(attention_matrix,
 
     # Remove the singleton dimension if it exists in attention_matrix
     attention_matrix = attention_matrix.squeeze(1)
-    #Check if target_masks isn't None
+    # Check if target_masks isn't None
     if target_masks is None:
         # Iterate through the context  masks
         for context_indices in context_masks:
 
-            selected_submatrix = apply_attention_mask(attention_matrix, context_indices)
+            selected_submatrix = apply_attention_mask(attention_matrix,
+                                                      context_indices)
             
             # Append the resulting submatrix to the list
             masked_attention_matrices.append(selected_submatrix)
@@ -111,7 +115,8 @@ def create_controlled_mask_context_target(attention_matrix,
             # Append the resulting submatrix to the list
             masked_attention_matrices.append(selected_submatrix)
 
-    # Concatenate all submatrices along the batch dimension (dim=0) and unsqueeze to restore singleton dim
+    # Concatenate all submatrices along the batch dimension and unsqueeze to
+    # restore singleton dim
     return torch.unsqueeze(torch.cat(masked_attention_matrices, dim=0), dim=1)
 
 
@@ -127,6 +132,8 @@ def configure_attention_masks(controlled_attention_pattern: torch.Tensor,
     parts of the sequence do not attend to other as defined by the provided
     masking rules.
 
+    The function updates `collated_masks_attention` in-place based on the pattern.
+
     Parameters
     ----------
     controlled_attention_pattern:
@@ -140,11 +147,6 @@ def configure_attention_masks(controlled_attention_pattern: torch.Tensor,
     valid_min_start:
         The starting index of valid tokens for masking, excluding special
         tokens, within the attention matrix.
-    
-    Returns
-    -------
-    None
-        The function updates `collated_masks_attention` in-place based on the pattern.
     """
     # <cls_cell> token does not attend to <cls_neighborhood> token
     if controlled_attention_pattern[0][1]:
@@ -209,3 +211,17 @@ def configure_attention_masks(controlled_attention_pattern: torch.Tensor,
             :,
             valid_min_start + seq_len_cell:,
             valid_min_start: valid_min_start + seq_len_cell] = 0
+
+    """
+    # Batch token only attends to itself
+    collated_masks_attention[
+            :,
+            :,
+            2,
+            0:2] = 0
+    collated_masks_attention[
+            :,
+            :,
+            2,
+            3:] = 0
+    """

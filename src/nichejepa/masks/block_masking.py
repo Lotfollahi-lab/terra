@@ -42,8 +42,8 @@ class BlockMaskCollator:
     separate_cls: bool
         This will determine whether we add the CLS of  cell only to cell blocks and
         the CLS of  neighborhood only to the neighborhood or not.
-    controlled_attention_pattern: torch.Tensor
-        The pattern that the model used to generate the attention matrix.
+    controlled_attention_pattern:
+        The pattern that the model uses to generate the attention matrix.
     """
     def __init__(self,
                  n_targets: int=2,
@@ -55,7 +55,7 @@ class BlockMaskCollator:
                  n_special_tokens: int=0,
                  per_block_mask_ratio: float=0.3,
                  separate_cls: bool=True,
-                 controlled_attention_pattern: torch.Tensor=None):
+                 controlled_attention_pattern: Optional[torch.Tensor]=None):
         self.n_targets = n_targets
         self.seq_len_cell = seq_len_cell
         self.seq_len_neighborhood = seq_len_neighborhood
@@ -63,11 +63,12 @@ class BlockMaskCollator:
         self.n_special_tokens = n_special_tokens
         self.per_block_mask_ratio = per_block_mask_ratio
         self.separate_cls = separate_cls
+        self.controlled_attention_pattern = controlled_attention_pattern
 
         # Determine the valid start position for the mask based on number of
         # special tokens
         self.valid_min_start = self.n_special_tokens
-        self.controlled_attention_pattern = controlled_attention_pattern
+
     def block_masking(self,
                       sequence: torch.Tensor,
                       mask_ratio: Union[float, List[float]],
@@ -139,20 +140,34 @@ class BlockMaskCollator:
                 # Randomly choose indices to mask within the block
                 # DON'T USE torch.rand as it could produce repeated indices
                 mask_indices = torch.randperm(block_size)[:num_to_mask]
-                masked_indices = block_non_zero_indices[mask_indices].tolist()  # Convert to list.
-                context_mask[masked_indices] = 0  # Set masked indices to 0 in the context mask.
-                max_index, min_index = max(masked_indices), min(masked_indices) # Find the maximum and minimum index positions in the mask.  
-                if not self.separate_cls: # if self.separate_cls is False.
-                   masked_indices = list(range(self.n_special_tokens)) + masked_indices # include special tokens including both cls_neighborhood and cls_cell.
-                elif min_index > self.seq_len_cell: # If the min_index is greater than self.seq_len_cell and self.separate_cls is True.
-                   masked_indices = list(range(1,self.n_special_tokens)) + masked_indices # Include special tokens, excluding cls_cell.
-                elif self.seq_len_cell > max_index: # If the max_index is smaller than self.seq_len_cell and self.separate_cls is True.
-                    masked_indices = [0] + list(range(2,self.n_special_tokens)) + masked_indices # include special tokens excluding cls_neighborhood.
-                else: # This means the block is in both neighborhood  and cell and and self.separate_cls is True.
-                    masked_indices = list(range(1,self.n_special_tokens)) + masked_indices # include special tokens including cls_neighborhood.
-                    #masked_indices = list(range(self.n_special_tokens)) + masked_indices # include special tokens including both cls_neighborhood and cls_cell.
-                keep_tokens_target = min(keep_tokens_target, len(masked_indices))  # Update minimum tokens target
-                block_masks.append(torch.tensor(masked_indices))  # Append the masked indices io the list
+                masked_indices = block_non_zero_indices[mask_indices].tolist()
+                
+                # Set masked indices to 0 in the context mask
+                context_mask[masked_indices] = 0
+
+                # Include <cls> tokens based on flag and whether block is in
+                # cell or neighborhood segments 
+                max_index, min_index = max(masked_indices), min(masked_indices)
+                if (min_index > self.seq_len_cell) and self.separate_cls:
+                    # Include special tokens except <cls_cell>
+                    masked_indices = list(
+                        range(1, self.n_special_tokens)) + masked_indices
+                elif (self.seq_len_cell > max_index) and self.separate_cls:
+                    # Include special tokens except <cls_neighborhood>
+                    masked_indices = [0] + list(
+                        range(2, self.n_special_tokens)) + masked_indices
+                else:
+                    # This means the block is in both neighborhood and cell
+                    # segments or separation flag is False; in those cases
+                    # include all special tokens including <cls_cell> and
+                    # <cls_neighborhood>
+                    masked_indices = list(
+                        range(self.n_special_tokens)) + masked_indices
+
+                # Update minimum tokens target and append masked indices
+                keep_tokens_target = min(
+                    keep_tokens_target, len(masked_indices))
+                block_masks.append(torch.tensor(masked_indices))
             else:
                 # No elements to mask
                 block_masks.append(torch.tensor([]))
@@ -268,18 +283,33 @@ class BlockMaskCollator:
         collated_masks_attention = torch.utils.data.default_collate(
             collated_masks_attention).unsqueeze(1).unsqueeze(1)
 
+        #"""
+        collated_masks_attention = collated_masks_attention.expand(
+            collated_masks_attention.shape[0], 1, collated_masks_attention.shape[-1],collated_masks_attention.shape[-1]).clone()
+        # Batch token only attends to itself
+        collated_masks_attention[
+                :,
+                :,
+                2,
+                0:2] = 0
+        collated_masks_attention[
+                :,
+                :,
+                2,
+                3:] = 0
+        #"""
+
         if self.controlled_attention_pattern is not None:
-            collated_masks_attention = collated_masks_attention.expand(
-                collated_masks_attention.shape[0], 1, collated_masks_attention.shape[-1],collated_masks_attention.shape[-1]).clone()
+            #collated_masks_controlled_attention = collated_masks_attention.expand(
+            #    collated_masks_attention.shape[0], 1, collated_masks_attention.shape[-1],collated_masks_attention.shape[-1]).clone()
+            collated_masks_controlled_attention = collated_masks_attention.clone()
             if torch.sum(self.controlled_attention_pattern) != 0:
                 configure_attention_masks(
                     self.controlled_attention_pattern,
-                    collated_masks_attention,
+                    collated_masks_controlled_attention,
                     self.seq_len_cell,
                     self.valid_min_start)
-
-        print('inside')
-        print(self.valid_min_start)
-        print(self.seq_len_cell)
+        else:
+            collated_masks_controlled_attention = None
                
-        return collated_batch, collated_masks_context, collated_masks_target, collated_masks_attention
+        return collated_batch, collated_masks_context, collated_masks_target, collated_masks_attention, collated_masks_controlled_attention
