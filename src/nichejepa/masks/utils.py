@@ -1,3 +1,5 @@
+from typing import Optional
+
 import torch
 
 
@@ -27,15 +29,15 @@ def apply_masks(x, masks):
 def apply_attention_mask(attention_matrix, indices):
 
     """
-    Apply  given indices to the attention matrix and return the selected submatrix.
+    Apply given indices to the attention matrix and return the selected submatrix.
 
     Parameters
     ----------
     attention_matrix : Tensor of shape (B, N, N)
         The input attention matrix.
-
-    indices : Tensor of shape (B, M)
-        Indices of tokens for which the attention should happen.
+    indices:
+        Tensor of shape (B, M). Indices of tokens for which the attention should
+        happen.
 
     Returns
     -------
@@ -58,14 +60,17 @@ def apply_attention_mask(attention_matrix, indices):
     return selected_submatrix
 
 
-def create_controlled_mask_context_target(attention_matrix, target_masks=None, context_masks=None):
+def create_controlled_mask_context_target(
+    attention_matrix: torch.Tensor,
+    target_masks: Optional[torch.Tensor]=None,
+    context_masks: Optional[torch.Tensor]=None):
     """
-    Apply context_masks and/or target_masks to the input attention matrix by gathering rows and columns based 
-    on the given indices.
+    Apply context_masks and/or target_masks to the input attention matrix by
+    gathering rows and columns based on the given indices.
 
     Parameters
     ----------
-    attention_matrix : Tensor of shape (B, 1, N, N)
+    attention_matrix: Tensor of shape (B, 1, N, N)
         The input attention matrix where B is the batch size and N is the sequence length.
 
     target_masks : List[Tensor]
@@ -85,12 +90,13 @@ def create_controlled_mask_context_target(attention_matrix, target_masks=None, c
 
     # Remove the singleton dimension if it exists in attention_matrix
     attention_matrix = attention_matrix.squeeze(1)
-    #Check if target_masks isn't None
+    # Check if target_masks isn't None
     if target_masks is None:
         # Iterate through the context  masks
         for context_indices in context_masks:
 
-            selected_submatrix = apply_attention_mask(attention_matrix, context_indices)
+            selected_submatrix = apply_attention_mask(attention_matrix,
+                                                      context_indices)
             
             # Append the resulting submatrix to the list
             masked_attention_matrices.append(selected_submatrix)
@@ -109,67 +115,137 @@ def create_controlled_mask_context_target(attention_matrix, target_masks=None, c
             # Append the resulting submatrix to the list
             masked_attention_matrices.append(selected_submatrix)
 
-    # Concatenate all submatrices along the batch dimension (dim=0) and unsqueeze to restore singleton dim
+    # Concatenate all submatrices along the batch dimension and unsqueeze to
+    # restore singleton dim
     return torch.unsqueeze(torch.cat(masked_attention_matrices, dim=0), dim=1)
 
-def configure_attention_masks(controlled_attention_pattern, collated_masks_attention, 
-                              seq_len_cell, valid_min_start):
+
+def configure_attention_masks(controlled_attention_pattern: torch.Tensor,
+                              collated_masks_attention: torch.Tensor, 
+                              seq_len_cell: int,
+                              valid_min_start: int):
     """
     Configures attention masks based on the controlled attention pattern.
 
-    This function sets specific cells in the attention mask matrix to zero, based on the 
-    given `controlled_attention_pattern`. Each condition ensures that certain parts of 
-    the sequence do not attend to other as defined by the provided masking rules.
+    This function sets specific positions in the attention mask matrix to zero,
+    based on the given `controlled_attention_pattern`. This ensures that certain
+    parts of the sequence do not attend to other as defined by the provided
+    masking rules.
+
+    The function updates `collated_masks_attention` in-place based on the pattern.
 
     Parameters
     ----------
-    controlled_attention_pattern : Torch.tensor
-        A 2D Torch.tensor that defines whether specific parts should not attend to other part. A value of `1` 
-        indicates masking.
-    collated_masks_attention : Torch.tensor
-        The multi-dimensional Tensor representing the attention matrix, which will be updated 
-        based on the pattern.
-    seq_len_cell : int
-        The sequence length associated with the `cell` part.
-    valid_min_start : int
-        The starting index of valid tokens for actual content, excluding special tokens, within the attention matrix.
-    Returns
-    -------
-    None
-        The function updates `collated_masks_attention` in-place based on the pattern.
+    controlled_attention_pattern:
+        A 2D Torch.tensor that defines whether specific parts should not attend
+        to other parts. A value of `1` indicates masking.
+    collated_masks_attention:
+        The multi-dimensional Tensor representing the attention matrix, which
+        will be updated based on the pattern.
+    seq_len_cell:
+        The sequence length associated with the `cell` segment.
+    valid_min_start:
+        The starting index of valid tokens for masking, excluding special
+        tokens, within the attention matrix.
     """
-    
-    # Mask: Cls_cell should not attend to Cls_neighborhood
+    # <cls_cell> token does not attend to <cls_neighborhood> token
     if controlled_attention_pattern[0][1]:
-        collated_masks_attention[:, :, 0, 1] = 0
+        collated_masks_attention[
+            :,
+            :,
+            0,
+            1] = 0
     
-    # Mask: Cls_cell should not attend to neighborhood
+    # <cls_cell> token does not attend to neighborhood gene tokens
     if controlled_attention_pattern[0][3]:
-        collated_masks_attention[:, :, 0, seq_len_cell + valid_min_start:] = 0
+        collated_masks_attention[
+            :,
+            :,
+            0,
+            valid_min_start + seq_len_cell:] = 0
     
-    # Mask: Cls_neighborhood should not attend to Cls_cell
+    # <cls_neighborhood> token does not attend to <cls_cell> token
     if controlled_attention_pattern[1][0]:
-        collated_masks_attention[:, :, 1, 0] = 0
+        collated_masks_attention[
+            :,
+            :,
+            1,
+            0] = 0
     
-    # Mask: Cls_neighborhood should not attend to cell
+    # <cls_neighborhood> token does not attend to cell gene tokens
     if controlled_attention_pattern[1][2]:
-        collated_masks_attention[:, :, 1, valid_min_start:valid_min_start + seq_len_cell] = 0
+        collated_masks_attention[
+            :,
+            :,
+            1,
+            valid_min_start: valid_min_start + seq_len_cell] = 0
     
-    # Mask: cell should not attend to Cls_neighborhood
+    # Cell gene tokens do not attend to <cls_neighborhood> token
     if controlled_attention_pattern[2][1]:
-        collated_masks_attention[:, :, valid_min_start:valid_min_start + seq_len_cell, 1] = 0
+        collated_masks_attention[
+            :,
+            :,
+            valid_min_start: valid_min_start + seq_len_cell,
+            1] = 0
     
-    # Mask: cell should not attend to neighborhood
+    # Cell gene tokens do not attend to neighborhood gene tokens
     if controlled_attention_pattern[2][3]:
-        collated_masks_attention[:, :, valid_min_start:valid_min_start + seq_len_cell, 
-                                 seq_len_cell + valid_min_start:] = 0
+        collated_masks_attention[
+            :,
+            :,
+            valid_min_start: valid_min_start + seq_len_cell,
+            valid_min_start + seq_len_cell:] = 0
     
-    # Mask: neighborhood should not attend to Cls_cell
+    # Neighborhood gene tokens do not attend to <cls_cell> token
     if controlled_attention_pattern[3][0]:
-        collated_masks_attention[:, :, seq_len_cell + valid_min_start:, 0] = 0
+        collated_masks_attention[
+            :,
+            :,
+            valid_min_start + seq_len_cell:,
+            0] = 0
     
-    # Mask: neighborhood should not attend to cell
+    # Neighborhood gene tokens do not attend to cell gene tokens
     if controlled_attention_pattern[3][2]:
-        collated_masks_attention[:, :, seq_len_cell + valid_min_start:, 
-                                 valid_min_start:valid_min_start + seq_len_cell] = 0
+        collated_masks_attention[
+            :,
+            :,
+            valid_min_start + seq_len_cell:,
+            valid_min_start: valid_min_start + seq_len_cell] = 0
 
+    # Temp Batch token only attends to itself
+    collated_masks_attention[
+            :,
+            :,
+            2,
+            0:2] = 0
+    collated_masks_attention[
+            :,
+            :,
+            2,
+            3] = 0
+    collated_masks_attention[
+            :,
+            :,
+            3,
+            0:3] = 0
+    collated_masks_attention[
+            :,
+            :,
+            2,
+            valid_min_start + seq_len_cell:] = 0
+    collated_masks_attention[
+            :,
+            :,
+            3,
+            valid_min_start: valid_min_start + seq_len_cell] = 0
+
+    collated_masks_attention[
+        :,
+        :,
+        valid_min_start: valid_min_start + seq_len_cell,
+        3] = 0
+    collated_masks_attention[
+        :,
+        :,
+        valid_min_start + seq_len_cell:,
+        2] = 0

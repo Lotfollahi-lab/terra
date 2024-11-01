@@ -113,7 +113,6 @@ def infer(args: dict,
     seq_len_cell = args['data']['seq_len_cell']
     seq_len_neighborhood = args['data']['seq_len_neighborhood']
     n_segments = args['data']['n_segments']
-    separate_cls = args['data']['separate_cls']
 
     n_contexts = args['mask']['n_contexts']
     n_targets = args['mask']['n_targets']
@@ -230,13 +229,14 @@ def infer(args: dict,
     all_cell_gene_emb_dict = {}
     all_neighborhood_gene_emb_dict = {}
 
-    for itr, (udata, masks_enc, masks_pred, masks_attention) in tqdm(enumerate(loader)):
+    for itr, (udata, masks_enc, masks_pred, masks_attention, masks_controlled_attention) in tqdm(enumerate(loader)):
         # Load gene tokens and segmentation label to the specified device
         tokens = udata[0].to(device, non_blocking=True)
         segments = udata[1].to(device, non_blocking=True)
         positions = udata[2].to(device, non_blocking=True)
         counts = udata[3].to(device, non_blocking=True)
         masks_attention = masks_attention.to(device, non_blocking=True)
+        masks_controlled_attention = masks_controlled_attention.to(device, non_blocking=True)
 
         # Collect cell IDs to join metadata
         all_cell_ids.extend(udata[-1])
@@ -257,13 +257,13 @@ def infer(args: dict,
                     tokens=tokens,
                     segments=segments,
                     positions=positions,
-                    masks_attention=masks_attention)
+                    masks_attention=(masks_controlled_attention if 'enc' in args['mask']['controlled_attention_type'] else masks_attention))
             elif gt_type == 'counts':
                 emb_list = target_encoder.module.return_multi_layer_emb(
                     tokens=tokens,
                     segments=segments,
                     counts=counts,
-                    masks_attention=masks_attention)
+                    masks_attention=(masks_controlled_attention if 'enc' in args['mask']['controlled_attention_type'] else masks_attention))
         
             if feature_norm:
                 # Normalize last layer like in training

@@ -551,7 +551,7 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
     """
     def __init__(self,
                  n_value_bins: int=100,
-                 n_special_values: int=6,
+                 n_special_values: int=10,
                  **base_encoder_kwargs,
                  ):
         super().__init__(**base_encoder_kwargs)
