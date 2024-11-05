@@ -268,6 +268,14 @@ def infer(args: dict,
         # Collect cell IDs to join metadata
         all_cell_ids.extend(udata[-1])
 
+        #torch.set_printoptions(threshold=torch.inf)
+        #print(masks_controlled_attention[0, 0, -1, :])
+        #print(masks_controlled_attention[0, 0, 0, :])
+        #print(masks_controlled_attention[0, 0, 1, :])
+        #print(masks_controlled_attention[0, 0, 102, :])
+        #print(masks_controlled_attention[0, 0, -1, :])
+        #raise ValueError
+
         # Retrieve gene embeddings from different layers
         with torch.cuda.amp.autocast(dtype=torch.bfloat16,
                                      enabled=args['meta']['use_bfloat16']):

@@ -125,6 +125,7 @@ def configure_attention_masks(controlled_attention_pattern: torch.Tensor,
                               seq_len_cell: int,
                               n_special_tokens: int,
                               max_cls_tokens: int,
+                              constrain_special_tokens: bool=False,
                               ):
     """
     Configures attention masks based on the controlled attention pattern.
@@ -150,75 +151,97 @@ def configure_attention_masks(controlled_attention_pattern: torch.Tensor,
         The starting index of valid tokens for masking, excluding special
         tokens, within the attention matrix.
     max_cls_tokens:
+    constrain_special_tokens:
     """
     # <cls> tokens do not attent to other <cls> tokens
     if controlled_attention_pattern[0][1]:
         for i in range(max_cls_tokens):
-            collated_masks_attention[
-                :,
-                :,
-                i,
-                :i] = 0
-            collated_masks_attention[
-                :,
-                :,
-                i,
-                i+1:max_cls_tokens] = 0
-
-    # <cls> tokens do not attent to other gene tokens
-    if controlled_attention_pattern[0][3]:
-        for i in range(max_cls_tokens):
-            if i != 0:
+            if i != 0: # first <cls> token has no preceding <cls> tokens
                 collated_masks_attention[
                     :,
                     :,
                     i,
-                    n_special_tokens: n_special_tokens + (i * seq_len_cell)] = 0          
-            collated_masks_attention[
-                :,
-                :,
-                i,
-                n_special_tokens + ((i + 1) * seq_len_cell):] = 0
+                    :i] = 0
+            if i != (max_cls_tokens - 1): # last <cls> token has no subsequent 
+                                          # <cls> tokens
+                collated_masks_attention[
+                    :,
+                    :,
+                    i,
+                    i+1:max_cls_tokens] = 0
+
+    # <cls> tokens do not attent to other gene tokens
+    if controlled_attention_pattern[0][3]:
+        for i in range(max_cls_tokens):
+            if i != 0: # first <cls> token has no preceding gene tokens
+                collated_masks_attention[
+                    :,
+                    :,
+                    i,
+                    n_special_tokens: n_special_tokens + (i * seq_len_cell)] = 0
+            if i != (max_cls_tokens - 1): # last <cls> token has no subsequent
+                                          # gene tokens
+                collated_masks_attention[
+                    :,
+                    :,
+                    i,
+                    n_special_tokens + ((i + 1) * seq_len_cell):] = 0
       
     # Gene tokens do not attent to other <cls> tokens
     if controlled_attention_pattern[1][1]:
         for i in range(max_cls_tokens):
-            collated_masks_attention[
-                :,
-                :,
-                n_special_tokens + (i * seq_len_cell): n_special_tokens + ((i + 1) * seq_len_cell),
-                :i] = 0
-            collated_masks_attention[
-                :,
-                :,
-                n_special_tokens + (i * seq_len_cell): n_special_tokens + ((i + 1) * seq_len_cell),
-                i+1:max_cls_tokens] = 0
+            start_idx = n_special_tokens + (i * seq_len_cell)
+            if i == (max_cls_tokens - 1):
+                end_idx = None # last <cls> token will capture until end
+            else:
+                end_idx = n_special_tokens + ((i + 1) * seq_len_cell)
+
+            if i != 0: # first gene tokens have no preceding <cls> token
+                collated_masks_attention[
+                    :,
+                    :,
+                    start_idx: end_idx,
+                    :i] = 0
+            if i != (max_cls_tokens - 1): # last gene tokens have no subsequent
+                                          # <cls> token
+                collated_masks_attention[
+                    :,
+                    :,
+                    start_idx: end_idx,
+                    i+1:max_cls_tokens] = 0
 
     # Gene tokens do not attent to other gene tokens
     if controlled_attention_pattern[1][3]:
         for i in range(max_cls_tokens):
-            if i != 0:
+            start_idx = n_special_tokens + (i * seq_len_cell)
+            if i == (max_cls_tokens - 1):
+                end_idx = None # last <cls> token will capture until end
+            else:
+                end_idx = n_special_tokens + ((i + 1) * seq_len_cell)
+
+            if i != 0: # first gene tokens have no preceding gene tokens
                 collated_masks_attention[
                     :,
                     :,
-                    n_special_tokens + (i * seq_len_cell): n_special_tokens + ((i + 1) * seq_len_cell),
-                    n_special_tokens: n_special_tokens + (i * seq_len_cell)] = 0                   
-            collated_masks_attention[
-                :,
-                :,
-                n_special_tokens + (i * seq_len_cell): n_special_tokens + ((i + 1) * seq_len_cell),
-                n_special_tokens + ((i + 1) * seq_len_cell):] = 0    
+                    start_idx: end_idx,
+                    n_special_tokens: n_special_tokens + (i * seq_len_cell)] = 0 
+            if i != (max_cls_tokens - 1): # last gene tokens have no subsequent
+                                          # gene tokens                 
+                collated_masks_attention[
+                    :,
+                    :,
+                    start_idx: end_idx,
+                    n_special_tokens + ((i + 1) * seq_len_cell):] = 0    
 
-    """
-    # Special tokens do not attent to other tokens
-    collated_masks_attention[
-        :,
-        :,
-        max_cls_tokens:n_special_tokens,
-        :max_cls_tokens] = 0
-    collated_masks_attention[
-        :,
-        :,
-        max_cls_tokens:n_special_tokens,
-        n_special_tokens:] = 0
-    """
+    if constrain_special_tokens:
+        # Special tokens do not attent to other tokens
+        collated_masks_attention[
+            :,
+            :,
+            max_cls_tokens:n_special_tokens,
+            :max_cls_tokens] = 0
+        collated_masks_attention[
+            :,
+            :,
+            max_cls_tokens:n_special_tokens,
+            n_special_tokens:] = 0
