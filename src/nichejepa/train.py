@@ -446,9 +446,9 @@ def train(args: dict,
                     # minmum context size in the batch after removal of
                     # overlapping targets
                     if gt_type == 'rank':
-                        z = encoder(tokens=tokens,
+                        z = encoder(positions=positions,
                                     segments=segments,
-                                    positions=positions,
+                                    tokens=tokens,
                                     masks=masks_enc,
                                     masks_attention=masks_attention_enc)                       
                     elif gt_type == 'counts':
@@ -468,7 +468,7 @@ def train(args: dict,
                                       masks_pred=masks_pred,
                                       enc_seg_embed=encoder.module.seg_embed,
                                       enc_pos_embed=encoder.module.pos_embed,
-                                      masks_attention_pred=masks_attention_pred)
+                                      masks_attention=masks_attention_pred)
                     elif gt_type == 'counts':
                         z = predictor(z=z,
                                       tokens=tokens,
@@ -477,7 +477,7 @@ def train(args: dict,
                                       masks_pred=masks_pred,
                                       enc_seg_embed=encoder.module.seg_embed,
                                       enc_token_embed=encoder.module.token_embed,
-                                      masks_attention_pred=masks_attention_pred)
+                                      masks_attention=masks_attention_pred)
                     return z
 
                 def loss_fn(z, h):

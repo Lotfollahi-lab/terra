@@ -278,9 +278,9 @@ def infer(args: dict,
 
             if gt_type == 'rank':
                 emb_list = target_encoder.module.return_multi_layer_emb(
-                    tokens=tokens,
-                    segments=segments,
                     positions=positions,
+                    segments=segments,
+                    tokens=tokens,
                     masks_attention=masks_attention)
             elif gt_type == 'counts':
                 emb_list = target_encoder.module.return_multi_layer_emb(

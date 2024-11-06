@@ -36,8 +36,9 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
     seq_len:
         Length of the token sequences.
     max_cls_tokens:
+        Number of <cls> tokens.
     max_special_tokens:
-        Maximum number of special tokens to determine first cell segment.
+        Maximum number of special tokens.
     n_special_tokens:
         Number of special tokens included in a token sequence.
     n_segments:
@@ -408,9 +409,9 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
             self.pos_embed.weight[1:].copy_(torch.from_numpy(pos_embed).float())
 
     def forward(self,
-                tokens: torch.Tensor,
-                segments: torch.Tensor,
                 positions: torch.Tensor,
+                segments: torch.Tensor,
+                tokens: torch.Tensor,
                 masks: Optional[Union[List[torch.Tensor], torch.Tensor]]=None,
                 masks_attention: Optional[torch.Tensor]=None 
                 ) -> torch.Tensor:
@@ -421,14 +422,14 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
 
             Parameters
             -----------
-            tokens:
-                Tensor containing input tokens with shape (BATCH_SIZE, SEQ_LEN).
-            segments:
-                Tensor containing segment labels with shape (BATCH_SIZE,
-                SEQ_LEN).
             positions:
                 Tensor containing position labels with shape (BATCH_SIZE,
                 SEQ_LEN)
+            segments:
+                Tensor containing segment labels with shape (BATCH_SIZE,
+                SEQ_LEN).
+            tokens:
+                Tensor containing input tokens with shape (BATCH_SIZE, SEQ_LEN).
             masks:
                 List of N_MASKS tensors containing indices (within the sequence)
                 of tokens to keep with shape (BATCH_SIZE, MASK_SIZE).
@@ -448,17 +449,13 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
                 if not isinstance(masks, list):
                     masks = [masks]
 
-            # Get token embeddings for sequence of tokens
-            token_emb = self.token_embed(tokens)
-
-            # Get segment embeddings
-            seg_emb = self.seg_embed(segments)
-
-            # Get positional embeddings
+            # Get positional, segment and token embeddings
             pos_emb = self.pos_embed(positions)
+            seg_emb = self.seg_embed(segments)
+            token_emb = self.token_embed(tokens)
             
             # Add positional and segment embeddings to token embeddings
-            x = token_emb + seg_emb + pos_emb
+            x = pos_emb + seg_emb + token_emb
 
             B, N, D = x.shape # B: BATCH_SIZE, N: SEQ_LEN, D: EMBED_DIM
                 
@@ -476,9 +473,9 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
 
     @torch.no_grad()
     def return_multi_layer_emb(self,
-                               tokens: torch.Tensor,
-                               segments: torch.Tensor,
                                positions: torch.Tensor,
+                               segments: torch.Tensor,
+                               tokens: torch.Tensor,
                                masks: Optional[Union[
                                    List[torch.Tensor], torch.Tensor]]=None,
                                masks_attention: Optional[torch.Tensor]=None, 
@@ -490,12 +487,12 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
 
         Parameters
         -----------
-        tokens:
-            Tensor containing input tokens with shape (BATCH_SIZE, SEQ_LEN). 
-        segments:
-            Tensor containing segment labels with shape (BATCH_SIZE, SEQ_LEN).
         positions:
             Tensor containing position labels with shape (BATCH_SIZE, SEQ_LEN).
+        segments:
+            Tensor containing segment labels with shape (BATCH_SIZE, SEQ_LEN).
+        tokens:
+            Tensor containing input tokens with shape (BATCH_SIZE, SEQ_LEN).
         masks:
             List of N_MASKS tensors containing indices (within the sequence) of
             tokens to keep with shape (BATCH_SIZE, MASK_SIZE).
@@ -518,21 +515,17 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
         # Replace special tokens (except <cls> tokens) with pad tokens for
         # inference
         if self.n_special_tokens > 2:
-            tokens[:, self.max_cls_tokens:self.n_special_tokens] = 0
-            segments[:, self.max_cls_tokens:self.n_special_tokens] = 0
             positions[:, self.max_cls_tokens:self.n_special_tokens] = 0
+            segments[:, self.max_cls_tokens:self.n_special_tokens] = 0
+            tokens[:, self.max_cls_tokens:self.n_special_tokens] = 0
 
-        # Get token embeddings for sequence of tokens
+        # Get positional, segment and token embeddings
+        pos_emb = self.pos_embed(positions)
+        seg_emb = self.seg_embed(segments)
         token_emb = self.token_embed(tokens)
 
-        # Get segment embeddings
-        seg_emb = self.seg_embed(segments)
-
-        # Get positional embeddings
-        pos_emb = self.pos_embed(positions)
-
         # Add positional and segment embeddings to token embeddings
-        x = token_emb + seg_emb + pos_emb
+        x = pos_emb + seg_emb + token_emb
 
         B, N, D = x.shape
 
@@ -698,8 +691,9 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
 
         # During inference, replace special tokens (except <cls> tokens) with
         # <pad> tokens
-        tokens[:, self.max_cls_tokens:self.n_special_tokens] = 0
-        segments[:, self.max_cls_tokens:self.n_special_tokens] = 0
+        if self.n_special_tokens > 2:
+            tokens[:, self.max_cls_tokens:self.n_special_tokens] = 0
+            segments[:, self.max_cls_tokens:self.n_special_tokens] = 0
 
         # Get embeddings for sequence of tokens and segments
         token_emb = self.token_embed(tokens)
@@ -763,7 +757,7 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
                 enc_seg_embed: nn.Embedding,
                 masks_enc: Union[List[torch.Tensor], torch.Tensor],
                 masks_pred: Union[List[torch.Tensor], torch.Tensor],
-                masks_attention_pred: torch.Tensor=None,
+                masks_attention: torch.Tensor=None,
                 ) -> torch.Tensor:
             """
             Run predictor forward pass for a batch of input tokens.
@@ -791,7 +785,7 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
                 List of N_TARGET_MASKS tensors containing indices (within the
                 sequence) of tokens to keep with shape (BATCH_SIZE,
                 TARGET_MASK_SIZE).
-            masks_attention_pred:
+            masks_attention:
                 An attention mask that controls how different tokens attend to
                 each other within a sequence.
 
@@ -864,7 +858,7 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
 
             # Run forward prop
             for blk in self.predictor_blocks:
-                z = blk(z, masks=masks_attention_pred)
+                z = blk(z, masks=masks_attention)
             z = self.predictor_norm(z)
 
             # Return predictions for (target) mask tokens
@@ -893,7 +887,7 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
                 enc_seg_embed: nn.Embedding,
                 masks_enc: Union[List[torch.Tensor], torch.Tensor],
                 masks_pred: Union[List[torch.Tensor], torch.Tensor],
-                masks_attention_pred: torch.Tensor=None,
+                masks_attention: torch.Tensor=None,
                 ) -> torch.Tensor:
             """
             Run predictor forward pass for a batch of input tokens.
@@ -920,7 +914,7 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
                 List of N_TARGET_MASKS tensors containing indices (within the
                 sequence) of tokens to keep with shape (BATCH_SIZE,
                 TARGET_MASK_SIZE).
-            masks_attention_pred:
+            masks_attention:
                 An attention mask that controls how different tokens attend to
                 each other within a sequence.
 
@@ -993,7 +987,7 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
 
             # Run forward prop
             for blk in self.predictor_blocks:
-                z = blk(z, masks=masks_attention_pred)
+                z = blk(z, masks=masks_attention)
             z = self.predictor_norm(z)
 
             # Return predictions for (target) mask tokens
