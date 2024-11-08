@@ -43,6 +43,8 @@ class BlockMaskCollator:
         max will be sampled for each batch.
     controlled_attention_pattern:
         The pattern that the model uses to generate the attention matrix.
+    restrict_special_attention:
+        If 'True', restrict attention of special tokens to themselves
     """
     def __init__(self,
                  n_targets: int,
@@ -53,7 +55,7 @@ class BlockMaskCollator:
                  max_cls_tokens: int,
                  per_block_mask_ratio: float=0.5,
                  controlled_attention_pattern: Optional[torch.Tensor]=None,
-                 constrain_special_tokens: bool=False):
+                 restrict_special_attention: bool=False):
         self.n_targets = n_targets
         self.seq_len_cell = seq_len_cell
         self.seq_len_neighborhood = seq_len_neighborhood
@@ -63,7 +65,7 @@ class BlockMaskCollator:
         self.max_cls_tokens = max_cls_tokens
         self.per_block_mask_ratio = per_block_mask_ratio
         self.controlled_attention_pattern = controlled_attention_pattern
-        self.constrain_special_tokens = constrain_special_tokens
+        self.restrict_special_attention = restrict_special_attention
 
     def _sample_gene_mask(self,
                           tokens: torch.Tensor,
@@ -272,7 +274,7 @@ class BlockMaskCollator:
                     self.n_special_tokens,
                     self.max_cls_tokens)
 
-        if self.constrain_special_tokens:
+        if self.restrict_special_attention:
             for i in range(self.max_cls_tokens, self.n_special_tokens):
                 # Special tokens only attent to themselves
                 collated_masks_attention[
