@@ -392,10 +392,13 @@ def train(args: dict,
                 masks_attention_enc = create_controlled_mask_context_target(
                     masks_attention,
                     context_masks=masks_enc)
-                masks_attention_pred = create_controlled_mask_context_target(
-                    masks_attention,
-                    target_masks=masks_pred,
-                    context_masks=masks_enc)
+                if args['mask']['controlled_attention_pred']:
+                    masks_attention_pred = create_controlled_mask_context_target(
+                        masks_attention,
+                        target_masks=masks_pred,
+                        context_masks=masks_enc)
+                else:
+                    masks_attention_pred = None
             else:
                 masks_attention_enc = None
                 masks_attention_pred = None

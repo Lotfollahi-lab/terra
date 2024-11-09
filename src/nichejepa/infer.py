@@ -275,7 +275,7 @@ def infer(args: dict,
                 mask_indices = torch.isin(
                     tokens,
                     torch.tensor(masked_tokens, device=tokens.device)
-                    ).unsqueeze(1).unsqueeze(1)
+                    ).unsqueeze(1).unsqueeze(1).expand(-1, -1, 1108, -1)
                 masks_attention[mask_indices] = 0
 
             if gt_type == 'rank':
