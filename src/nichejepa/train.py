@@ -98,6 +98,7 @@ def train(args: dict,
     # Load params from config file
     dataset_name = args['data']['dataset_name']
     tokenizer_type = args['data']['tokenizer_type']
+    n_special_values = args['data']['n_special_values']
     vocab_size = args['data']['vocab_size']
     seq_len_cell = args['data']['seq_len_cell']
     seq_len_neighborhood = args['data']['seq_len_neighborhood']
@@ -222,6 +223,7 @@ def train(args: dict,
         max_special_tokens=max_special_tokens,
         n_special_tokens=n_special_tokens,
         n_segments=n_segments,
+        n_special_values=n_special_values,
         enc_emb_dim=enc_emb_dim,
         enc_depth=enc_depth,
         pred_emb_dim=pred_emb_dim,

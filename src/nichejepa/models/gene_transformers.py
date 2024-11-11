@@ -551,10 +551,12 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
     expression counts.
     """
     def __init__(self,
+                 n_special_values: int,
                  n_value_bins: int=100,
                  **base_encoder_kwargs,
                  ):
         super().__init__(**base_encoder_kwargs)
+        self.n_special_values = n_special_values
         self.n_value_bins = n_value_bins
 
         # Initialize value embeddings and value embedding weight projection
@@ -562,7 +564,7 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
         self.value_embed = nn.Embedding(self.n_value_bins,
                                         self.embed_dim)
         self.special_value_embed = nn.Embedding(
-            2 + self.max_special_tokens, # include <pad> and zero expression
+            2 + self.n_special_values, # include <pad> and zero expression
             self.embed_dim,
             padding_idx=0)
         self.value_emb_weights_projection = ValueEmbWeightsProjection(
@@ -1000,9 +1002,10 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
 
 
 def init_gt_encoder(encoder_type: Literal['rank', 'counts'],
-               **encoder_kwargs
-               ) -> Union[GeneTransformerRankEncoder,
-                          GeneTransformerCountEncoder]:
+                    n_special_values: Optional[int]=None,
+                    **encoder_kwargs
+                    ) -> Union[GeneTransformerRankEncoder,
+                                GeneTransformerCountEncoder]:
     if encoder_type == 'rank':
         model = GeneTransformerRankEncoder(
             num_heads=8,
@@ -1012,6 +1015,7 @@ def init_gt_encoder(encoder_type: Literal['rank', 'counts'],
             **encoder_kwargs)
     elif encoder_type == 'counts':
         model = GeneTransformerCountEncoder(
+            n_special_values=n_special_values,
             num_heads=8,
             mlp_ratio=4,
             qkv_bias=True,

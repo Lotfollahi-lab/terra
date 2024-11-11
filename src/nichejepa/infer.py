@@ -110,6 +110,7 @@ def infer(args: dict,
     pin_memory = args['data']['pin_memory']
     num_workers = args['data']['num_workers']
     tokenizer_type = args['data']['tokenizer_type']
+    n_special_values = args['data']['n_special_values']
     seq_len_cell = args['data']['seq_len_cell']
     seq_len_neighborhood = args['data']['seq_len_neighborhood']
     n_segments = args['data']['n_segments']
@@ -179,6 +180,7 @@ def infer(args: dict,
         max_special_tokens=max_special_tokens,
         n_special_tokens=n_special_tokens,
         n_segments=n_segments,
+        n_special_values=n_special_values,
         enc_emb_dim=enc_emb_dim,
         enc_depth=enc_depth,
         pred_emb_dim=pred_emb_dim,

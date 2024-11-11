@@ -151,10 +151,6 @@ class CellBaseDataset(Dataset):
         positions = list(
             range(1, 1 + n_nz_cls_tokens)) + [0] * n_zero_cls_tokens + list(
             range(1 + n_nz_cls_tokens, 1 + n_nz_cls_tokens + (self.n_special_tokens - n_cls_tokens))) + positions
- 
-                
-        #segments = list(range(1, self.n_special_tokens + 1)) + segments
-        #positions = list(range(1, self.n_special_tokens + 1)) + positions
 
         return tokens, segments, positions, gene_expr
 

@@ -7,7 +7,7 @@ https://github.com/facebookresearch/ijepa/blob/main/src/helper.py (05.06.2024).
 
 import logging
 import sys
-from typing import Literal, Tuple
+from typing import Literal, Optional, Tuple
 
 import torch
 
@@ -126,6 +126,7 @@ def init_model(gt_type: Literal['rank', 'count'],
                max_special_tokens: int,
                n_special_tokens: int,
                n_segments: int,
+               n_special_values: Optional[int]=None,
                enc_emb_dim: int=768, 
                enc_depth: int=12,
                pred_emb_dim: int=384,
@@ -150,6 +151,8 @@ def init_model(gt_type: Literal['rank', 'count'],
     max_special_tokens:
     n_special_tokens:
     n_segments:
+    n_special_values:
+        Number of special values.
     enc_emb_dim:
         Dimension of the encoder embedding.
     enc_depth:
@@ -174,6 +177,7 @@ def init_model(gt_type: Literal['rank', 'count'],
     """
     encoder = gt.__dict__["init_gt_encoder"](
         encoder_type=gt_type,
+        n_special_values=n_special_values,
         vocab_size=vocab_size,
         seq_len=seq_len,
         max_cls_tokens=max_cls_tokens,

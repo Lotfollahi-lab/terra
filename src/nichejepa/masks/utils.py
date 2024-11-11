@@ -184,7 +184,22 @@ def configure_attention_masks(controlled_attention_pattern: torch.Tensor,
                     :,
                     i,
                     n_special_tokens + ((i + 1) * seq_len_cell):] = 0
-      
+
+    # Gene tokens do not attent to own <cls> tokens
+    if controlled_attention_pattern[1][0]:
+        for i in range(max_cls_tokens):
+            start_idx = n_special_tokens + (i * seq_len_cell)
+            if i == (max_cls_tokens - 1):
+                end_idx = None # last <cls> token will capture until end
+            else:
+                end_idx = n_special_tokens + ((i + 1) * seq_len_cell)
+
+            collated_masks_attention[
+                :,
+                :,
+                start_idx: end_idx,
+                i] = 0
+
     # Gene tokens do not attent to other <cls> tokens
     if controlled_attention_pattern[1][1]:
         for i in range(max_cls_tokens):
