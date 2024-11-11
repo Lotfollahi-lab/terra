@@ -43,6 +43,8 @@ class BlockMaskCollator:
         max will be sampled for each batch.
     controlled_attention_pattern:
         The pattern that the model uses to generate the attention matrix.
+    restrict_special_attention:
+        If 'True', restrict attention of special tokens to themselves
     """
     def __init__(self,
                  n_targets: int,
@@ -52,7 +54,8 @@ class BlockMaskCollator:
                  n_special_tokens: int,
                  max_cls_tokens: int,
                  per_block_mask_ratio: float=0.5,
-                 controlled_attention_pattern: Optional[torch.Tensor]=None):
+                 controlled_attention_pattern: Optional[torch.Tensor]=None,
+                 restrict_special_attention: bool=False):
         self.n_targets = n_targets
         self.seq_len_cell = seq_len_cell
         self.seq_len_neighborhood = seq_len_neighborhood
@@ -62,6 +65,7 @@ class BlockMaskCollator:
         self.max_cls_tokens = max_cls_tokens
         self.per_block_mask_ratio = per_block_mask_ratio
         self.controlled_attention_pattern = controlled_attention_pattern
+        self.restrict_special_attention = restrict_special_attention
 
     def _sample_gene_mask(self,
                           tokens: torch.Tensor,
@@ -254,22 +258,34 @@ class BlockMaskCollator:
         collated_masks_attention = torch.utils.data.default_collate(
             collated_masks_attention).unsqueeze(1).unsqueeze(1)
 
+        collated_masks_attention = collated_masks_attention.expand(
+            collated_masks_attention.shape[0],
+            1,
+            collated_masks_attention.shape[-1],
+            collated_masks_attention.shape[-1]).clone()
+
         # Apply controlled attention
         if self.controlled_attention_pattern is not None:
-            collated_masks_controlled_attention = collated_masks_attention.expand(
-                collated_masks_attention.shape[0],
-                1,
-                collated_masks_attention.shape[-1],
-                collated_masks_attention.shape[-1]).clone()
             if torch.sum(self.controlled_attention_pattern) != 0:
                 configure_attention_masks(
                     self.controlled_attention_pattern,
-                    collated_masks_controlled_attention,
+                    collated_masks_attention,
                     self.seq_len_cell,
                     self.n_special_tokens,
-                    self.max_cls_tokens,
-                    )
-        else:
-            collated_masks_controlled_attention = None
+                    self.max_cls_tokens)
+
+        if self.restrict_special_attention:
+            for i in range(self.max_cls_tokens, self.n_special_tokens):
+                # Special tokens only attent to themselves
+                collated_masks_attention[
+                    :,
+                    :,
+                    i,
+                    :i] = 0
+                collated_masks_attention[
+                    :,
+                    :,
+                    i,
+                    (i+1):] = 0
                
-        return collated_batch, collated_masks_context, collated_masks_target, collated_masks_attention, collated_masks_controlled_attention
+        return collated_batch, collated_masks_context, collated_masks_target, collated_masks_attention

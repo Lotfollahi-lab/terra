@@ -36,8 +36,9 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
     seq_len:
         Length of the token sequences.
     max_cls_tokens:
+        Number of <cls> tokens.
     max_special_tokens:
-        Maximum number of special tokens to determine first cell segment.
+        Maximum number of special tokens.
     n_special_tokens:
         Number of special tokens included in a token sequence.
     n_segments:
@@ -408,9 +409,9 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
             self.pos_embed.weight[1:].copy_(torch.from_numpy(pos_embed).float())
 
     def forward(self,
-                tokens: torch.Tensor,
-                segments: torch.Tensor,
                 positions: torch.Tensor,
+                segments: torch.Tensor,
+                tokens: torch.Tensor,
                 masks: Optional[Union[List[torch.Tensor], torch.Tensor]]=None,
                 masks_attention: Optional[torch.Tensor]=None 
                 ) -> torch.Tensor:
@@ -421,14 +422,14 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
 
             Parameters
             -----------
-            tokens:
-                Tensor containing input tokens with shape (BATCH_SIZE, SEQ_LEN).
-            segments:
-                Tensor containing segment labels with shape (BATCH_SIZE,
-                SEQ_LEN).
             positions:
                 Tensor containing position labels with shape (BATCH_SIZE,
                 SEQ_LEN)
+            segments:
+                Tensor containing segment labels with shape (BATCH_SIZE,
+                SEQ_LEN).
+            tokens:
+                Tensor containing input tokens with shape (BATCH_SIZE, SEQ_LEN).
             masks:
                 List of N_MASKS tensors containing indices (within the sequence)
                 of tokens to keep with shape (BATCH_SIZE, MASK_SIZE).
@@ -448,17 +449,13 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
                 if not isinstance(masks, list):
                     masks = [masks]
 
-            # Get token embeddings for sequence of tokens
-            token_emb = self.token_embed(tokens)
-
-            # Get segment embeddings
-            seg_emb = self.seg_embed(segments)
-
-            # Get positional embeddings
+            # Get positional, segment and token embeddings
             pos_emb = self.pos_embed(positions)
+            seg_emb = self.seg_embed(segments)
+            token_emb = self.token_embed(tokens)
             
             # Add positional and segment embeddings to token embeddings
-            x = token_emb + seg_emb + pos_emb
+            x = pos_emb + seg_emb + token_emb
 
             B, N, D = x.shape # B: BATCH_SIZE, N: SEQ_LEN, D: EMBED_DIM
                 
@@ -476,9 +473,9 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
 
     @torch.no_grad()
     def return_multi_layer_emb(self,
-                               tokens: torch.Tensor,
-                               segments: torch.Tensor,
                                positions: torch.Tensor,
+                               segments: torch.Tensor,
+                               tokens: torch.Tensor,
                                masks: Optional[Union[
                                    List[torch.Tensor], torch.Tensor]]=None,
                                masks_attention: Optional[torch.Tensor]=None, 
@@ -490,12 +487,12 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
 
         Parameters
         -----------
-        tokens:
-            Tensor containing input tokens with shape (BATCH_SIZE, SEQ_LEN). 
-        segments:
-            Tensor containing segment labels with shape (BATCH_SIZE, SEQ_LEN).
         positions:
             Tensor containing position labels with shape (BATCH_SIZE, SEQ_LEN).
+        segments:
+            Tensor containing segment labels with shape (BATCH_SIZE, SEQ_LEN).
+        tokens:
+            Tensor containing input tokens with shape (BATCH_SIZE, SEQ_LEN).
         masks:
             List of N_MASKS tensors containing indices (within the sequence) of
             tokens to keep with shape (BATCH_SIZE, MASK_SIZE).
@@ -518,21 +515,17 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
         # Replace special tokens (except <cls> tokens) with pad tokens for
         # inference
         if self.n_special_tokens > 2:
-            tokens[:, self.max_cls_tokens:self.n_special_tokens] = 0
-            segments[:, self.max_cls_tokens:self.n_special_tokens] = 0
             positions[:, self.max_cls_tokens:self.n_special_tokens] = 0
+            segments[:, self.max_cls_tokens:self.n_special_tokens] = 0
+            tokens[:, self.max_cls_tokens:self.n_special_tokens] = 0
 
-        # Get token embeddings for sequence of tokens
+        # Get positional, segment and token embeddings
+        pos_emb = self.pos_embed(positions)
+        seg_emb = self.seg_embed(segments)
         token_emb = self.token_embed(tokens)
 
-        # Get segment embeddings
-        seg_emb = self.seg_embed(segments)
-
-        # Get positional embeddings
-        pos_emb = self.pos_embed(positions)
-
         # Add positional and segment embeddings to token embeddings
-        x = token_emb + seg_emb + pos_emb
+        x = pos_emb + seg_emb + token_emb
 
         B, N, D = x.shape
 
@@ -558,10 +551,12 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
     expression counts.
     """
     def __init__(self,
+                 n_special_values: int,
                  n_value_bins: int=100,
                  **base_encoder_kwargs,
                  ):
         super().__init__(**base_encoder_kwargs)
+        self.n_special_values = n_special_values
         self.n_value_bins = n_value_bins
 
         # Initialize value embeddings and value embedding weight projection
@@ -569,7 +564,7 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
         self.value_embed = nn.Embedding(self.n_value_bins,
                                         self.embed_dim)
         self.special_value_embed = nn.Embedding(
-            2 + self.max_special_tokens, # include <pad> and zero expression
+            2 + self.n_special_values, # include <pad> and zero expression
             self.embed_dim,
             padding_idx=0)
         self.value_emb_weights_projection = ValueEmbWeightsProjection(
@@ -616,10 +611,8 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
                 if not isinstance(masks, list):
                     masks = [masks]
 
-            # Get embeddings for sequence of tokens
+            # Get embeddings for sequence of tokens and segments
             token_emb = self.token_embed(tokens)
-
-            # Get embeddings for sequence of segments
             seg_emb = self.seg_embed(segments)
 
             # Get value embeddings
@@ -676,6 +669,9 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
             Tensor containing input tokens with shape (BATCH_SIZE, SEQ_LEN). 
         segments:
             Tensor containing segment labels with shape (BATCH_SIZE, SEQ_LEN).
+        counts:
+            Tensor containing the counts/values corresponding to tokens with
+            shape (BATCH_SIZE, SEQ_LEN).        
         masks:
             List of N_MASKS tensors containing indices (within the sequence) of
             tokens to keep with shape (BATCH_SIZE, MASK_SIZE).
@@ -696,15 +692,13 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
                 masks = [masks]
 
         # During inference, replace special tokens (except <cls> tokens) with
-        # pad tokens
+        # <pad> tokens
         if self.n_special_tokens > 2:
-            tokens[:, 2:self.n_special_tokens] = 0
-            segments[:, 2:self.n_special_tokens] = 0
+            tokens[:, self.max_cls_tokens:self.n_special_tokens] = 0
+            segments[:, self.max_cls_tokens:self.n_special_tokens] = 0
 
-        # Get embeddings for sequence of tokens
+        # Get embeddings for sequence of tokens and segments
         token_emb = self.token_embed(tokens)
-
-        # Get embeddings for sequence of segments
         seg_emb = self.seg_embed(segments)
 
         # Get value embeddings
@@ -759,13 +753,13 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
 
     def forward(self,
                 z: torch.Tensor,
-                segments: torch.Tensor,
                 positions: torch.Tensor,
+                segments: torch.Tensor,
                 enc_pos_embed: nn.Embedding,
                 enc_seg_embed: nn.Embedding,
                 masks_enc: Union[List[torch.Tensor], torch.Tensor],
                 masks_pred: Union[List[torch.Tensor], torch.Tensor],
-                masks_attention_pred: torch.Tensor=None,
+                masks_attention: torch.Tensor=None,
                 ) -> torch.Tensor:
             """
             Run predictor forward pass for a batch of input tokens.
@@ -775,11 +769,11 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
             z:
                 Embeddings from the encoder with shape (
                 BATCH_SIZE*N_CONTEXT_MASKS, CONTEXT_MASK_SIZE, EMBED_DIM).
-            segments:
-                Tensor containing segment labels with shape (BATCH_SIZE,
-                SEQ_LEN).
             positions:
                 Tensor containing position labels with shape (BATCH_SIZE,
+                SEQ_LEN).
+            segments:
+                Tensor containing segment labels with shape (BATCH_SIZE,
                 SEQ_LEN).
             enc_pos_embed:
                 Positional embeddings from the encoder.
@@ -793,9 +787,10 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
                 List of N_TARGET_MASKS tensors containing indices (within the
                 sequence) of tokens to keep with shape (BATCH_SIZE,
                 TARGET_MASK_SIZE).
-            masks_attention_pred:
-                An attention tensor that controls how different tokens attend to
+            masks_attention:
+                An attention mask that controls how different tokens attend to
                 each other within a sequence.
+
             Returns
             -----------
             z:
@@ -812,40 +807,39 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
             if not isinstance(masks_pred, list):
                 masks_pred = [masks_pred]
 
-            # Retrieve batch size
-            B = len(z) // len(masks_enc) # len(x) is BATCH_SIZE*N_CONTEXT_MASKS
+            # Retrieve batch size (len(z) is BATCH_SIZE*N_CONTEXT_MASKS)
+            B = len(z) // len(masks_enc)
 
-            # Map from encoder dim to pedictor dim
+            # MLP projection layer
             z = self.predictor_embed(z)
 
-            # Add positional embeddings to tokens from context masks
+            # Add positional embeddings to tokens from context masks (only
+            # keep context mask indices and sum positional and segment
+            # embeddings without token embeddings)
             z_pos_embed = enc_pos_embed(positions)
             z_seg_embed = enc_seg_embed(segments)
-            z += apply_masks(z_pos_embed, masks_enc) # only keep pos from encoder
-                                                    # masks
+            z += apply_masks(z_pos_embed, masks_enc)
+            z += apply_masks(z_seg_embed, masks_enc)
 
-            z += apply_masks(z_seg_embed, masks_enc) # only keep seg from encoder
-                                                    # masks
+            _, N_ctxt, D = z.shape # N_ctxt: CONTEXT_MASK_SIZE, D: EMBED_DIM
 
-            _, N_ctxt, D = z.shape # N_ctxt: CONTEXT_MASK_SIZE, D: PRED_EMBED_DIM
-
-            # Create positional embeddings for tokens from target masks
+            # Create positional embeddings for tokens from target masks (only
+            # keep target mask indices and sum positional and segment embeddings
+            # without token embeddings; the latter are to be predicted)
             pos_embs = enc_pos_embed(positions)
             seg_embs = enc_seg_embed(segments)
-
-            pos_embs = apply_masks(pos_embs, masks_pred) # only keep pos from
-                                                        # predictor masks
-            seg_embs = apply_masks(seg_embs, masks_pred) # only keep seg from
-                                                        # predictor masks
+            pos_embs = apply_masks(pos_embs, masks_pred)
+            seg_embs = apply_masks(seg_embs, masks_pred)
             
+            # Repeat embeddings for all context masks
             pos_embs = repeat_interleave_batch(
                 pos_embs,
                 B,
-                repeat=len(masks_enc)) # repeat pos embeddings for all encoder masks
+                repeat=len(masks_enc))
             seg_embs = repeat_interleave_batch(
                 seg_embs,
                 B,
-                repeat=len(masks_enc)) # repeat seg embeddings for all encoder masks
+                repeat=len(masks_enc))
 
             # Repeat mask token for all batches, masks and positions from
             # predictor masks
@@ -855,7 +849,7 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
                 1)
 
             # Add positional and segment embeddings to mask tokens                  
-            pred_tokens += seg_embs + pos_embs
+            pred_tokens += pos_embs + seg_embs
 
             # Repeat context embeddings for all target masks
             z = z.repeat(len(masks_pred), 1, 1)
@@ -866,13 +860,13 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
 
             # Run forward prop
             for blk in self.predictor_blocks:
-                z = blk(z, masks=masks_attention_pred)
+                z = blk(z, masks=masks_attention)
             z = self.predictor_norm(z)
 
             # Return predictions for (target) mask tokens
             z = z[:, N_ctxt:]
 
-            # Map back from predictor dim to encoder dim
+            # MLP projection layer
             z = self.predictor_proj(z)
 
             return z
@@ -883,20 +877,19 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
     GeneTransformerCountPredictor class.
     """
     def __init__(self,
-                 pos_learnable: bool=False,
                  **base_predictor_kwargs
                  ):
         super().__init__(**base_predictor_kwargs)
 
     def forward(self,
                 z: torch.Tensor,
-                segments: torch.Tensor,
                 tokens: torch.Tensor,
+                segments: torch.Tensor,
                 enc_token_embed: nn.Embedding,
                 enc_seg_embed: nn.Embedding,
                 masks_enc: Union[List[torch.Tensor], torch.Tensor],
                 masks_pred: Union[List[torch.Tensor], torch.Tensor],
-                masks_attention_pred: torch.Tensor=None,
+                masks_attention: torch.Tensor=None,
                 ) -> torch.Tensor:
             """
             Run predictor forward pass for a batch of input tokens.
@@ -906,11 +899,15 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
             z:
                 Embeddings from the encoder with shape (
                 BATCH_SIZE*N_CONTEXT_MASKS, CONTEXT_MASK_SIZE, EMBED_DIM).
+            tokens:
+                Tensor containing tokens with shape (BATCH_SIZE, SEQ_LEN).
             segments:
                 Tensor containing segment labels with shape (BATCH_SIZE,
                 SEQ_LEN).
-            tokens:
-                Tensor containing tokens with shape (BATCH_SIZE, SEQ_LEN).
+            enc_token_embed:
+                Token embeddings from the encoder.
+            enc_seg_embed:
+                Segment embeddings from the encoder.
             masks_enc:
                 List of N_CONTEXT_MASKS tensors containing indices (within the
                 sequence) of tokens to keep with shape (BATCH_SIZE,
@@ -919,9 +916,10 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
                 List of N_TARGET_MASKS tensors containing indices (within the
                 sequence) of tokens to keep with shape (BATCH_SIZE,
                 TARGET_MASK_SIZE).
-            masks_attention_pred:
-                An attention tensor that controls how different tokens attend to
+            masks_attention:
+                An attention mask that controls how different tokens attend to
                 each other within a sequence.
+
             Returns
             -----------
             z:
@@ -938,42 +936,41 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
             if not isinstance(masks_pred, list):
                 masks_pred = [masks_pred]
 
-            # Retrieve batch size
-            B = len(z) // len(masks_enc) # len(x) is BATCH_SIZE*N_CONTEXT_MASKS
+            # Retrieve batch size (len(z) is BATCH_SIZE*N_CONTEXT_MASKS)
+            B = len(z) // len(masks_enc)
 
-            # Map from encoder dim to pedictor dim
+            # MLP projection layer
             z = self.predictor_embed(z)
 
+            # Add "positional" embeddings to tokens from context masks (only
+            # keep context mask indices and sum token and segment embeddings
+            # without value embeddings)
+            z_token_embs = enc_token_embed(tokens)
+            z_seg_embs = enc_seg_embed(segments)
+            z += apply_masks(z_token_embs, masks_enc)
+            z += apply_masks(z_seg_embs, masks_enc)
+
+            _, N_ctxt, D = z.shape # N_ctxt: CONTEXT_MASK_SIZE, D: EMBED_DIM
+
+            # Create "positional" embeddings for tokens from target masks (only
+            # keep target mask indices and sum token and segment embeddings
+            # without value embeddings; the latter are to be predicted)
             token_embs = enc_token_embed(tokens)
             seg_embs = enc_seg_embed(segments)
-
-            # Add positional embeddings to tokens from context masks
-            z_gene_embed = enc_token_embed(tokens)
-            z_seg_embed = enc_seg_embed(segments)
-            z += apply_masks(z_gene_embed, masks_enc) # only keep pos from encoder
-                                                    # masks
-
-            z += apply_masks(z_seg_embed, masks_enc) # only keep seg from encoder
-                                                    # masks
-
-            _, N_ctxt, D = z.shape # N_ctxt: CONTEXT_MASK_SIZE, D: PRED_EMBED_DIM
-
-            # Create positional embeddings for tokens from target masks
-            token_embs = apply_masks(token_embs, masks_pred) # only keep pos from
-                                                        # predictor masks
-            seg_embs = apply_masks(seg_embs, masks_pred) # only keep seg from
-                                                        # predictor masks
-            
+            token_embs = apply_masks(token_embs, masks_pred)
+            seg_embs = apply_masks(seg_embs, masks_pred)
+    
+            # Repeat embeddings for all context masks
             token_embs = repeat_interleave_batch(
                 token_embs,
                 B,
-                repeat=len(masks_enc)) # repeat pos embeddings for all encoder masks
+                repeat=len(masks_enc))
             seg_embs = repeat_interleave_batch(
                 seg_embs,
                 B,
-                repeat=len(masks_enc)) # repeat seg embeddings for all encoder masks
+                repeat=len(masks_enc))
 
-            # Repeat mask token for all batches, masks and positions from
+            # Repeat mask token for all batches, masks and "positions" from
             # predictor masks
             pred_tokens = self.mask_token.repeat(
                 token_embs.size(0), # BATCH_SIZE * N_CONTEXT_MASKS * N_TARGET_MASKS
@@ -992,22 +989,23 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
 
             # Run forward prop
             for blk in self.predictor_blocks:
-                z = blk(z, masks=masks_attention_pred)
+                z = blk(z, masks=masks_attention)
             z = self.predictor_norm(z)
 
             # Return predictions for (target) mask tokens
             z = z[:, N_ctxt:]
 
-            # Map back from predictor dim to encoder dim
+            # MLP projection layer
             z = self.predictor_proj(z)
 
             return z
 
 
 def init_gt_encoder(encoder_type: Literal['rank', 'counts'],
-               **encoder_kwargs
-               ) -> Union[GeneTransformerRankEncoder,
-                          GeneTransformerCountEncoder]:
+                    n_special_values: Optional[int]=None,
+                    **encoder_kwargs
+                    ) -> Union[GeneTransformerRankEncoder,
+                                GeneTransformerCountEncoder]:
     if encoder_type == 'rank':
         model = GeneTransformerRankEncoder(
             num_heads=8,
@@ -1017,6 +1015,7 @@ def init_gt_encoder(encoder_type: Literal['rank', 'counts'],
             **encoder_kwargs)
     elif encoder_type == 'counts':
         model = GeneTransformerCountEncoder(
+            n_special_values=n_special_values,
             num_heads=8,
             mlp_ratio=4,
             qkv_bias=True,

@@ -98,6 +98,7 @@ def train(args: dict,
     # Load params from config file
     dataset_name = args['data']['dataset_name']
     tokenizer_type = args['data']['tokenizer_type']
+    n_special_values = args['data']['n_special_values']
     vocab_size = args['data']['vocab_size']
     seq_len_cell = args['data']['seq_len_cell']
     seq_len_neighborhood = args['data']['seq_len_neighborhood']
@@ -127,6 +128,7 @@ def train(args: dict,
         controlled_attention_pattern = torch.tensor(args['mask']['controlled_attention_pattern'])
     else:
         controlled_attention_pattern = args['mask']['controlled_attention_pattern']
+    restrict_special_attention = args['mask']['restrict_special_attention']
 
     warmup = args['optimization']['warmup']
     num_epochs = args['optimization']['epochs']
@@ -221,6 +223,7 @@ def train(args: dict,
         max_special_tokens=max_special_tokens,
         n_special_tokens=n_special_tokens,
         n_segments=n_segments,
+        n_special_values=n_special_values,
         enc_emb_dim=enc_emb_dim,
         enc_depth=enc_depth,
         pred_emb_dim=pred_emb_dim,
@@ -239,7 +242,8 @@ def train(args: dict,
             n_special_tokens=n_special_tokens,
             max_cls_tokens=max_cls_tokens,
             per_block_mask_ratio=per_block_mask_ratio,
-            controlled_attention_pattern=controlled_attention_pattern)
+            controlled_attention_pattern=controlled_attention_pattern,
+            restrict_special_attention=restrict_special_attention)
     else:
         mask_collator = RandomMaskCollator(
             n_targets=n_targets,
@@ -341,7 +345,6 @@ def train(args: dict,
             scheduler.step()
             wd_scheduler.step()
             next(momentum_scheduler)
-            mask_collator.step()
 
     def save_checkpoint(epoch):
         save_dict = {'encoder': encoder.state_dict(),
@@ -371,7 +374,7 @@ def train(args: dict,
         maskB_meter = AverageMeter()
         time_meter = AverageMeter()
 
-        for itr, (udata, masks_enc, masks_pred, masks_attention, masks_controlled_attention) in enumerate(
+        for itr, (udata, masks_enc, masks_pred, masks_attention) in enumerate(
         train_loader):
             tokens = udata[0].to(device, non_blocking=True)
             segments = udata[1].to(device, non_blocking=True)
@@ -381,41 +384,23 @@ def train(args: dict,
             masks_pred = [u.to(device, non_blocking=True) for u in masks_pred]
             masks_attention = masks_attention.to(device, non_blocking=True)
 
-            """
-            print(torch.count_nonzero(tokens[0]))
-            if masks_enc[0].shape[1] < 3:
-                print("CONTEXT")
-                print(masks_enc[0].shape)
-                print(masks_enc)
-            if masks_pred[0].shape[1] < 3:
-                print("TARGET")
-                print(masks_pred[0].shape)
-                print(masks_pred)
-            """
+            #print(masks_attention[0, 0, 0, :])
+            #print(masks_attention[0, 0, 1, :])
+            #print(masks_attention[0, 0, 2, :])
 
             # masks_pred = [masks_pred[0], masks_pred[-1]] # TEMP TODO
 
             if args['mask']['controlled_attention_pattern'] is not None:
-                masks_controlled_attention = masks_controlled_attention.to(device, non_blocking=True)
-                if args['mask']['controlled_attention_type'] == 'enc':
-                    masks_attention_enc = create_controlled_mask_context_target(
-                        masks_controlled_attention,
+                masks_attention_enc = create_controlled_mask_context_target(
+                    masks_attention,
+                    context_masks=masks_enc)
+                if args['mask']['controlled_attention_pred']:
+                    masks_attention_pred = create_controlled_mask_context_target(
+                        masks_attention,
+                        target_masks=masks_pred,
                         context_masks=masks_enc)
+                else:
                     masks_attention_pred = None
-                elif args['mask']['controlled_attention_type'] == 'pred':
-                    masks_attention_pred = create_controlled_mask_context_target(
-                        masks_controlled_attention,
-                        target_masks=masks_pred,
-                        context_masks=masks_enc)
-                    masks_attention_enc = None
-                elif args['mask']['controlled_attention_type'] == 'enc_pred':
-                    masks_attention_enc = create_controlled_mask_context_target(
-                        masks_controlled_attention,
-                        context_masks=masks_enc)
-                    masks_attention_pred = create_controlled_mask_context_target(
-                        masks_controlled_attention,
-                        target_masks=masks_pred,
-                        context_masks=masks_enc)
             else:
                 masks_attention_enc = None
                 masks_attention_pred = None
@@ -434,12 +419,12 @@ def train(args: dict,
                             h = target_encoder(tokens=tokens,
                                                segments=segments,
                                                positions=positions,
-                                               masks_attention=(masks_controlled_attention if 'enc' in args['mask']['controlled_attention_type'] else masks_attention))
+                                               masks_attention=masks_attention)
                         elif gt_type == 'counts':
                             h = target_encoder(tokens=tokens,
                                                segments=segments,
                                                counts=counts,
-                                               masks_attention=(masks_controlled_attention if 'enc' in args['mask']['controlled_attention_type'] else masks_attention))
+                                               masks_attention=masks_attention)
 
                         # Normalize over feature dim
                         h = F.layer_norm(h, (h.size(-1),))
@@ -467,9 +452,9 @@ def train(args: dict,
                     # minmum context size in the batch after removal of
                     # overlapping targets
                     if gt_type == 'rank':
-                        z = encoder(tokens=tokens,
+                        z = encoder(positions=positions,
                                     segments=segments,
-                                    positions=positions,
+                                    tokens=tokens,
                                     masks=masks_enc,
                                     masks_attention=masks_attention_enc)                       
                     elif gt_type == 'counts':
@@ -482,27 +467,27 @@ def train(args: dict,
                     # Predictor forward pass with output dim (BATCH_SIZE *
                     # N_TARGETS * N_CONTEXTS, TARGET_MASK_SIZE, EMB_DIM)
                     if gt_type == 'rank':
-                        x = predictor(z=z,
-                                      segments=segments,
+                        z = predictor(z=z,
                                       positions=positions,
+                                      segments=segments,
                                       masks_enc=masks_enc,
                                       masks_pred=masks_pred,
                                       enc_seg_embed=encoder.module.seg_embed,
                                       enc_pos_embed=encoder.module.pos_embed,
-                                      masks_attention_pred=masks_attention_pred)
+                                      masks_attention=masks_attention_pred)
                     elif gt_type == 'counts':
-                        x = predictor(z=z,
-                                      segments=segments,
+                        z = predictor(z=z,
                                       tokens=tokens,
+                                      segments=segments,
                                       masks_enc=masks_enc,
                                       masks_pred=masks_pred,
                                       enc_seg_embed=encoder.module.seg_embed,
                                       enc_token_embed=encoder.module.token_embed,
-                                      masks_attention_pred=masks_attention_pred)
-                    return x
+                                      masks_attention=masks_attention_pred)
+                    return z
 
-                def loss_fn(x, h):
-                    loss = F.smooth_l1_loss(x, h)
+                def loss_fn(z, h):
+                    loss = F.smooth_l1_loss(z, h)
                     loss = AllReduce.apply(loss)
                     return loss
 
@@ -510,8 +495,8 @@ def train(args: dict,
                 with torch.cuda.amp.autocast(dtype=torch.bfloat16,
                                              enabled=use_bfloat16):
                     h = forward_target()
-                    x = forward_context()
-                    loss = loss_fn(x, h)
+                    z = forward_context()
+                    loss = loss_fn(z, h)
 
                 # Step 2: backward pass and step
                 if use_bfloat16:

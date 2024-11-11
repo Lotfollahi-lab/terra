@@ -110,6 +110,7 @@ def infer(args: dict,
     pin_memory = args['data']['pin_memory']
     num_workers = args['data']['num_workers']
     tokenizer_type = args['data']['tokenizer_type']
+    n_special_values = args['data']['n_special_values']
     seq_len_cell = args['data']['seq_len_cell']
     seq_len_neighborhood = args['data']['seq_len_neighborhood']
     n_segments = args['data']['n_segments']
@@ -124,6 +125,7 @@ def infer(args: dict,
         controlled_attention_pattern = torch.tensor(args['mask']['controlled_attention_pattern'])
     else:
         controlled_attention_pattern = args['mask']['controlled_attention_pattern']
+    restrict_special_attention = args['mask']['restrict_special_attention']
 
     r_file = args['state']['read_checkpoint']
     tag = args['state']['write_tag']
@@ -178,6 +180,7 @@ def infer(args: dict,
         max_special_tokens=max_special_tokens,
         n_special_tokens=n_special_tokens,
         n_segments=n_segments,
+        n_special_values=n_special_values,
         enc_emb_dim=enc_emb_dim,
         enc_depth=enc_depth,
         pred_emb_dim=pred_emb_dim,
@@ -199,8 +202,9 @@ def infer(args: dict,
             max_special_tokens=max_special_tokens,
             n_special_tokens=n_special_tokens,
             max_cls_tokens=max_cls_tokens,
-            per_block_mask_ratio = per_block_mask_ratio,
-            controlled_attention_pattern = controlled_attention_pattern)
+            per_block_mask_ratio=per_block_mask_ratio,
+            controlled_attention_pattern=controlled_attention_pattern,
+            restrict_special_attention=restrict_special_attention)
     else:
         mask_collator = RandomMaskCollator(
             n_targets=n_targets,
@@ -254,7 +258,7 @@ def infer(args: dict,
     all_cell_gene_emb_dict = {}
     all_neighborhood_gene_emb_dict = {}
 
-    for itr, (udata, masks_enc, masks_pred, masks_attention, masks_controlled_attention) in tqdm(enumerate(loader)):
+    for itr, (udata, masks_enc, masks_pred, masks_attention) in tqdm(enumerate(loader)):
         # Load gene tokens and segmentation label to the specified device
         tokens = udata[0].to(device, non_blocking=True)
         segments = udata[1].to(device, non_blocking=True)
@@ -262,19 +266,8 @@ def infer(args: dict,
         counts = udata[3].to(device, non_blocking=True)
         masks_attention = masks_attention.to(device, non_blocking=True)
 
-        if args['mask']['controlled_attention_pattern'] is not None:
-            masks_controlled_attention = masks_controlled_attention.to(device, non_blocking=True)
-
         # Collect cell IDs to join metadata
         all_cell_ids.extend(udata[-1])
-
-        #torch.set_printoptions(threshold=torch.inf)
-        #print(masks_controlled_attention[0, 0, -1, :])
-        #print(masks_controlled_attention[0, 0, 0, :])
-        #print(masks_controlled_attention[0, 0, 1, :])
-        #print(masks_controlled_attention[0, 0, 102, :])
-        #print(masks_controlled_attention[0, 0, -1, :])
-        #raise ValueError
 
         # Retrieve gene embeddings from different layers
         with torch.cuda.amp.autocast(dtype=torch.bfloat16,
@@ -284,21 +277,21 @@ def infer(args: dict,
                 mask_indices = torch.isin(
                     tokens,
                     torch.tensor(masked_tokens, device=tokens.device)
-                    ).unsqueeze(1).unsqueeze(1)
+                    ).unsqueeze(1).unsqueeze(1).expand(-1, -1, 1108, -1)
                 masks_attention[mask_indices] = 0
 
             if gt_type == 'rank':
                 emb_list = target_encoder.module.return_multi_layer_emb(
-                    tokens=tokens,
-                    segments=segments,
                     positions=positions,
-                    masks_attention=(masks_controlled_attention if 'enc' in args['mask']['controlled_attention_type'] else masks_attention))
+                    segments=segments,
+                    tokens=tokens,
+                    masks_attention=masks_attention)
             elif gt_type == 'counts':
                 emb_list = target_encoder.module.return_multi_layer_emb(
                     tokens=tokens,
                     segments=segments,
                     counts=counts,
-                    masks_attention=(masks_controlled_attention if 'enc' in args['mask']['controlled_attention_type'] else masks_attention))
+                    masks_attention=masks_attention)
         
             if feature_norm:
                 # Normalize last layer like in training
