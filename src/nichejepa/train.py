@@ -374,7 +374,7 @@ def train(args: dict,
         maskB_meter = AverageMeter()
         time_meter = AverageMeter()
 
-        for itr, (udata, masks_enc, masks_pred, masks_attention) in enumerate(
+        for itr, (udata, masks_enc, masks_pred, masks_pred_special, masks_attention) in enumerate(
         train_loader):
             tokens = udata[0].to(device, non_blocking=True)
             segments = udata[1].to(device, non_blocking=True)
@@ -382,6 +382,7 @@ def train(args: dict,
             counts = udata[3].to(device, non_blocking=True)
             masks_enc = [u.to(device, non_blocking=True) for u in masks_enc]
             masks_pred = [u.to(device, non_blocking=True) for u in masks_pred]
+            masks_pred_special = [u.to(device, non_blocking=True) for u in masks_pred_special]
             masks_attention = masks_attention.to(device, non_blocking=True)
 
             #print(masks_attention[0, 0, 0, :])
@@ -434,7 +435,7 @@ def train(args: dict,
                         # EMB_SIZE)
                         h = apply_masks(
                             h,
-                            masks_pred)
+                            masks_pred_special)
                         B = len(h)
 
                         # Repeat targets if multiple contexts; output dim 
@@ -444,6 +445,7 @@ def train(args: dict,
                             h,
                             B,
                             repeat=len(masks_enc))
+
                         return h
 
                 def forward_context():
