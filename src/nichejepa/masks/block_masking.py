@@ -108,7 +108,8 @@ class BlockMaskCollator:
 
         # Get non-zero indices and segments excluding special tokens
         ns_tokens = tokens[self.n_special_tokens:]
-        nz_ns_indices = torch.nonzero(ns_tokens).squeeze()
+        nz_ns_indices = torch.nonzero(ns_tokens).add_(
+            self.n_special_tokens).squeeze()
         total_nz_ns = len(nz_ns_indices)
         ns_segments = segments[self.n_special_tokens:]
         nz_ns_segments = ns_segments[ns_segments != 0]
