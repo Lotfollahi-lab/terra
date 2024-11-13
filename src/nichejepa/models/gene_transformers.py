@@ -860,7 +860,9 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
 
             # Concatenate context embeddings and mask tokens (both incl. pos
             # embedding)
-            z = torch.cat([pred_tokens, z], dim=1)
+            z = torch.cat([z[:, :self.n_special_tokens, :],
+                           pred_tokens,
+                           z[:, self.n_special_tokens:, :]], dim=1)
 
             # Run forward prop
             for blk in self.predictor_blocks:
@@ -868,7 +870,7 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
             z = self.predictor_norm(z)
 
             # Return predictions for (target) mask tokens
-            z = z[:, :-N_ctxt]
+            z = z[:, :-N_ctxt+self.n_special_tokens]
 
             # MLP projection layer
             z = self.predictor_proj(z)
@@ -893,6 +895,7 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
                 enc_seg_embed: nn.Embedding,
                 masks_enc: Union[List[torch.Tensor], torch.Tensor],
                 masks_pred: Union[List[torch.Tensor], torch.Tensor],
+                keep_tokens_special: int,
                 masks_attention: torch.Tensor=None,
                 ) -> torch.Tensor:
             """
@@ -989,7 +992,9 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
 
             # Concatenate context embeddings and mask tokens (both incl. pos
             # embedding)
-            z = torch.cat([z[:, :3, :], pred_tokens, z[:, 3:, :]], dim=1) # 3 temp
+            z = torch.cat([z[:, :keep_tokens_special, :],
+                           pred_tokens,
+                           z[:, keep_tokens_special:, :]], dim=1) # temp
 
             # Run forward prop
             for blk in self.predictor_blocks:
@@ -997,7 +1002,7 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
             z = self.predictor_norm(z)
 
             # Return predictions for (target) mask tokens
-            z = z[:, :-N_ctxt+3]
+            z = z[:, :-N_ctxt+keep_tokens_special]
 
             # MLP projection layer
             z = self.predictor_proj(z)

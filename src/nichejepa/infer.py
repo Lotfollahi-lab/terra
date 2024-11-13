@@ -258,7 +258,7 @@ def infer(args: dict,
     all_cell_gene_emb_dict = {}
     all_neighborhood_gene_emb_dict = {}
 
-    for itr, (udata, _, _, _, masks_attention) in tqdm(enumerate(loader)):
+    for itr, (udata, _, _, _, masks_attention, _) in tqdm(enumerate(loader)):
         # Load gene tokens and segmentation label to the specified device
         tokens = udata[0].to(device, non_blocking=True)
         segments = udata[1].to(device, non_blocking=True)

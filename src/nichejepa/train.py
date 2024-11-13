@@ -374,7 +374,7 @@ def train(args: dict,
         maskB_meter = AverageMeter()
         time_meter = AverageMeter()
 
-        for itr, (udata, masks_enc, masks_pred, masks_pred_special, masks_attention) in enumerate(
+        for itr, (udata, masks_enc, masks_pred, masks_pred_special, masks_attention, keep_tokens_special) in enumerate(
         train_loader):
             tokens = udata[0].to(device, non_blocking=True)
             segments = udata[1].to(device, non_blocking=True)
@@ -476,7 +476,8 @@ def train(args: dict,
                                       masks_pred=masks_pred,
                                       enc_seg_embed=encoder.module.seg_embed,
                                       enc_pos_embed=encoder.module.pos_embed,
-                                      masks_attention=masks_attention_pred)
+                                      masks_attention=masks_attention_pred,
+                                      keep_tokens_special=keep_tokens_special)
                     elif gt_type == 'counts':
                         z = predictor(z=z,
                                       tokens=tokens,
@@ -485,7 +486,8 @@ def train(args: dict,
                                       masks_pred=masks_pred,
                                       enc_seg_embed=encoder.module.seg_embed,
                                       enc_token_embed=encoder.module.token_embed,
-                                      masks_attention=masks_attention_pred)
+                                      masks_attention=masks_attention_pred,
+                                      keep_tokens_special=keep_tokens_special)
                     return z
 
                 def loss_fn(z, h):

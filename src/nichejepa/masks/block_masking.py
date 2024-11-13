@@ -130,7 +130,7 @@ class BlockMaskCollator:
             (cls_tokens, non_cls_special_tokens))
         special_mask[special_token_indices] = 1
         special_mask = torch.nonzero(special_mask).squeeze()
-        special_mask = special_mask[torch.randperm(len(special_mask))]
+        special_mask = special_mask[torch.randperm(len(special_mask))] # temp
         special_masks = [special_mask]
 
         # Keep track of the minimum number of target tokens across blocks
@@ -313,4 +313,4 @@ class BlockMaskCollator:
             torch.cat((t1, t2), dim=1) for t1, t2 in zip(
                 collated_masks_special * len(collated_masks_target), collated_masks_target)]
                
-        return collated_batch, collated_masks_context, collated_masks_target, collated_masks_special_target, collated_masks_attention
+        return collated_batch, collated_masks_context, collated_masks_target, collated_masks_special_target, collated_masks_attention, keep_tokens_special
