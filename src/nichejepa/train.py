@@ -236,6 +236,7 @@ def train(args: dict,
     if block_masking:
        mask_collator = BlockMaskCollator(
             n_targets=n_targets,
+            n_contexts=n_contexts,
             seq_len_cell=seq_len_cell,
             seq_len_neighborhood=seq_len_neighborhood,
             max_special_tokens=max_special_tokens,
@@ -374,7 +375,7 @@ def train(args: dict,
         maskB_meter = AverageMeter()
         time_meter = AverageMeter()
 
-        for itr, (udata, masks_enc, masks_pred, masks_pred_special, masks_attention, keep_tokens_special) in enumerate(
+        for itr, (udata, masks_enc, masks_pred, masks_attention, keep_tokens_special) in enumerate(
         train_loader):
             tokens = udata[0].to(device, non_blocking=True)
             segments = udata[1].to(device, non_blocking=True)
@@ -382,7 +383,6 @@ def train(args: dict,
             counts = udata[3].to(device, non_blocking=True)
             masks_enc = [u.to(device, non_blocking=True) for u in masks_enc]
             masks_pred = [u.to(device, non_blocking=True) for u in masks_pred]
-            masks_pred_special = [u.to(device, non_blocking=True) for u in masks_pred_special]
             masks_attention = masks_attention.to(device, non_blocking=True)
 
             #print(masks_attention[0, 0, 0, :])
@@ -435,16 +435,8 @@ def train(args: dict,
                         # EMB_SIZE)
                         h = apply_masks(
                             h,
-                            masks_pred_special)
+                            masks_pred)
                         B = len(h)
-
-                        # Repeat targets if multiple contexts; output dim 
-                        # (BATCH_SIZE * N_TARGETS * N_CONTEXTS, 
-                        # TARGET_MASK_SIZE, EMB_DIM)
-                        h = repeat_interleave_batch(
-                            h,
-                            B,
-                            repeat=len(masks_enc))
 
                         return h
 

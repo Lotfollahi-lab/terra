@@ -197,6 +197,7 @@ def infer(args: dict,
     if block_masking:
        mask_collator = BlockMaskCollator(
             n_targets=n_targets,
+            n_contexts=n_contexts,
             seq_len_cell=seq_len_cell,
             seq_len_neighborhood=seq_len_neighborhood,
             max_special_tokens=max_special_tokens,
@@ -258,7 +259,7 @@ def infer(args: dict,
     all_cell_gene_emb_dict = {}
     all_neighborhood_gene_emb_dict = {}
 
-    for itr, (udata, _, _, _, masks_attention, _) in tqdm(enumerate(loader)):
+    for itr, (udata, _, _, masks_attention, _) in tqdm(enumerate(loader)):
         # Load gene tokens and segmentation label to the specified device
         tokens = udata[0].to(device, non_blocking=True)
         segments = udata[1].to(device, non_blocking=True)
@@ -277,7 +278,7 @@ def infer(args: dict,
                 mask_indices = torch.isin(
                     tokens,
                     torch.tensor(masked_tokens, device=tokens.device)
-                    ).unsqueeze(1).unsqueeze(1).expand(-1, -1, 1108, -1)
+                    ).unsqueeze(1).unsqueeze(1).expand(-1, -1, 1108, -1) # temp
                 masks_attention[mask_indices] = 0
 
             if gt_type == 'rank':

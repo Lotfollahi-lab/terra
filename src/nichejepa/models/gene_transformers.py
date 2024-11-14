@@ -792,7 +792,6 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
                 List of N_TARGET_MASKS tensors containing indices (within the
                 sequence) of tokens to keep with shape (BATCH_SIZE,
                 TARGET_MASK_SIZE).
-            keep_tokens_special:
             masks_attention:
                 An attention mask that controls how different tokens attend to
                 each other within a sequence.
@@ -837,16 +836,6 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
             pos_embs = apply_masks(pos_embs, masks_pred)
             seg_embs = apply_masks(seg_embs, masks_pred)
             
-            # Repeat embeddings for all context masks
-            pos_embs = repeat_interleave_batch(
-                pos_embs,
-                B,
-                repeat=len(masks_enc))
-            seg_embs = repeat_interleave_batch(
-                seg_embs,
-                B,
-                repeat=len(masks_enc))
-
             # Repeat mask token for all batches, masks and positions from
             # predictor masks
             pred_tokens = self.mask_token.repeat(
@@ -857,14 +846,11 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
             # Add positional and segment embeddings to mask tokens                  
             pred_tokens += pos_embs + seg_embs
 
-            # Repeat context embeddings for all target masks
-            z = z.repeat(len(masks_pred), 1, 1)
-
             # Concatenate context embeddings and mask tokens (both incl. pos
             # embedding)
             z = torch.cat([z[:, :keep_tokens_special, :],
                            pred_tokens,
-                           z[:, keep_tokens_special:, :]], dim=1) # temp
+                           z[:, keep_tokens_special:, :]], dim=1)
 
             # Run forward prop
             for blk in self.predictor_blocks:
@@ -925,7 +911,6 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
                 List of N_TARGET_MASKS tensors containing indices (within the
                 sequence) of tokens to keep with shape (BATCH_SIZE,
                 TARGET_MASK_SIZE).
-            keep_tokens_special:
             masks_attention:
                 An attention mask that controls how different tokens attend to
                 each other within a sequence.
@@ -969,16 +954,6 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
             seg_embs = enc_seg_embed(segments)
             token_embs = apply_masks(token_embs, masks_pred)
             seg_embs = apply_masks(seg_embs, masks_pred)
-    
-            # Repeat embeddings for all context masks
-            token_embs = repeat_interleave_batch(
-                token_embs,
-                B,
-                repeat=len(masks_enc))
-            seg_embs = repeat_interleave_batch(
-                seg_embs,
-                B,
-                repeat=len(masks_enc))
 
             # Repeat mask token for all batches, masks and "positions" from
             # predictor masks
@@ -990,14 +965,27 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
             # Add gene and segment embeddings to mask tokens                  
             pred_tokens += token_embs + seg_embs
 
-            # Repeat context embeddings for all target masks
-            z = z.repeat(len(masks_pred), 1, 1)
+            #print(len(batch_num_special_tokens))
+            #print(batch_num_special_tokens)
+
+            #print(pred_tokens.shape)
+            #print(z.shape)
+            #print(masks_enc[0].shape)
+            #print(masks_pred[0].shape)
+            #print(len(masks_enc))
+
+            #print(masks_enc[0][0])
+            #print(masks_pred[0][0])
+
+            #print("YOO", masks_enc[7][0])
+            #print(masks_pred[6][0])
+
 
             # Concatenate context embeddings and mask tokens (both incl. pos
             # embedding)
             z = torch.cat([z[:, :keep_tokens_special, :],
-                           pred_tokens,
-                           z[:, keep_tokens_special:, :]], dim=1) # temp
+                           pred_tokens[:, keep_tokens_special:, :],
+                           z[:, keep_tokens_special:, :]], dim=1)
 
             # Run forward prop
             for blk in self.predictor_blocks:

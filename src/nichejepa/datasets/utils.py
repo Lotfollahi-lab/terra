@@ -7,6 +7,8 @@ import datasets
 from datasets import load_from_disk
 from sklearn.model_selection import train_test_split
 
+from ..utils.embedding import collect_adata_from_folder
+
 
 def get_ensembl_ids(gene_names: List,
                     species: Literal['homo_sapiens',
@@ -107,17 +109,25 @@ def prepare_dataset(args: dict,
     # Perform train test split
     if args['data']['split'] > 0:
         train_indices, test_indices = train_test_split(indices, **split_params)
+    elif args['data']['test_batch_ids']:
+        test_batch_mask = [
+            any(batch_id in cell_id for batch_id in args['data'][
+                'test_batch_ids']) for cell_id in dataset['cell_id']]
+        train_indices = [
+            index for index, value in enumerate(test_batch_mask) if not value]
+        test_indices = [
+            index for index, value in enumerate(test_batch_mask) if value]
 
-        if split_dataset:
-            train_dataset = dataset.select(train_indices)
-            test_dataset = dataset.select(test_indices)
+    if split_dataset:
+        train_dataset = dataset.select(train_indices)
+        test_dataset = dataset.select(test_indices)
 
-            return train_dataset, test_dataset
-        else:
-            split_labels = {i: 'train' for i in train_indices}
-            split_labels.update({i: 'test' for i in test_indices})
-            def add_split_label(example, idx):
-                return {'split': split_labels[idx]}
-            dataset = dataset.map(add_split_label, with_indices=True)
+        return train_dataset, test_dataset
+    else:
+        split_labels = {i: 'train' for i in train_indices}
+        split_labels.update({i: 'test' for i in test_indices})
+        def add_split_label(example, idx):
+            return {'split': split_labels[idx]}
+        dataset = dataset.map(add_split_label, with_indices=True)
 
-            return dataset
+        return dataset
