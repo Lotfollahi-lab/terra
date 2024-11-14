@@ -849,7 +849,7 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
             # Concatenate context embeddings and mask tokens (both incl. pos
             # embedding)
             z = torch.cat([z[:, :keep_tokens_special, :],
-                           pred_tokens,
+                           pred_tokens[:, keep_tokens_special:, :],
                            z[:, keep_tokens_special:, :]], dim=1)
 
             # Run forward prop
