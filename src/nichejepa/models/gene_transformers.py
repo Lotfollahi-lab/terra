@@ -848,7 +848,8 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
 
             # Concatenate context embeddings and mask tokens (both incl. pos
             # embedding)
-            z = torch.cat([z[:, :keep_tokens_special, :],
+            z = torch.cat([pred_tokens[:, :(self.n_special_tokens-self.max_cls_tokens), :], # non <cls> special tokens
+                           z[:, (self.n_special_tokens-self.max_cls_tokens):keep_tokens_special, :], # <cls> tokens
                            pred_tokens[:, keep_tokens_special:, :],
                            z[:, keep_tokens_special:, :]], dim=1)
 
@@ -980,10 +981,10 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
             #print("YOO", masks_enc[7][0])
             #print(masks_pred[6][0])
 
-
             # Concatenate context embeddings and mask tokens (both incl. pos
             # embedding)
-            z = torch.cat([z[:, :keep_tokens_special, :],
+            z = torch.cat([pred_tokens[:, :(self.n_special_tokens-self.max_cls_tokens), :], # non <cls> special tokens
+                           z[:, (self.n_special_tokens-self.max_cls_tokens):keep_tokens_special, :], # <cls> tokens
                            pred_tokens[:, keep_tokens_special:, :],
                            z[:, keep_tokens_special:, :]], dim=1)
 
