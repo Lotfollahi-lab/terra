@@ -668,9 +668,10 @@ class CellGraphTokenizer(CellBaseTokenizer):
                     example['gene_tokens_neighborhood'][i] for i in range(
                         len(example['gene_tokens_neighborhood']))
                         if example['seg_tokens_neighborhood'][i] == segment]
-                seg_tokens_neighborhood_segment = example[
-                    'seg_tokens_neighborhood'][
-                        example['seg_tokens_neighborhood'] == segment]
+                seg_tokens_neighborhood_segment = [
+                    example['seg_tokens_neighborhood'][i] for i in range(
+                        len(example['seg_tokens_neighborhood']))
+                        if example['seg_tokens_neighborhood'][i] == segment]
 
                 gene_tokens_neighborhood_segment, n_nonzero_neighborhood_segment_tokens = process_gene_tokens(
                     gene_tokens_neighborhood_segment,
