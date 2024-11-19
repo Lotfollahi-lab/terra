@@ -557,9 +557,14 @@ class CellGraphTokenizer(CellBaseTokenizer):
         # position of cell compared to index cell. Gene tokens of cells that are
         # closer to the index cell will be added first.
         for i in range(len(adata)):
-            # Store cell degree
-            adata_dict['cell_degrees'].append(
-                int(adata.obsp['spatial_connectivities'][i].sum()))
+            # Collect all neighbors of cell i (includes cell i)
+            neighbors_i = adata.obsp['spatial_connectivities'][i].nonzero()[1]
+            
+            # Store cell degree (number of neighbors including cell i)
+            adata_dict['cell_degrees'].append(int(len(neighbors_i)))
+
+            # Remove cell i from its list of neighbors
+            neighbors_i = np.delete(neighbors_i, np.where(neighbors_i == i))
             
             # Get sorted indices of neighbor cells based on distance to index
             # cell
@@ -567,10 +572,13 @@ class CellGraphTokenizer(CellBaseTokenizer):
             row_end = adata.obsp['spatial_distances'].indptr[i+1]
             row_data = adata.obsp['spatial_distances'].data[row_start:row_end]
             sorted_indices = np.argsort(row_data)
+            
+            assert len(neighbors_i) == len(row_data), (
+                'Number of neighbors (not including cell i) does not equal number of distances.')
+
             # Loop through distance-sorted neighbor cells and add gene, cell pos
             # and gene pos tokens
-            for j, k in enumerate(adata.obsp['spatial_connectivities'][
-                i].nonzero()[1][sorted_indices]):
+            for j, k in enumerate(neighbors_i[sorted_indices]):
                 adata_dict['gene_tokens_neighborhood'][i] = np.hstack(
                     (adata_dict['gene_tokens_neighborhood'][i],
                      adata_dict['gene_tokens_cell'][k]))
