@@ -336,13 +336,15 @@ def infer(args: dict,
                     selection_type="agg_cell",
                     excluded_tokens=agg_excluded_tokens,
                     seq_len_cell=seq_len_cell,
-                    n_special_tokens=n_special_tokens)
+                    n_special_tokens=n_special_tokens,
+                    max_cls_tokens=max_cls_tokens)
                 neighborhood_mask = create_binary_selection_mask(
                     tokens,
                     selection_type="agg_neighborhood",
                     excluded_tokens=agg_excluded_tokens,
                     seq_len_cell=seq_len_cell,
-                    n_special_tokens=n_special_tokens)
+                    n_special_tokens=n_special_tokens,
+                    max_cls_tokens=max_cls_tokens)
 
                 if agg_type == 'avg':
                     cell_emb = compute_mean_unmasked_emb(emb,

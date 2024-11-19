@@ -438,7 +438,8 @@ class CellGraphTokenizer(CellBaseTokenizer):
         adata = aggregate_neighbors(
             adata,
             radius=self.radius,
-            delaunay_radius_union=self.delaunay_radius_union)
+            delaunay_radius_union=self.delaunay_radius_union,
+            include_self_loop=False)
 
         print('Normalizing gene expression counts.')
         # Perform normalization of total counts per cell
@@ -557,9 +558,11 @@ class CellGraphTokenizer(CellBaseTokenizer):
         # position of cell compared to index cell. Gene tokens of cells that are
         # closer to the index cell will be added first.
         for i in range(len(adata)):
-            # Store cell degree
-            adata_dict['cell_degrees'].append(
-                int(adata.obsp['spatial_connectivities'][i].sum()))
+            # Collect all neighbors of cell i (includes cell i)
+            neighbors_i = adata.obsp['spatial_connectivities'][i].nonzero()[1]
+
+            # Store cell degree (number of neighbors including cell i)
+            adata_dict['cell_degrees'].append(int(len(neighbors_i)))
             
             # Get sorted indices of neighbor cells based on distance to index
             # cell
@@ -567,10 +570,12 @@ class CellGraphTokenizer(CellBaseTokenizer):
             row_end = adata.obsp['spatial_distances'].indptr[i+1]
             row_data = adata.obsp['spatial_distances'].data[row_start:row_end]
             sorted_indices = np.argsort(row_data)
+            assert len(neighbors_i) == len(row_data), (
+                'Number of neighbors (not including cell i) does not equal number of distances.')
+
             # Loop through distance-sorted neighbor cells and add gene, cell pos
             # and gene pos tokens
-            for j, k in enumerate(adata.obsp['spatial_connectivities'][
-                i].nonzero()[1][sorted_indices]):
+            for j, k in enumerate(neighbors_i[sorted_indices]):
                 adata_dict['gene_tokens_neighborhood'][i] = np.hstack(
                     (adata_dict['gene_tokens_neighborhood'][i],
                      adata_dict['gene_tokens_cell'][k]))
@@ -698,14 +703,16 @@ class CellGraphTokenizer(CellBaseTokenizer):
         example['n_nonzero_tokens'] = (
             n_nonzero_cell_tokens + n_nonzero_neighborhood_tokens)
 
+        print(example['seg_tokens_neighborhood'])
+
         # Define segments
-        seg_tokens_neighborhood_iter = iter(example['seg_tokens_neighborhood'])
         example['seg_tokens'] = np.concatenate(
             # (np.array([10 if gene_token != 0 else 0 for gene_token in
-            (np.array([self.max_special_tokens if gene_token != 0 else 0 for gene_token in
-                       gene_tokens_cell]),
-             [next(seg_tokens_neighborhood_iter) if gene_token != 0 else 0 for
-              gene_token in gene_tokens_neighborhood])).astype(int)
+            (np.where(gene_tokens_cell != 0, self.max_special_tokens, 0),
+             np.where(gene_tokens_neighborhood != 0,
+                      np.array(example['seg_tokens_neighborhood']),
+                      0)
+            )).astype(int)
         del example['seg_tokens_neighborhood']
 
         # Add padding to make all sequences have length 'model_input_size'
@@ -723,7 +730,8 @@ class CellGraphTokenizer(CellBaseTokenizer):
         
         # Retrieve special tokens
         example['cls_tokens'] = [
-            self.token_dict[f'<cls_{i}>'] for i in range(example['cell_degrees'])]
+            self.token_dict[f'<cls_{i}>'] for i in range(
+                example['cell_degrees'] + 1)] # include cell itself
         example['cls_tokens'] += [0] * (
             self.max_cls_tokens - len(example['cls_tokens']))    
 
@@ -813,7 +821,8 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
         adata = aggregate_neighbors(
             adata,
             radius=self.radius,
-            delaunay_radius_union=self.delaunay_radius_union)
+            delaunay_radius_union=self.delaunay_radius_union,
+            include_self_loop=True)
 
         print('Normalizing gene expression counts.')
         # Perform normalization of total counts per cell

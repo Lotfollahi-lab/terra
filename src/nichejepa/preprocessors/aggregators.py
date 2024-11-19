@@ -6,7 +6,8 @@ import squidpy as sq
 
 def aggregate_neighbors(adata: ad.AnnData,
                         radius: Optional[float]=None,
-                        delaunay_radius_union: bool=False) -> ad.AnnData:
+                        delaunay_radius_union: bool=False,
+                        include_self_loop: bool=False) -> ad.AnnData:
     """
     Aggregate cell features by neighborhood radius.
 
@@ -21,6 +22,8 @@ def aggregate_neighbors(adata: ad.AnnData,
     delaunay_radius_union:
         If 'True', compute the neighborhood graph by delaunay triangulation but
         exclude observations that are outside of the radius with size `radius`.
+    include_self_loop:
+        If 'True' include cell itself in neighborhood.
 
     Returns
     ----------
@@ -38,7 +41,8 @@ def aggregate_neighbors(adata: ad.AnnData,
                                 coord_type='generic',
                                 spatial_key='spatial',
                                 radius=radius,
-                                set_diag=True)
+                                set_diag=include_self_loop,
+                                )
         radius_connectivities = adata.obsp['spatial_connectivities']
     
     if (radius is None) or delaunay_radius_union:
@@ -47,7 +51,7 @@ def aggregate_neighbors(adata: ad.AnnData,
                                 coord_type='generic',
                                 spatial_key='spatial',
                                 delaunay=True,
-                                set_diag=True)
+                                set_diag=include_self_loop)
 
         if delaunay_radius_union:
             adata.obsp[

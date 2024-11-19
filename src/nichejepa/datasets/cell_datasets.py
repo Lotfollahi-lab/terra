@@ -260,6 +260,11 @@ class CellBaseDataset(Dataset):
                 pass
             else:
                 if segment_seq_len > len(segment_gene_tokens):
+                    print(segment_seq_len)
+                    print(len(segment_gene_tokens))
+                    print(segment)
+                    print(segment_gene_tokens)
+                    print(item["seg_tokens"])
                     raise ValueError(
                         'Sequence length for a given segment cannot be larger '
                         'than segment size when not sampling with replacement.')
