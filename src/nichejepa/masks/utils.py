@@ -62,6 +62,8 @@ def apply_attention_mask(attention_matrix, indices):
 
 def create_controlled_mask_context_target(
     attention_matrix: torch.Tensor,
+    n_special_tokens: Optional[int]=None,
+    max_cls_tokens: Optional[int]=None,
     target_masks: Optional[torch.Tensor]=None,
     context_masks: Optional[torch.Tensor]=None):
     """
@@ -107,8 +109,9 @@ def create_controlled_mask_context_target(
     # Iterate through the context and target masks
     for context_indices in context_masks:
         for mask_indices in target_masks:
-            # Step 1: Concatenate context and target indices together
-            combined_indices = torch.cat((context_indices, mask_indices), dim=1)
+            print(context_indices.shape)
+            # Step 1: Concatenate context and target indices together (exclude cls tokens)
+            combined_indices = torch.cat((mask_indices, context_indices[:, (n_special_tokens-max_cls_tokens):]), dim=1)
             # Call the helper function to create the attention matrices for the given indices
             selected_submatrix = apply_attention_mask(attention_matrix, combined_indices)
             
