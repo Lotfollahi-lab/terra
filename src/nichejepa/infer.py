@@ -405,11 +405,13 @@ def infer(args: dict,
 
     # Add metadata
     adata_metadata = collect_adata_from_folder(raw_data_folder_path)
+    adata_metadata_subset = adata_metadata[
+        adata_metadata.obs['cell_id'].isin(adata.obs['cell_id'])]
     merged_obs = pd.merge(adata.obs,
-                          adata_metadata.obs,
+                          adata_metadata_subset.obs,
                           on='cell_id')
-
     adata.obs = merged_obs.set_index('cell_id')
+    adata.obsm['spatial'] = adata_metadata_subset.obsm['spatial']
    
     # Store cell and neighborhood embeddings of all observations across layers  
     for i in range(len(all_cell_emb_list)):
