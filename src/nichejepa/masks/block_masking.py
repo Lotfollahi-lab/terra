@@ -292,7 +292,7 @@ class BlockMaskCollator:
                     (i+1):] = 0
 
         # Create predictor attention mask (without controlled attention)
-        if (self.controlled_attention_pattern is not None) or (max_cls_tokens > 2):
+        if (self.controlled_attention_pattern is not None) or (self.max_cls_tokens > 2):
             collated_masks_attention_pred = create_controlled_mask_context_target(
                 collated_masks_attention,
                 n_special_tokens=self.n_special_tokens,
@@ -313,7 +313,7 @@ class BlockMaskCollator:
                     self.max_cls_tokens)
 
         # Create encoder attention mask (with controlled attention)
-        if (self.controlled_attention_pattern is not None) or (max_cls_tokens > 2):
+        if (self.controlled_attention_pattern is not None) or (self.max_cls_tokens > 2):
             collated_masks_attention_enc = create_controlled_mask_context_target(
                 collated_masks_attention,
                 context_masks=collated_context_masks)
