@@ -102,6 +102,7 @@ def infer(args: dict,
     pos_learnable = args['meta']['pos_learnable']
     seg_learnable = args['meta']['seg_learnable']
     use_bfloat16 = args['meta']['use_bfloat16']
+    use_flash_attention = args['meta']['use_flash_attention']
 
     dataset_name = args['data']['dataset_name']
     raw_data_folder_path = args['data']['raw_data_folder_path']
@@ -186,7 +187,8 @@ def infer(args: dict,
         pred_emb_dim=pred_emb_dim,
         pred_depth=pred_depth,
         pos_learnable=pos_learnable,
-        seg_learnable=seg_learnable)
+        seg_learnable=seg_learnable,
+        use_flash_attention=use_flash_attention)
     target_encoder = copy.deepcopy(encoder)
 
     encoder = DistributedDataParallel(encoder, static_graph=True)

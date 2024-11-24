@@ -116,6 +116,7 @@ def train(args: dict,
     pos_learnable = args['meta']['pos_learnable']
     seg_learnable = args['meta']['seg_learnable']
     use_bfloat16 = args['meta']['use_bfloat16']
+    use_flash_attention = args['meta']['use_flash_attention']
 
     n_contexts = args['mask']['n_contexts']
     n_targets = args['mask']['n_targets']
@@ -228,7 +229,8 @@ def train(args: dict,
         pred_emb_dim=pred_emb_dim,
         pred_depth=pred_depth,
         pos_learnable=pos_learnable,
-        seg_learnable=seg_learnable)
+        seg_learnable=seg_learnable,
+        use_flash_attention=use_flash_attention)
     target_encoder = copy.deepcopy(encoder)
 
     # Initialize mask collator

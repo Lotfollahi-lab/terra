@@ -28,6 +28,7 @@ meta:
   pos_learnable: False
   seg_learnable: False
   use_bfloat16: True
+  use_flash_attention: True
 mask:
   n_contexts: 1
   n_targets: 5 # this is the number of blocks in block masking

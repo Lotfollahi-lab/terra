@@ -133,6 +133,7 @@ def init_model(gt_type: Literal['rank', 'count'],
                pred_depth: int=6,
                pos_learnable: bool=False,
                seg_learnable: bool=False,
+               use_flash_attention: bool=True,
                ) -> Tuple[gt.GeneTransformerBaseEncoder,
                           gt.GeneTransformerBasePredictor]:
     """
@@ -167,7 +168,8 @@ def init_model(gt_type: Literal['rank', 'count'],
     seg_learnable:
         If 'True', segment embeddings are learnable, otherwise use fixed
         segment embeddings.
-
+    use_flash_attention:
+        If use flash_attention or not
     Returns
     -----------
     encoder:
@@ -187,7 +189,8 @@ def init_model(gt_type: Literal['rank', 'count'],
         pos_learnable=pos_learnable,
         seg_learnable=seg_learnable,
         embed_dim=enc_emb_dim,
-        depth=enc_depth)
+        depth=enc_depth,
+        use_flash_attention=use_flash_attention)
     predictor = gt.__dict__["init_gt_predictor"](
         predictor_type=gt_type,
         embed_dim=enc_emb_dim,
@@ -198,7 +201,8 @@ def init_model(gt_type: Literal['rank', 'count'],
         pos_learnable=pos_learnable,
         seg_learnable=seg_learnable,
         predictor_embed_dim=pred_emb_dim,
-        depth=pred_depth)
+        depth=pred_depth,
+        use_flash_attention=use_flash_attention)
 
     def init_weights(m):
         if isinstance(m, torch.nn.Linear):
