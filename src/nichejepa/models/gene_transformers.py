@@ -74,6 +74,8 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         Normalization layer.
     init_std:
         Standard deviation for weight initialization.
+    use_flash_attention:
+        If use flash_attention or not.
     """
     def __init__(self,
                  vocab_size: int,
@@ -96,6 +98,7 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                  drop_path_rate: float=0.0,
                  norm_layer: nn.modules.normalization=nn.LayerNorm,
                  init_std: float=0.02,
+                 use_flash_attention: bool=True,
                  **kwargs
                  ):
         super().__init__()
@@ -141,7 +144,8 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                   drop=drop_rate,
                   attn_drop=attn_drop_rate,
                   drop_path=dpr[i],
-                  norm_layer=norm_layer)
+                  norm_layer=norm_layer,
+                  use_flash_attention=use_flash_attention)
             for i in range(depth)])
         self.norm = norm_layer(embed_dim)
 
@@ -281,6 +285,8 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
         Normalization layer.
     init_std:
         Standard deviation for weight initialization.
+    use_flash_attention:
+        If use flash_attention or not.
     """
     def __init__(self,
                  embed_dim: int,
@@ -300,6 +306,7 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
                  drop_path_rate: float=0.0,
                  norm_layer: torch.nn.modules.normalization=nn.LayerNorm,
                  init_std: float=0.02,
+                 use_flash_attention: bool=True,
                  **kwargs
                  ):
         super().__init__()
@@ -332,7 +339,8 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
                   drop=drop_rate,
                   attn_drop=attn_drop_rate,
                   drop_path=dpr[i],
-                  norm_layer=norm_layer)
+                  norm_layer=norm_layer,
+                  use_flash_attention=use_flash_attention)
             for i in range(depth)])
         self.predictor_norm = norm_layer(predictor_embed_dim)
         self.predictor_proj = nn.Linear(predictor_embed_dim,
