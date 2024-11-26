@@ -107,6 +107,7 @@ def train(args: dict,
     num_workers = args['data']['num_workers']
     pin_memory = args['data']['pin_memory']
 
+    add_cls = args['meta']['add_cls']
     gt_type = args['meta']['gt_type']
     enc_depth = args['meta']['enc_depth'] 
     enc_emb_dim = args['meta']['enc_emb_dim']    
@@ -151,14 +152,16 @@ def train(args: dict,
 
     # Define tokenizer-specific params
     if tokenizer_type == 'cell_neighborhood':
-        max_special_tokens = 7
-        max_cls_tokens = 2
-        special_tokens = ['cls_cell', 'cls_neighborhood'] + special_tokens
+        if add_cls:
+            special_tokens = ['cls_cell', 'cls_neighborhood'] + special_tokens
+        max_special_tokens = 7              
     elif tokenizer_type == 'cell_graph':
+        if add_cls:
+            special_tokens = [
+                f'cls_{i}' for i in range(n_segments)] + special_tokens
         max_special_tokens = 105
-        max_cls_tokens = 100
-        special_tokens = [
-            f'cls_{i}' for i in range(max_cls_tokens)] + special_tokens
+    
+    max_cls_tokens = sum('cls' in token for token in special_tokens)
 
     # Get token sequence length and number of special tokens
     n_special_tokens = len(special_tokens)
@@ -262,7 +265,6 @@ def train(args: dict,
         vocab_size=vocab_size,
         seq_len_cell=seq_len_cell,
         seq_len_neighborhood=seq_len_neighborhood,
-        max_cls_tokens=max_cls_tokens,
         max_special_tokens=max_special_tokens,
         tokenizer_type=tokenizer_type,
         gt_type=gt_type,
@@ -274,7 +276,6 @@ def train(args: dict,
         vocab_size=vocab_size,
         seq_len_cell=seq_len_cell,
         seq_len_neighborhood=seq_len_neighborhood,
-        max_cls_tokens=max_cls_tokens,
         max_special_tokens=max_special_tokens,
         tokenizer_type=tokenizer_type,
         gt_type=gt_type,
@@ -380,8 +381,10 @@ def train(args: dict,
         train_loader):
             tokens = udata[0].to(device, non_blocking=True)
             segments = udata[1].to(device, non_blocking=True)
-            positions = udata[2].to(device, non_blocking=True)
-            counts = udata[3].to(device, non_blocking=True)
+            if gt_type == 'rank':
+                positions = udata[2].to(device, non_blocking=True)
+            elif gt_type == 'counts':
+                counts = udata[2].to(device, non_blocking=True)
             masks_enc = [u.to(device, non_blocking=True) for u in masks_enc]
             masks_pred = [u.to(device, non_blocking=True) for u in masks_pred]
             masks_attention = masks_attention.to(device, non_blocking=True)

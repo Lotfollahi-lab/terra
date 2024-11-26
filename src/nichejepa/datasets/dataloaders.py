@@ -75,7 +75,7 @@ class CustomDistributedLengthGroupedSampler(DistributedSampler):
                 len(self.cell_dataset) / self.num_replicas)
         self.total_size = self.num_samples * self.num_replicas
         self.seed = seed
-        self.lengths = self.cell_dataset.n_nonzero_tokens
+        self.lengths = self.cell_dataset.n_nz_tokens
 
     def __iter__(self) -> Iterator:
         # Deterministically shuffle based on epoch and seed

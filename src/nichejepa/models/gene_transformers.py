@@ -526,10 +526,9 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
         
         # Replace special tokens (except <cls> tokens) with pad tokens for
         # inference
-        if self.n_special_tokens > 2:
-            positions[:, self.max_cls_tokens:self.n_special_tokens] = 0
-            segments[:, self.max_cls_tokens:self.n_special_tokens] = 0
-            tokens[:, self.max_cls_tokens:self.n_special_tokens] = 0
+        positions[:, self.max_cls_tokens:self.n_special_tokens] = 0
+        segments[:, self.max_cls_tokens:self.n_special_tokens] = 0
+        tokens[:, self.max_cls_tokens:self.n_special_tokens] = 0
 
         # Get positional, segment and token embeddings
         pos_emb = self.pos_embed(positions)
@@ -576,7 +575,7 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
         self.value_embed = nn.Embedding(self.n_value_bins,
                                         self.embed_dim)
         self.special_value_embed = nn.Embedding(
-            2 + self.n_special_values + self.max_cls_tokens, # include <pad> and zero expression
+            2 + self.max_special_tokens, # include <pad> and zero expression
             self.embed_dim,
             padding_idx=0)
         self.value_emb_weights_projection = ValueEmbWeightsProjection(
