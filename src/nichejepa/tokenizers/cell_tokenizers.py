@@ -59,6 +59,7 @@ tokenizer.
 
 from __future__ import annotations
 
+import os
 import concurrent
 import logging
 import pickle
@@ -66,12 +67,15 @@ import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import List, Literal, Optional, Tuple
+import tracemalloc
+
 
 import anndata as ad
 import numpy as np
 import scipy.sparse as sp
 import squidpy as sq
 from datasets import Dataset
+from datasets.formatting.formatting import LazyRow, LazyBatch
 
 from ..preprocessors.aggregators import aggregate_neighbors
 from ..preprocessors.filters import filter_poor_quality_cells
@@ -278,22 +282,69 @@ class CellBaseTokenizer(ABC):
                 for i in range(len(dataset_dict['cell_id'])):
                     yield {k: dataset_dict[k][i] for k in dataset_dict.keys()}
             logger.info('Using generator for dataset creation.')
+
+            tracemalloc.start()
             dataset = Dataset.from_generator(dict_generator,
                                              num_proc=self.nproc,
                                              keep_in_memory=keep_in_memory,
-                                             cache_dir=cache_directory_path)
+                                             cache_dir=cache_directory_path,
+                                             )
+            current, peak = tracemalloc.get_traced_memory()
+            print(f"Current memory usage is {current / 10**6}MB; Peak for Dataset.from_generator was {peak / 10**6}MB")
+            tracemalloc.stop()
+
         else:
             logger.info('Using dictionary for dataset creation.')
             dataset = Dataset.from_dict(dataset_dict)
 
         logger.info('Formatting gene tokens...')
 
+
+        tracemalloc.start()
         formatted_dataset = dataset.map(
-            self._format_examples, 
+            self._format_batch_examples, 
             num_proc=self.nproc,
-            keep_in_memory=keep_in_memory)
-                
+            batched=True, # by default, this is set to False
+            batch_size=500, # by default, this is set to 1000 but we set it to 512
+            load_from_cache_file=True, # by default, this is set to True
+            keep_in_memory=keep_in_memory,
+            )
+        current, peak = tracemalloc.get_traced_memory()
+        print(f"Current memory usage is {current / 10**6}MB; Peak for dataset.map was {peak / 10**6}MB")
+        tracemalloc.stop()
+        
+        # list files in cache directory
+        for cache_file in dataset.cache_files:
+            print(f"Cache file: {cache_file['filename']}")
+        print(f"{os.path.dirname(os.path.abspath(cache_file['filename']))=}")
+        # clean up dataset cache because dataset is no longer used if cache is used
+        # if no cache files exist, this will not do anything
+        # print('Cleaning up cache files...')
+        # num_removed_files = dataset.cleanup_cache_files()
+        # print(f'{num_removed_files} cache files removed.')
+        
         return formatted_dataset
+
+
+    def _format_batch_examples(self, examples):
+        if isinstance(examples, LazyBatch):
+            batch_examples = {}
+            batch_size = len(examples['cell_id'])
+            for i in range(batch_size):
+                batch_example = {}
+                for key, list_of_vals in examples.items():
+                    batch_example[key] = list_of_vals[i]
+                    
+                example = self._format_examples(batch_example)
+
+                for k in example.keys():
+                    if k not in batch_examples:
+                        batch_examples[k] = []
+                    batch_examples[k].append(example[k])
+            return batch_examples
+        elif isinstance(examples, LazyRow):
+            return self._format_examples(examples)
+
 
     def _tokenize_files(self,
                         data_directory: Path | str,
