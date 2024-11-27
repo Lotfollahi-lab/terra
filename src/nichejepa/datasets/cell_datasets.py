@@ -15,7 +15,7 @@ class CellBaseDataset(Dataset):
                  seq_len_neighborhood: int,
                  max_special_tokens: int,
                  special_tokens: List=[
-                    'cls_cell', # TODO: <cls> need to match item["cls_tokens"]
+                    'cls_cell',
                     'cls_neigh',
                     'assay',
                     'species',
@@ -36,20 +36,18 @@ class CellBaseDataset(Dataset):
         gt_type:
             Gene transformer type.
         dataset:
-            Hugging Face dataset with sequences of gene tokens and special
-            tokens.
+            Hugging Face dataset with tokenized data.
         vocab_size:
-            Size of the vocabulary.
+            Size of the token vocabulary.
         seq_len_cell:
             Sequence length of the (index) cell tokens.
         seq_len_neighborhood:
-            Sequence length of the neigh tokens.
+            Sequence length of the neighborhood tokens.
         max_special_tokens:
             Maximum number of special tokens (if all special tokens are
             included; used to determine the first cell segment).
         special_tokens:
-            Special tokens to be included in the sequence processed by the
-            model.
+            Special tokens to be included in the token sequences.
         sampling_strategy:
             Token sampling strategy.
         """
@@ -148,10 +146,10 @@ class CellBaseDataset(Dataset):
             
         if any('cls' in token for token in self.special_tokens):
             n_cls_tokens = sum('cls' in token for token in self.special_tokens)
-            n_nz_cls_tokens = sum(
-                1 for token in item["cls_tokens"] if token != 0)
+            cls_tokens = item["cls_tokens"][:n_cls_tokens]
+            n_nz_cls_tokens = sum(1 for token in cls_tokens if token != 0)
             n_zero_cls_tokens = n_cls_tokens - n_nz_cls_tokens
-            tokens = item["cls_tokens"][:n_cls_tokens] + tokens
+            tokens = cls_tokens + tokens
             segments = list(range(1, 1 + n_nz_cls_tokens)) \
                 + [0] * n_zero_cls_tokens \
                 + list(range(1 + n_nz_cls_tokens, 1 + n_nz_cls_tokens + (
@@ -165,7 +163,8 @@ class CellBaseDataset(Dataset):
                 positions = list(range(1, 1 + n_nz_cls_tokens)) \
                     + [0] * n_zero_cls_tokens \
                     + list(range(1 + n_nz_cls_tokens, 1 + n_nz_cls_tokens + (
-                        self.n_special_tokens - n_cls_tokens))) + positions
+                        self.n_special_tokens - n_cls_tokens))) \
+                    + positions
         else:
             segments = list(range(1, 1 + self.n_special_tokens)) + segments
             if self.gt_type == 'rank':
@@ -246,10 +245,10 @@ class CellBaseDataset(Dataset):
         return sampled_tokens, sampled_values
          
     def _get_segment_seq(self, 
-                              item: int,
-                              segment: int,
-                              segment_seq_len: int,
-                              ) -> List[int]:
+                         item: int,
+                         segment: int,
+                         segment_seq_len: int,
+                         ) -> Tuple[List[int], List[int]]:
             """
             Get gene tokens and values for a given segment based on a sampling
             strategy.
@@ -329,7 +328,7 @@ class CellGraphDataset(CellBaseDataset):
             Keyword arguments for the initialization of the CellBaseDataset.
         """
         super().__init__(**base_dataset_kwargs)
-         
+
     def __getitem__(self,
                     item: int
                     ) -> Tuple[torch.Tensor,

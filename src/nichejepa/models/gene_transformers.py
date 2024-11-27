@@ -704,9 +704,8 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
 
         # During inference, replace special tokens (except <cls> tokens) with
         # <pad> tokens
-        if self.n_special_tokens > 2:
-            tokens[:, self.max_cls_tokens:self.n_special_tokens] = 0
-            segments[:, self.max_cls_tokens:self.n_special_tokens] = 0
+        tokens[:, self.max_cls_tokens:self.n_special_tokens] = 0
+        segments[:, self.max_cls_tokens:self.n_special_tokens] = 0
 
         # Get embeddings for sequence of tokens and segments
         token_emb = self.token_embed(tokens)
