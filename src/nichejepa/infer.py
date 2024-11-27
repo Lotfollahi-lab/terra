@@ -93,6 +93,7 @@ def infer(args: dict,
         torch.cuda.set_device(device)
 
     # Load params from config file
+    add_cls = args['meta']['add_cls']
     gt_type = args['meta']['gt_type']
     enc_depth = args['meta']['enc_depth']
     enc_emb_dim = args['meta']['enc_emb_dim']
@@ -133,26 +134,20 @@ def infer(args: dict,
     
     # Define tokenizer-specific params
     if tokenizer_type == 'cell_neighborhood':
-        max_special_tokens = 7
-        max_cls_tokens = 2
-        special_tokens = ['cls_cell', 'cls_neighborhood'] + special_tokens
+        if add_cls:
+            special_tokens = ['cls_cell', 'cls_neighborhood'] + special_tokens
+        max_special_tokens = 7              
     elif tokenizer_type == 'cell_graph':
+        if add_cls:
+            special_tokens = [
+                f'cls_{i}' for i in range(n_segments)] + special_tokens
         max_special_tokens = 105
-        max_cls_tokens = 100
-        special_tokens = [
-            f'cls_{i}' for i in range(max_cls_tokens)] + special_tokens
+
+    max_cls_tokens = sum('cls' in token for token in special_tokens)
 
     # Get token sequence length and number of special tokens
     n_special_tokens = len(special_tokens)
     seq_len = seq_len_cell + seq_len_neighborhood + n_special_tokens
-
-    # Define tokenizer-specific params
-    if tokenizer_type == 'cell_neighborhood':
-        max_special_tokens = 7
-        max_cls_tokens = 2
-    elif tokenizer_type == 'cell_graph':
-        max_special_tokens = 105
-        max_cls_tokens = 100
 
     # Set the folder for saving extracted features
     save_folder = f"{load_folder_path}/extracted_features"
@@ -264,8 +259,10 @@ def infer(args: dict,
         # Load gene tokens and segmentation label to the specified device
         tokens = udata[0].to(device, non_blocking=True)
         segments = udata[1].to(device, non_blocking=True)
-        positions = udata[2].to(device, non_blocking=True)
-        counts = udata[3].to(device, non_blocking=True)
+        if gt_type == 'rank':
+            positions = udata[2].to(device, non_blocking=True)
+        elif gt_type == 'counts':
+            counts = udata[2].to(device, non_blocking=True)
         masks_attention = masks_attention.to(device, non_blocking=True)
 
         # Collect cell IDs to join metadata

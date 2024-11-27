@@ -147,11 +147,11 @@ class CellBaseDataset(Dataset):
                 values = item["assay_value"] + values
             
         if any('cls' in token for token in self.special_tokens):
-            n_cls_tokens = len(item["cls_tokens"])
+            n_cls_tokens = sum('cls' in token for token in self.special_tokens)
             n_nz_cls_tokens = sum(
                 1 for token in item["cls_tokens"] if token != 0)
             n_zero_cls_tokens = n_cls_tokens - n_nz_cls_tokens
-            tokens = item["cls_tokens"] + tokens
+            tokens = item["cls_tokens"][:n_cls_tokens] + tokens
             segments = list(range(1, 1 + n_nz_cls_tokens)) \
                 + [0] * n_zero_cls_tokens \
                 + list(range(1 + n_nz_cls_tokens, 1 + n_nz_cls_tokens + (
