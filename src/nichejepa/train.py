@@ -396,13 +396,6 @@ def train(args: dict,
             if masks_attention_pred is not None:
                 masks_attention_pred = masks_attention_pred.to(device, non_blocking=True)
 
-            #torch.set_printoptions(threshold=float('inf'))
-            #print(tokens[0, :])
-            #print(segments[0, :])
-            #print(counts[0, :])
-            #print(udata[-1])
-            #raise ValueError
-
             maskA_meter.update(len(masks_enc[0][0]))
             maskB_meter.update(len(masks_pred[0][0]))
 

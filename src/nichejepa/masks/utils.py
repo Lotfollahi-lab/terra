@@ -62,7 +62,6 @@ def apply_attention_mask(attention_matrix, indices):
 
 def create_controlled_mask_context_target(
     attention_matrix: torch.Tensor,
-    n_special_tokens: Optional[int]=None,
     max_cls_tokens: Optional[int]=None,
     target_masks: Optional[torch.Tensor]=None,
     context_masks: Optional[torch.Tensor]=None):
@@ -92,33 +91,23 @@ def create_controlled_mask_context_target(
 
     # Remove the singleton dimension if it exists in attention_matrix
     attention_matrix = attention_matrix.squeeze(1)
-    # Check if target_masks isn't None
-    if target_masks is None:
-        # Iterate through the context  masks
-        for context_indices in context_masks:
 
+    # Iterate through the context  masks
+    for context_indices in context_masks:
+
+        if target_masks is None:
             selected_submatrix = apply_attention_mask(attention_matrix,
                                                       context_indices)
-            
-            # Append the resulting submatrix to the list
             masked_attention_matrices.append(selected_submatrix)
-        
-        # Concatenate all submatrices along the batch dimension (dim=0) and unsqueeze to restore singleton dim
-        return torch.unsqueeze(torch.cat(masked_attention_matrices, dim=0), dim=1)
-
-    # Iterate through the context and target masks
-    for context_indices in context_masks:
-        for mask_indices in target_masks:
-            # Step 1: Concatenate context and target indices together (exclude cls tokens)
-            combined_indices = torch.cat((mask_indices, context_indices[:, max_cls_tokens:]), dim=1)
-            # Call the helper function to create the attention matrices for the given indices
-            selected_submatrix = apply_attention_mask(attention_matrix, combined_indices)
-            
-            # Append the resulting submatrix to the list
-            masked_attention_matrices.append(selected_submatrix)
-
-    # Concatenate all submatrices along the batch dimension and unsqueeze to
-    # restore singleton dim
+        else:
+            for mask_indices in target_masks:
+                # Step 1: Concatenate context and target indices together (exclude cls tokens)
+                combined_indices = torch.cat((mask_indices, context_indices[:, max_cls_tokens:]), dim=1)
+                selected_submatrix = apply_attention_mask(attention_matrix,
+                                                          combined_indices)
+                masked_attention_matrices.append(selected_submatrix)
+    
+    # Concatenate all submatrices along the batch dimension (dim=0) and unsqueeze to restore singleton dim
     return torch.unsqueeze(torch.cat(masked_attention_matrices, dim=0), dim=1)
 
 
