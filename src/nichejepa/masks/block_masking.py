@@ -303,7 +303,7 @@ class BlockMaskCollator:
             if (self.controlled_attention_pattern is not None) or (self.max_cls_tokens > 2):
                 collated_masks_attention_pred = create_controlled_mask_context_target(
                     collated_masks_attention,
-                    max_cls_tokens=self.max_cls_tokens,
+                    n_special_tokens=self.n_special_tokens,
                     target_masks=collated_target_masks,
                     context_masks=collated_context_masks)
             else:
@@ -333,7 +333,7 @@ class BlockMaskCollator:
             if (self.controlled_attention_pattern is not None) or (self.max_cls_tokens > 2):
                 collated_masks_attention_pred = create_controlled_mask_context_target(
                     collated_masks_attention,
-                    max_cls_tokens=self.max_cls_tokens,
+                    n_special_tokens=self.n_special_tokens,
                     target_masks=collated_target_masks,
                     context_masks=collated_context_masks)
             else:
