@@ -298,7 +298,7 @@ class BlockMaskCollator:
                     i,
                     (i+1):] = 0
 
-        collated_masks_attention_pred = collated_masks_attention.copy()        
+        collated_masks_attention_pred = collated_masks_attention.clone()        
 
         # Apply controlled attention
         if self.controlled_attention_pattern_enc is not None:
