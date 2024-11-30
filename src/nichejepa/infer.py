@@ -123,11 +123,10 @@ def infer(args: dict,
     context_mask_size = args['mask']['context_mask_size']
     target_mask_size = args['mask']['target_mask_size']
     per_block_mask_ratio = args['mask']['per_block_mask_ratio']
-    if args['mask']['controlled_attention_pattern'] is not None:
-        controlled_attention_pattern = torch.tensor(args['mask']['controlled_attention_pattern'])
+    if args['mask']['controlled_attention_pattern_enc'] is not None:
+        controlled_attention_pattern_enc = torch.tensor(args['mask']['controlled_attention_pattern_enc'])
     else:
-        controlled_attention_pattern = args['mask']['controlled_attention_pattern']
-    controlled_attention_type = args['mask']['controlled_attention_type']
+        controlled_attention_pattern_enc = args['mask']['controlled_attention_pattern_enc']
     restrict_special_attention = args['mask']['restrict_special_attention']
 
     r_file = args['state']['read_checkpoint']
@@ -203,8 +202,7 @@ def infer(args: dict,
             n_special_tokens=n_special_tokens,
             max_cls_tokens=max_cls_tokens,
             per_block_mask_ratio=per_block_mask_ratio,
-            controlled_attention_pattern=controlled_attention_pattern,
-            controlled_attention_type=controlled_attention_type,
+            controlled_attention_pattern_enc=controlled_attention_pattern_enc,
             restrict_special_attention=restrict_special_attention)
     else:
         mask_collator = RandomMaskCollator(
