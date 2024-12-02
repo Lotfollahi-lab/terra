@@ -68,14 +68,13 @@ import pickle
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import List, Literal, Optional, Tuple
+from typing import Literal, Optional
 import tracemalloc
 
 
 import anndata as ad
 import numpy as np
 import scipy.sparse as sp
-import squidpy as sq
 from datasets import Dataset, concatenate_datasets
 from datasets.formatting.formatting import LazyRow, LazyBatch
 
@@ -107,15 +106,14 @@ TOKEN_DICTIONARY_FILE = base_path / 'token_dictionary.pkl'
 GENE_PANEL_ID_TO_GENE_PANEL_DICT_FILE = base_path / 'gene_panel_ID_to_gene_panel_dict.pkl'
 FILE_PATH_TO_GENE_PANEL_ID_DICT_FILE = base_path / 'file_path_to_gene_panel_ID_dict.pkl'
 
+MAX_THREADS = 32
+
 
 class CellBaseTokenizer(ABC):
     def __init__(
         self,
         max_cores: int=1,
-        max_threads: int=1,
-        processing_mode: Optional[Literal[
-            'parallel', 'sequential']]='sequential',
-        chunk_size: int=512,
+        chunk_size: int=2048,
         model_input_size: int=2048,
         include_zero_expr_genes: bool=False,
         n_neighs: Optional[float]=None,
@@ -157,8 +155,7 @@ class CellBaseTokenizer(ABC):
             graph will be computed.
         """
         self.max_cores = max_cores
-        self.max_threads = max_threads
-        self.processing_mode = processing_mode
+        self.max_threads = min(MAX_THREADS, os.cpu_count())
         self.chunk_size = chunk_size
         self.model_input_size = model_input_size
         self.include_zero_expr_genes = include_zero_expr_genes
@@ -211,10 +208,9 @@ class CellBaseTokenizer(ABC):
                       output_directory: Path | str,
                       output_file_prefix: str,
                       file_format: Literal['h5ad']='h5ad',
-                      use_generator: bool=False,
-                      cache_directory_path: Optional[Path | str]=None,
                       num_shards: int=None,
                       keep_in_memory: bool=False,
+                      cache_directory_path: Optional[Path | str]=None,
                       ):
         """
         Tokenize files in 'input_directory' and save as tokenized '.dataset'
@@ -231,105 +227,87 @@ class CellBaseTokenizer(ABC):
             Prefix for output file.
         file_format:
             Format of input files. Can be '.h5ad'.
-        use_generator:
-            If 'True', use generator for tokenization, else dict.
-        cache_directory_path:
-            If specified, cache directory path for dataset creation.
         num_shards:
             Number of shards to save dataset to.
         keep_in_memory:
             If 'True', keep dataset in memory when using generator.
+        cache_directory_path:
+            If specified, cache directory path for dataset creation.
         """
-        old = False
-        if old:
-            dataset_dict = self._tokenize_files(Path(input_directory), file_format)
-            tokenized_dataset = self._create_dataset(
-                dataset_dict=dataset_dict,
-                use_generator=use_generator,
-                cache_directory_path=cache_directory_path,
-                keep_in_memory=keep_in_memory)
-        else:
-            hf_datasets = self._tokenize_files(Path(input_directory), file_format)
-            tokenized_dataset = self._create_dataset(
-                hf_datasets=hf_datasets,
-                use_generator=use_generator,
-                cache_directory_path=cache_directory_path,
-                keep_in_memory=keep_in_memory)
+        # create Hugging Face Dataset object from tokenized batches of cells
+        dataset = self._tokenize_files(
+                        Path(input_directory),
+                        file_format,
+                        keep_in_memory=keep_in_memory,
+                        cache_directory_path=cache_directory_path,
+                    )
+        
+        # format tokens
+        formatted_dataset = self._format_dataset(
+            dataset=dataset,
+            keep_in_memory=keep_in_memory,
+            )
 
+        # save tokenized dataset to disk
         output_path = str(
             (Path(output_directory) / output_file_prefix).with_suffix(
                 '.dataset'))
-        tokenized_dataset.save_to_disk(output_path, num_shards=num_shards)
+        formatted_dataset.save_to_disk(output_path, num_shards=num_shards)
+        print(f"Tokenized dataset saved to {output_path}.")
         logger.info("Tokenized dataset saved to '{output_path}'.")
 
-    def _create_dataset(self,
-                        dataset_dict: dict = {},
-                        hf_datasets: List[Dataset] = [],
-                        use_generator: bool=False,
-                        cache_directory_path: Optional[Path | str]=None,
+
+    def _format_dataset(self,
+                        dataset: Dataset,
                         keep_in_memory: bool=False,
                         ) -> Dataset:
         """
-        Create a Hugging Face dataset based on tokenized cells.
+        Format the tokens for each cell in the Hugging Face dataset.
 
         Parameters
         ----------
-        dataset_dict:
-            Dictionary based on which the Hugging Face dataset will be created.
-        use_generator:
-            If 'True', use generator for tokenization, else dict.
-        cache_directory_path:
-            If specified, cache directory path for dataset creation.
+        dataset:
+            Hugging Face dataset containing the tokenized cells.
         keep_in_memory:
             If 'True', keep dataset in memory when using generator.
 
         Returns
         ----------
         dataset:
-            Hugging Face dataset containing the tokenized cells.
+            Hugging Face dataset containing the formatted tokens for the cells.
         """
-        old = False
-        if old:
-            # Create Hugging Face dataset
-            logger.info('Creating Hugging Face dataset...')
-            if use_generator:
-                def dict_generator():
-                    for i in range(len(dataset_dict['cell_id'])):
-                        yield {k: dataset_dict[k][i] for k in dataset_dict.keys()}
-                logger.info('Using generator for dataset creation.')
-                tracemalloc.start()
-                dataset = Dataset.from_generator(dict_generator,
-                                                num_proc=self.max_cores,
-                                                keep_in_memory=keep_in_memory,
-                                                cache_dir=cache_directory_path,
-                                                )
-                current, peak = tracemalloc.get_traced_memory()
-                print(f"Current memory usage is {current / 10**6}MB; Peak for Dataset.from_generator was {peak / 10**6}MB")
-                tracemalloc.stop()
-
-            else:
-                logger.info('Using dictionary for dataset creation.')
-                dataset = Dataset.from_dict(dataset_dict)
-        else:
-            logger.info('Concatenating datasets...')
-            dataset = concatenate_datasets(hf_datasets)
-            
-            logger.info('Formatting gene tokens...')
-
+        num_proc = min(self.max_threads, int(len(dataset)/self.chunk_size))
+        use_batching = True if num_proc > 1 else False
+        batch_size = self.chunk_size
+        load_from_cache_file = False if keep_in_memory else True
+        
+        logger.info('Formatting gene tokens...')
+        print(f"Parallelizing using {num_proc} processes and batch size of {batch_size}...")
 
         tracemalloc.start()
-        # num_threads = min(self.max_threads, int(len(dataset_dict)/self.chunk_size))
         formatted_dataset = dataset.map(
-            self._format_batch_examples, 
-            num_proc=32,
-            batched=True, # by default, this is set to False
-            batch_size=500, # by default, this is set to 1000 but we set it to 512
-            # load_from_cache_file=False, # by default, this is set to True
-            keep_in_memory=keep_in_memory,
-            )
+                        self._format_tokens_of_a_batch_of_cells,
+                        num_proc=num_proc,
+                        batched=use_batching, # by default, this is set to False
+                        batch_size=batch_size, # by default, this is set to 1000 but we set it to 512
+                        load_from_cache_file=load_from_cache_file, # by default, this is set to True
+                        keep_in_memory=keep_in_memory,
+                    )
         current, peak = tracemalloc.get_traced_memory()
-        print(f"Current memory usage is {current / 10**6}MB; Peak for dataset.map was {peak / 10**6}MB")
         tracemalloc.stop()
+
+        print(f"Peak memory usage while Formatting Cell Tokens was {(peak / 10**6):.2f} MB.")
+        print(f"Current memory usage is {(current / 10**6):.2f} MB.")
+        
+        print(f"Number of keys in unformatted dataset: {len(dataset[0].keys())}")
+        print(f"Number of keys in formatted dataset: {len(formatted_dataset[0].keys())}")
+        print(f"Keys in unformatted dataset: {dataset[0].keys()}")
+        print(f"Keys in formatted dataset: {formatted_dataset[0].keys()}")
+        extra_keys = set(formatted_dataset[0].keys()) - set(dataset[0].keys())
+        print(f"Keys in formatted dataset that are not in dataset: {extra_keys}")
+        extra_keys = set(dataset[0].keys()) - set(formatted_dataset[0].keys())
+        print(f"Keys in unformatted dataset that are not in formatted dataset: {extra_keys}")
+        # assert dataset[0]['gene_tokens'] == formatted_dataset[0]['gene_tokens']
         
         # clean up dataset cache because dataset is no longer used if cache is used
         # if no cache files exist, this will not do anything
@@ -347,37 +325,63 @@ class CellBaseTokenizer(ABC):
             cache_dir = Path(os.path.dirname(os.path.abspath(cache_file['filename']))).parent
             if cache_dir.exists() and cache_dir.is_dir():
                 shutil.rmtree(cache_dir)
-            print(f"Removed cache directory {cache_dir}...")        
+            print(f"Removed cache directory {cache_dir}...")
         except:
             print(f"No cache directory to remove...")
         
         return formatted_dataset
 
 
-    def _format_batch_examples(self, examples):
-        if isinstance(examples, LazyBatch):
-            batch_examples = {}
-            batch_size = len(examples['cell_id'])
-            for i in range(batch_size):
-                batch_example = {}
-                for key, list_of_vals in examples.items():
-                    batch_example[key] = list_of_vals[i]
-                    
-                example = self._format_examples(batch_example)
+    def _format_tokens_of_a_batch_of_cells(self,
+                                            unformatted_examples,
+                                            ) -> dict:
+        """
+        Format the tokens for a single cell or a batch of cells.
+        
+        Parameters
+        ----------
+        unformatted_examples:
+            LazyBatch of cells if batching is used and a LazyRow for a single cell if batching is not used.
+            
+        Returns
+        ----------
+        batch_examples:
+            Dictionary containing the formatted tokens for the cell(s).
+        """
+        # examples = {'cell_id': ['cell1', 'cell2', ...],
+        #            'gene_tokens_cell': [array([1, 2, 3, ...]), array([4, 5, 6, ...]), ...],
+        #             ...
+        #             }
+        if isinstance(unformatted_examples, LazyBatch):
+            curr_batch_size = len(unformatted_examples['cell_id'])
+            keys = unformatted_examples.keys()
 
-                for k in example.keys():
-                    if k not in batch_examples:
-                        batch_examples[k] = []
-                    batch_examples[k].append(example[k])
-            return batch_examples
-        elif isinstance(examples, LazyRow):
-            return self._format_examples(examples)
+            formatted_examples = {}
+            
+            for i in range(curr_batch_size):
+                unformatted_example = {}
+                for key in keys:
+                    unformatted_example[key] = unformatted_examples[key][i]
+                    
+                formatted_example = self._format_tokens_of_a_single_cell(unformatted_example)
+
+                for k in formatted_example.keys():
+                    if k not in formatted_examples:
+                        formatted_examples[k] = []
+                    formatted_examples[k].append(formatted_example[k])
+
+            return formatted_examples
+        
+        elif isinstance(unformatted_examples, LazyRow):
+            return self._format_tokens_of_a_single_cell(unformatted_examples)
 
 
     def _tokenize_files(self,
                         data_directory: Path | str,
                         file_format: Literal['h5ad']='h5ad',
-                        ) -> dict:
+                        keep_in_memory: bool=False,
+                        cache_directory_path: Optional[Path | str]=None,                        
+                        ) -> Dataset:
         """
         Tokenize multiple files in a directory.
 
@@ -387,63 +391,20 @@ class CellBaseTokenizer(ABC):
             Path to the directory containing the files to be tokenized.
         file_format:
             Format of the files to be tokenized.
+        keep_in_memory:
+            If 'True', keep dataset in memory when using generator.
+        cache_directory_path:
+            If specified, cache directory path for dataset creation.
 
         Returns
         ----------
-        dataset_dict:
-            Dictionary containing the cell IDs and tokens for the tokenized
-            files.
+        Dataset:
+            Hugging Face dataset containing the tokenized cells.
         """
-        file_found = 0
+        file_paths = list(data_directory.glob(f'**/*.{file_format}'))
+        self.num_files = len(file_paths)
 
-        tokenize_file_fn = self._tokenize_adata # add support of other file
-                                                # formats in the future
-
-        old = False
-        if old:
-            # Initialize dict to add results from individual files
-            dataset_dict = {}
-        else:
-            hf_datasets = []
-
-        # Loop through data directory to tokenize '.h5ad' files
-        if self.processing_mode == 'sequential':
-            logger.info('Tokenizing files sequentially...')
-            for file_path in data_directory.glob(f'**/*.{file_format}'):
-                file_found = 1
-                logger.info(f"Tokenizing '{file_path}'...")
-                if old:
-                    file_dataset_dict = tokenize_file_fn(file_path)
-                    for k in file_dataset_dict.keys():
-                        if k not in dataset_dict:
-                            dataset_dict[k] = []
-                        dataset_dict[k] += file_dataset_dict[k]
-                else:
-                    file_dataset = tokenize_file_fn(file_path)
-                    hf_datasets.append(file_dataset)
-                
-        elif self.processing_mode == 'parallel':
-            logger.info(f"Tokenizing files in parallel using {self.max_cores} cores...")
-            with concurrent.futures.ProcessPoolExecutor(
-            max_workers=self.max_cores) as executor:
-                futures = []
-                for file_path in data_directory.glob(f'**/*.{file_format}'):
-                    file_found = 1
-                    logger.info(f"Tokenizing '{file_path}'...")
-                    future = executor.submit(tokenize_file_fn, file_path)
-                    futures.append(future)
-                for future in concurrent.futures.as_completed(futures):
-                    if old:
-                        file_dataset_dict = future.result()
-                        for k in file_dataset_dict.keys():
-                            if k not in dataset_dict:
-                                dataset_dict[k] = []
-                            dataset_dict[k] += file_dataset_dict[k]
-                    else:
-                        file_dataset = future.result()
-                        hf_datasets.append(file_dataset)
-
-        if file_found == 0:
+        if self.num_files == 0:
             logger.error(
                 f"No '.{file_format}' files found in directory "
                 f"'{data_directory}'.")
@@ -451,10 +412,46 @@ class CellBaseTokenizer(ABC):
                 f"No '.{file_format}' files found in directory "
                 f"'{data_directory}'.")
 
-        if old:
-            return dataset_dict
-        else:
-            return hf_datasets
+        tokenize_file_fn = self._tokenize_adata # add support of other file
+                                                # formats in the future
+
+        # Loop through data directory to tokenize '.h5ad' files
+        if self.num_files == 1:
+            print(f"Found 1 '.{file_format}' file in '{data_directory}'.")
+            for file_path in data_directory.glob(f'**/*.{file_format}'):
+                print(f"Tokenizing '{file_path}'...")
+                dataset = tokenize_file_fn(
+                                adata_file_path=file_path,
+                                keep_in_memory=keep_in_memory,
+                                cache_directory_path=cache_directory_path,
+                                )
+                
+        elif self.num_files > 1:
+            print(f"Found {self.num_files} '.{file_format}' files in "
+                        f"'{data_directory}'.")            
+            print(f"Tokenizing files in parallel using {self.max_cores} cores...")
+            
+            hf_datasets = []
+            
+            with concurrent.futures.ProcessPoolExecutor(
+            max_workers=self.max_cores) as executor:
+                futures = []
+                for file_path in data_directory.glob(f'**/*.{file_format}'):
+                    logger.info(f"Tokenizing '{file_path}'...")
+                    future = executor.submit(tokenize_file_fn,
+                                             file_path,
+                                             keep_in_memory,
+                                             cache_directory_path,
+                                             )
+                    futures.append(future)
+                for future in concurrent.futures.as_completed(futures):
+                    hf_datasets.append(future.result())
+
+            logger.info('Concatenating datasets...')
+            dataset = concatenate_datasets(hf_datasets)
+            
+        return dataset
+
 
     @abstractmethod
     def _tokenize_adata(self):
@@ -464,7 +461,7 @@ class CellBaseTokenizer(ABC):
         pass
 
     @abstractmethod
-    def _format_examples(self):
+    def _format_tokens_of_a_single_cell(self):
         """
         Tokenizer-specific logic to format examples.
         """
@@ -956,6 +953,8 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
 
     def _tokenize_adata(self,
                         adata_file_path: Path | str,
+                        keep_in_memory: bool=False,
+                        cache_directory_path: Optional[Path | str]=None,
                         ) -> dict:
         """
         Tokenize cells from an '.h5ad' (anndata) file.
@@ -964,6 +963,10 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
         ----------
         adata_file_path:
             Path to anndata file containing cells to be tokenized.
+        keep_in_memory:
+            If 'True', keep dataset in memory when using generator.
+        cache_directory_path:
+            If specified, cache directory path for dataset creation.
 
         Returns
         ----------
@@ -1093,7 +1096,7 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
         coding_miRNA_idx = np.where(
             [self.coding_miRNA_dict.get(
                 gene_id, False) for gene_id in adata.var['ensembl_id']])[0]
-        coding_miRNA_ids = adata.var['ensembl_id'][coding_miRNA_idx]
+        coding_miRNA_ids = adata.var['ensembl_id'].iloc[coding_miRNA_idx]
 
         coding_miRNA_tokens_cell = np.array(
             [self.token_dict[gene_id] for gene_id in coding_miRNA_ids])
@@ -1105,70 +1108,29 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
         adata_dict['gene_expr_cell'] = []
         adata_dict['gene_tokens_neighborhood'] = []
         adata_dict['gene_expr_neighborhood'] = []
-            
+
+        num_threads = min(self.max_threads, int(len(adata)/self.chunk_size))
+
         # Divide cells into chunks and loop through chunks
         tracemalloc.start()
-        print(f"{self.max_threads=}")
-        print(f"{int(len(adata)/self.chunk_size)=}")
-        num_threads = min(self.max_threads, int(len(adata)/self.chunk_size))
-        num_threads = 8
-        processing_mode = 'parallel'
-        if processing_mode == 'sequential':
+        if num_threads == 1:
             print(f"Ranking gene tokens based on normalized counts using 1 thread...")
             for i in range(0, len(adata), self.chunk_size):
-                if self.include_zero_expr_genes:
-                    norm_counts_cell = adata[
-                        i : i + self.chunk_size, coding_miRNA_idx].X.toarray()
-                    norm_counts_neighborhood = adata[
-                        i : i + self.chunk_size, coding_miRNA_idx].layers[
-                            'X_neighborhood'].toarray()
-
-                    # Rank gene tokens and append across chunks
-                    adata_dict['gene_tokens_cell'] += [
-                        rank_gene_tokens(norm_counts_cell[j],
-                        coding_miRNA_tokens_cell)
-                        for j in range(norm_counts_cell.shape[0])]
-                    adata_dict['gene_tokens_neighborhood'] += [
-                        rank_gene_tokens(norm_counts_neighborhood[j],
-                        coding_miRNA_tokens_neighborhood)
-                        for j in range(norm_counts_neighborhood.shape[0])]
-
-                    # Rank gene expression and append across chunks
-                    adata_dict['gene_expr_cell'] += [
-                        norm_counts_cell[j][np.argsort(-norm_counts_cell[j])]
-                        for j in range(norm_counts_cell.shape[0])]
-                    adata_dict['gene_expr_neighborhood'] += [
-                        norm_counts_neighborhood[j][
-                            np.argsort(-norm_counts_neighborhood[j])]
-                        for j in range(norm_counts_neighborhood.shape[0])]
-                else:
-                    norm_counts_cell = sp.csr_matrix(adata[
-                        i : i + self.chunk_size, coding_miRNA_idx].X)
-                    norm_counts_neighborhood = sp.csr_matrix(adata[
-                        i : i + self.chunk_size, coding_miRNA_idx].layers[
-                            'X_neighborhood'])
-
-                    # Rank gene tokens and append across chunks
-                    adata_dict['gene_tokens_cell'] += [
-                        rank_gene_tokens(norm_counts_cell[j].data,
-                        coding_miRNA_tokens_cell[norm_counts_cell[j].indices])
-                        for j in range(norm_counts_cell.shape[0])]
-                    adata_dict['gene_tokens_neighborhood'] += [
-                        rank_gene_tokens(norm_counts_neighborhood[j].data,
-                        coding_miRNA_tokens_neighborhood[
-                            norm_counts_neighborhood[j].indices])
-                        for j in range(norm_counts_neighborhood.shape[0])]
-
-                    # Rank gene expression and append across chunks
-                    adata_dict['gene_expr_cell'] += [
-                        norm_counts_cell[j].data[np.argsort(-norm_counts_cell[j].data)]
-                        for j in range(norm_counts_cell.shape[0])]
-                    adata_dict['gene_expr_neighborhood'] += [
-                        norm_counts_neighborhood[j].data[
-                            np.argsort(-norm_counts_neighborhood[j].data)]
-                        for j in range(norm_counts_neighborhood.shape[0])]
+                chunk_result = self.process_chunk(
+                                    i,
+                                    self.chunk_size,
+                                    adata,
+                                    coding_miRNA_idx,
+                                    coding_miRNA_tokens_cell,
+                                    coding_miRNA_tokens_neighborhood,
+                                    self.include_zero_expr_genes
+                                )
+                adata_dict['gene_tokens_cell'].extend(chunk_result['gene_tokens_cell'])
+                adata_dict['gene_tokens_neighborhood'].extend(chunk_result['gene_tokens_neighborhood'])
+                adata_dict['gene_expr_cell'].extend(chunk_result['gene_expr_cell'])
+                adata_dict['gene_expr_neighborhood'].extend(chunk_result['gene_expr_neighborhood'])
   
-        elif processing_mode == 'parallel':
+        elif num_threads > 1:
             print(f"Ranking gene tokens based on normalized counts using {num_threads} threads...")
             with concurrent.futures.ThreadPoolExecutor(num_threads) as executor:
                 futures = [
@@ -1190,8 +1152,9 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
                     except Exception as e:
                         print(f"Task failed with error: {e}")
         current, peak = tracemalloc.get_traced_memory()
-        print(f"Current memory usage is {current / 10**6}MB; Peak for ranking gene tokens was {peak / 10**6}MB")
         tracemalloc.stop()
+        print(f"Peak memory usage while Ranking Gene Tokens was {(peak / 10**6):.2f} MB.")
+        print(f"Current memory usage is {(current / 10**6):.2f} MB.")
 
         # Add cell IDs for collecting metadata at inference time
         adata_dict['cell_id'] = adata.obs['cell_id'].values.tolist()
@@ -1240,34 +1203,31 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
             f'spv_{adata.uns["tissue"]}'] - spv_idx_subtract] * n_cells
 
 
-        old = False
-        if old:
-            return adata_dict
-        else:
-            def example_generator():
-                for i in range(n_cells):
-                    yield {k: adata_dict[k][i] for k in adata_dict.keys()}
-                    
-            tracemalloc.start()
-            # dataset = Dataset.from_dict(adata_dict)
-            dataset = Dataset.from_generator(
-                                                example_generator,
-                                                num_proc=8,
-                                                gen_kwargs={},
-                                                keep_in_memory=False,
-                                                cache_dir='/lustre/scratch126/cellgen/team361/DATASETS/cache',
-                                                writer_batch_size=500,
-                                            )        
-            current, peak = tracemalloc.get_traced_memory()
-            print(f"Current memory usage is {current / 10**6}MB; Peak for generating dataset was {peak / 10**6}MB")
-            tracemalloc.stop()
-            
-            return dataset
-            
-    def _format_examples(self,
-                         example: dict) -> dict:
+        def example_generator():
+            for i in range(n_cells):
+                yield {k: adata_dict[k][i] for k in adata_dict.keys()}
+                
+        tracemalloc.start()
+        dataset = Dataset.from_generator(
+                                            example_generator,
+                                            num_proc=num_threads,
+                                            keep_in_memory=keep_in_memory,
+                                            cache_dir=cache_directory_path,
+                                            writer_batch_size=self.chunk_size,
+                                        )        
+        current, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        print(f"Peak memory usage while Generating Batch Dataset with {n_cells} cells was {(peak / 10**6):.2f} MB.")
+        print(f"Current memory usage is {(current / 10**6):.2f} MB.")
+        
+        return dataset
+
+
+    def _format_tokens_of_a_single_cell(self,
+                                        example: dict
+                                        ) -> dict:
         """
-        Format examples.
+        Format tokens of a single cell.
         """
         # Retrieve gene tokens
         gene_tokens_cell, n_nonzero_cell_tokens = process_gene_tokens(
