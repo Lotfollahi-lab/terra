@@ -298,6 +298,9 @@ class BlockMaskCollator:
                     i,
                     (i+1):] = 0
 
+        collated_masks_attention_pred = None
+        collated_masks_attention_enc = None
+
         if 'pred' not in self.controlled_attention_type:
             # Create predictor attention mask (without controlled attention)
             if (self.controlled_attention_pattern is not None) or (self.max_cls_tokens > 2):
@@ -306,16 +309,12 @@ class BlockMaskCollator:
                     n_special_tokens=self.n_special_tokens,
                     target_masks=collated_target_masks,
                     context_masks=collated_context_masks)
-            else:
-                collated_masks_attention_pred = None
         if 'enc' not in self.controlled_attention_type:
             # Create encoder attention mask (without controlled attention)
             if (self.controlled_attention_pattern is not None) or (self.max_cls_tokens > 2):
                 collated_masks_attention_enc = create_controlled_mask_context_target(
                     collated_masks_attention,
-                    context_masks=collated_context_masks)
-            else:
-                collated_masks_attention_enc = None            
+                    context_masks=collated_context_masks)         
 
         # Apply controlled attention
         if self.controlled_attention_pattern is not None:
@@ -336,15 +335,11 @@ class BlockMaskCollator:
                     n_special_tokens=self.n_special_tokens,
                     target_masks=collated_target_masks,
                     context_masks=collated_context_masks)
-            else:
-                collated_masks_attention_pred = None
         if 'enc' in self.controlled_attention_type:
             # Create encoder attention mask (with controlled attention)
             if (self.controlled_attention_pattern is not None) or (self.max_cls_tokens > 2):
                 collated_masks_attention_enc = create_controlled_mask_context_target(
                     collated_masks_attention,
                     context_masks=collated_context_masks)
-            else:
-                collated_masks_attention_enc = None    
 
         return collated_batch, collated_context_masks, collated_target_masks, collated_masks_attention, collated_masks_attention_enc, collated_masks_attention_pred
