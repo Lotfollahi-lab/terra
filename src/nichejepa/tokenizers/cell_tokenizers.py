@@ -106,7 +106,7 @@ TOKEN_DICTIONARY_FILE = base_path / 'token_dictionary.pkl'
 GENE_PANEL_ID_TO_GENE_PANEL_DICT_FILE = base_path / 'gene_panel_ID_to_gene_panel_dict.pkl'
 FILE_PATH_TO_GENE_PANEL_ID_DICT_FILE = base_path / 'file_path_to_gene_panel_ID_dict.pkl'
 
-MAX_THREADS = 32
+MAX_THREADS = 256
 
 
 class CellBaseTokenizer(ABC):
@@ -278,7 +278,7 @@ class CellBaseTokenizer(ABC):
         """
         num_proc = min(self.max_threads, int(len(dataset)/self.chunk_size))
         use_batching = True if num_proc > 1 else False
-        batch_size = self.chunk_size
+        batch_size = self.chunk_size*2
         load_from_cache_file = False if keep_in_memory else True
         
         logger.info('Formatting gene tokens...')
@@ -289,7 +289,7 @@ class CellBaseTokenizer(ABC):
                         self._format_tokens_of_a_batch_of_cells,
                         num_proc=num_proc,
                         batched=use_batching, # by default, this is set to False
-                        batch_size=batch_size, # by default, this is set to 1000 but we set it to 512
+                        batch_size=batch_size, # by default, this is set to 1000, but we set it to 4096
                         load_from_cache_file=load_from_cache_file, # by default, this is set to True
                         keep_in_memory=keep_in_memory,
                     )
@@ -1133,24 +1133,34 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
         elif num_threads > 1:
             print(f"Ranking gene tokens based on normalized counts using {num_threads} threads...")
             with concurrent.futures.ThreadPoolExecutor(num_threads) as executor:
-                futures = [
+                futures = {
                     executor.submit(
                         self.process_chunk, i, self.chunk_size, adata, coding_miRNA_idx, 
                         coding_miRNA_tokens_cell, coding_miRNA_tokens_neighborhood, 
                         self.include_zero_expr_genes
-                    )
+                    ): i
                     for i in range(0, len(adata), self.chunk_size)
-                ]
+                }
+                
+                results = []
                 
                 for future in concurrent.futures.as_completed(futures):
                     try:
+                        chunk_index = futures[future]
                         chunk_result = future.result()  # Retrieve results
-                        adata_dict['gene_tokens_cell'].extend(chunk_result['gene_tokens_cell'])
-                        adata_dict['gene_tokens_neighborhood'].extend(chunk_result['gene_tokens_neighborhood'])
-                        adata_dict['gene_expr_cell'].extend(chunk_result['gene_expr_cell'])
-                        adata_dict['gene_expr_neighborhood'].extend(chunk_result['gene_expr_neighborhood'])
+                        results.append((chunk_index, chunk_result))
                     except Exception as e:
                         print(f"Task failed with error: {e}")
+            
+            # This will sort the results in the order of the chunk index so that it matches with the cell_id order in the original adata.
+            results.sort(key=lambda x: x[0])
+            
+            for _, chunk_result in results:
+                adata_dict['gene_tokens_cell'].extend(chunk_result['gene_tokens_cell'])
+                adata_dict['gene_tokens_neighborhood'].extend(chunk_result['gene_tokens_neighborhood'])
+                adata_dict['gene_expr_cell'].extend(chunk_result['gene_expr_cell'])
+                adata_dict['gene_expr_neighborhood'].extend(chunk_result['gene_expr_neighborhood'])
+
         current, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
         print(f"Peak memory usage while Ranking Gene Tokens was {(peak / 10**6):.2f} MB.")
@@ -1206,7 +1216,7 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
         def example_generator():
             for i in range(n_cells):
                 yield {k: adata_dict[k][i] for k in adata_dict.keys()}
-                
+
         tracemalloc.start()
         dataset = Dataset.from_generator(
                                             example_generator,
@@ -1214,11 +1224,12 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
                                             keep_in_memory=keep_in_memory,
                                             cache_dir=cache_directory_path,
                                             writer_batch_size=self.chunk_size,
-                                        )        
+                                        )
         current, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
         print(f"Peak memory usage while Generating Batch Dataset with {n_cells} cells was {(peak / 10**6):.2f} MB.")
         print(f"Current memory usage is {(current / 10**6):.2f} MB.")
+        print(f"Completed Tokenizing {adata_file_path}.")
         
         return dataset
 
