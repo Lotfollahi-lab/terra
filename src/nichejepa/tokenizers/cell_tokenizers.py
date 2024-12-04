@@ -484,6 +484,8 @@ class CellGraphTokenizer(CellBaseTokenizer):
 
     def _tokenize_adata(self,
                         adata_file_path: Path | str,
+                        keep_in_memory: bool=False,
+                        cache_directory_path: Optional[Path | str]=None,
                         ) -> dict:
         """
         Tokenize cells from an '.h5ad' (anndata) file.
@@ -492,6 +494,10 @@ class CellGraphTokenizer(CellBaseTokenizer):
         ----------
         adata_file_path:
             Path to anndata file containing cells to be tokenized.
+        keep_in_memory:
+            If 'True', keep dataset in memory when using generator.
+        cache_directory_path:
+            If specified, cache directory path for dataset creation.
 
         Returns
         ----------
@@ -529,6 +535,8 @@ class CellGraphTokenizer(CellBaseTokenizer):
         print('Filtering cells.')
         # Filter to remove poor quality cells
         adata = filter_poor_quality_cells(adata)
+
+        assert np.all(np.mod(adata.X.data, 1) == 0), "adata.X contains non-integer values."
 
         print('Computing spatial neighborhood graph.')
         adata = aggregate_neighbors(
@@ -747,10 +755,11 @@ class CellGraphTokenizer(CellBaseTokenizer):
 
         return adata_dict
             
-    def _format_examples(self,
-                         example: dict) -> dict:
+    def _format_tokens_of_a_single_cell(self,
+                                        example: dict
+                                        ) -> dict:
         """
-        Format examples.
+        Format tokens of a single cell.
         """
         # Get example-specific number of gene segments
         n_gene_segments = 1 # index cell segment
@@ -1001,6 +1010,8 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
         print('Filtering cells.')
         # Filter to remove poor quality cells
         adata = filter_poor_quality_cells(adata)
+        
+        assert np.all(np.mod(adata.X.data, 1) == 0), "adata.X contains non-integer values."
 
         print('Computing spatial neighborhood graph and aggregating counts.')
         # Aggregate neighborhood cell gene expression
