@@ -276,8 +276,16 @@ class CellBaseTokenizer(ABC):
         dataset:
             Hugging Face dataset containing the formatted tokens for the cells.
         """
-        num_proc = min(self.max_threads, int(len(dataset)/self.chunk_size))
-        use_batching = True if num_proc > 1 else False
+        
+        if isinstance(self, CellGraphTokenizer):
+            num_proc = min(self.max_threads, len(dataset))
+            use_batching = False
+        else:
+            num_proc = min(self.max_threads, int(len(dataset)/self.chunk_size))
+            use_batching = True if num_proc > 1 else False
+        
+        print(f"Use batching: {use_batching}")
+
         batch_size = self.chunk_size*2
         load_from_cache_file = False if keep_in_memory else True
         
@@ -315,19 +323,10 @@ class CellBaseTokenizer(ABC):
 
         # list dataset-related arrow cache files
         for cache_file in dataset.cache_files:
-            print(f"Cache file: {cache_file['filename']}")
-        # remove .arrow and .lock cache files
-        num_removed_files = dataset.cleanup_cache_files()
-        print(f'{num_removed_files} cache files removed.')
-        
-        # remove cache directory
-        try:
             cache_dir = Path(os.path.dirname(os.path.abspath(cache_file['filename']))).parent
             if cache_dir.exists() and cache_dir.is_dir():
                 shutil.rmtree(cache_dir)
             print(f"Removed cache directory {cache_dir}...")
-        except:
-            print(f"No cache directory to remove...")
         
         return formatted_dataset
 
@@ -482,6 +481,52 @@ class CellGraphTokenizer(CellBaseTokenizer):
         """
         super().__init__(**base_tokenizer_kwargs)
 
+    @staticmethod
+    def rank_cell_genes(
+            chunk_start,
+            chunk_size,
+            adata,
+            coding_miRNA_idx,
+            coding_miRNA_tokens_cell,
+            include_zero_expr_genes,
+        ):
+        chunk_data = {
+            'gene_tokens_cell': [],
+            'gene_expr_cell': [],
+        }
+        
+        if include_zero_expr_genes:
+            norm_counts_cell = adata[
+                chunk_start : chunk_start + chunk_size, coding_miRNA_idx].X.toarray()
+
+            # Rank gene tokens and append across chunks
+            chunk_data['gene_tokens_cell'] += [
+                rank_gene_tokens(norm_counts_cell[j],
+                coding_miRNA_tokens_cell)
+                for j in range(norm_counts_cell.shape[0])]
+
+            # Rank gene expression and append across chunks
+            chunk_data['gene_expr_cell'] += [
+                norm_counts_cell[j][np.argsort(-norm_counts_cell[j])]
+                for j in range(norm_counts_cell.shape[0])]
+        else:
+            norm_counts_cell = sp.csr_matrix(adata[
+                chunk_start : chunk_start + chunk_size, coding_miRNA_idx].X)
+
+            # Rank gene tokens and append across chunks
+            chunk_data['gene_tokens_cell'] += [
+                rank_gene_tokens(norm_counts_cell[j].data,
+                coding_miRNA_tokens_cell[norm_counts_cell[j].indices])
+                for j in range(norm_counts_cell.shape[0])]
+
+            # Rank gene expression and append across chunks
+            chunk_data['gene_expr_cell'] += [
+                norm_counts_cell[j].data[np.argsort(-norm_counts_cell[j].data)]
+                for j in range(norm_counts_cell.shape[0])]
+
+        return chunk_data
+
+
     def _tokenize_adata(self,
                         adata_file_path: Path | str,
                         keep_in_memory: bool=False,
@@ -527,7 +572,9 @@ class CellGraphTokenizer(CellBaseTokenizer):
             - cell_ids:
                 List of cell IDs.
         """
-        # Initialize dict to collect tokens and cell ids
+        # ------------------------------------------------------------
+
+        # Load adata file
         adata_dict = {}
 
         adata = ad.read_h5ad(adata_file_path)
@@ -546,8 +593,10 @@ class CellGraphTokenizer(CellBaseTokenizer):
             delaunay=self.delaunay,
             include_self_loop=False)
 
-        print('Normalizing gene expression counts.')
+        # ------------------------------------------------------------
+
         # Perform normalization of total counts per cell
+        print('Normalizing gene expression counts.')
         if self.norm_factor == 'read_depth':
             if self.norm_method == 'analytic_pearson_residuals':
                 raise ValueError(
@@ -597,8 +646,11 @@ class CellGraphTokenizer(CellBaseTokenizer):
             else:
                 raise ValueError(f"Invalid 'norm_method': {self.norm_method}.")
 
-        # Initialize dict to collect tokens and cell IDs
+        # ------------------------------------------------------------
+
+        # Initialize dict to collect gene tokens
         adata_dict = {}
+        n_cells = len(adata)
 
         # Retrieve gene tokens for genes contained in dataset and vocab, i.e.
         # protein-coding and miRNA genes
@@ -611,63 +663,96 @@ class CellGraphTokenizer(CellBaseTokenizer):
         coding_miRNA_tokens_cell = np.array(
             [self.token_dict[gene_id] for gene_id in coding_miRNA_ids])
 
+        # ------------------------------------------------------------
+
         # Prepare gene tokens for cell and neighborhood for this file
         adata_dict['gene_tokens_cell'] = []
         adata_dict['gene_expr_cell'] = []
-        adata_dict['gene_tokens_neighborhood'] = []
-        adata_dict['gene_expr_neighborhood'] = []
             
         # Divide cells into chunks and loop through chunks
-        print('Ranking gene tokens based on normalized counts.')
-        for i in range(0, len(adata), self.chunk_size):
-            if self.include_zero_expr_genes:
-                norm_counts_cell = adata[
-                    i : i + self.chunk_size, coding_miRNA_idx].X.toarray()
+        num_threads = min(self.max_threads, n_cells)
+        
+        tracemalloc.start()
+        if num_threads == 1:
+            print('Rank cell gene tokens based on normalized counts using 1 thread...')
+            for i in range(0, n_cells, self.chunk_size):
+                chunk_result = self.rank_cell_genes(
+                                i,
+                                self.chunk_size,
+                                adata,
+                                coding_miRNA_idx,
+                                coding_miRNA_tokens_cell,
+                                self.include_zero_expr_genes,
+                )
+                adata_dict['gene_tokens_cell'].extend(chunk_result['gene_tokens_cell'])
+                adata_dict['gene_expr_cell'].extend(chunk_result['gene_expr_cell'])
+        elif num_threads > 1:
+            print(f"Ranking cell gene tokens based on normalized counts using {num_threads} threads...")
+            with concurrent.futures.ThreadPoolExecutor(num_threads) as executor:
+                futures = {
+                    executor.submit(
+                        self.rank_cell_genes,
+                        i,
+                        self.chunk_size,
+                        adata,
+                        coding_miRNA_idx, 
+                        coding_miRNA_tokens_cell,
+                        self.include_zero_expr_genes,
+                    ): i
+                    for i in range(0, n_cells, self.chunk_size)
+                }
+                
+                results = []
+                
+                for future in concurrent.futures.as_completed(futures):
+                    try:
+                        chunk_index = futures[future]
+                        chunk_result = future.result()  # Retrieve results
+                        results.append((chunk_index, chunk_result))
+                    except Exception as e:
+                        print(f"Task failed with error: {e}")
+            
+            # This will sort the results in the order of the chunk index so that it matches with the cell_id order in the original adata.
+            results.sort(key=lambda x: x[0])
+            
+            for _, chunk_result in results:
+                adata_dict['gene_tokens_cell'].extend(chunk_result['gene_tokens_cell'])
+                adata_dict['gene_expr_cell'].extend(chunk_result['gene_expr_cell'])
 
-                # Rank gene tokens and append across chunks
-                adata_dict['gene_tokens_cell'] += [
-                    rank_gene_tokens(norm_counts_cell[j],
-                    coding_miRNA_tokens_cell)
-                    for j in range(norm_counts_cell.shape[0])]
+        del results
+        
+        current, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        print(f"Peak memory usage while Ranking Cell Gene Tokens was {(peak / 10**6):.2f} MB.")
+        print(f"Current memory usage is {(current / 10**6):.2f} MB.")
 
-                # Rank gene expression and append across chunks
-                adata_dict['gene_expr_cell'] += [
-                    norm_counts_cell[j][np.argsort(-norm_counts_cell[j])]
-                    for j in range(norm_counts_cell.shape[0])]
-            else:
-                norm_counts_cell = sp.csr_matrix(adata[
-                    i : i + self.chunk_size, coding_miRNA_idx].X)
-
-                # Rank gene tokens and append across chunks
-                adata_dict['gene_tokens_cell'] += [
-                    rank_gene_tokens(norm_counts_cell[j].data,
-                    coding_miRNA_tokens_cell[norm_counts_cell[j].indices])
-                    for j in range(norm_counts_cell.shape[0])]
-
-                # Rank gene expression and append across chunks
-                adata_dict['gene_expr_cell'] += [
-                    norm_counts_cell[j].data[np.argsort(-norm_counts_cell[j].data)]
-                    for j in range(norm_counts_cell.shape[0])]
+        # ------------------------------------------------------------
 
         print('Retrieving tokens for neighborhood cells.')
-        adata_dict['gene_tokens_neighborhood'] = [
-            np.array([]) for i in range(len(adata))]
-        adata_dict['gene_expr_neighborhood'] = [
-            np.array([]) for i in range(len(adata))]
-        adata_dict['seg_tokens_neighborhood'] = [
-            np.array([]) for i in range(len(adata))]
-        
         adata_dict['cell_degrees'] = []
+        adata_dict['gene_tokens_neighborhood'] = [
+            np.array([]) for i in range(n_cells)]
+        adata_dict['gene_expr_neighborhood'] = [
+            np.array([]) for i in range(n_cells)]
+        adata_dict['seg_tokens_neighborhood'] = [
+            np.array([]) for i in range(n_cells)]
         
         # Loop through all cells to add neighbor cell gene tokens based on
         # position of neighbor cell compared to index cell. Gene tokens of cells
         # that are closer to the index cell will be added first.
-        for i in range(len(adata)):
+        def process_cell_neighbors(i):
+            cell_data = {
+            'cell_degrees': 0,
+            'gene_tokens_neighborhood': np.array([]),
+            'gene_expr_neighborhood': np.array([]),
+            'seg_tokens_neighborhood': np.array([])
+            }
+
             # Collect all neighbors of cell i (excluding cell i)
             neighbors_i = adata.obsp['spatial_connectivities'][i].nonzero()[1]
 
             # Store cell degree (number of neighbors excluding cell i)
-            adata_dict['cell_degrees'].append(int(len(neighbors_i)))
+            cell_data['cell_degrees'] = int(len(neighbors_i))
 
             # Take into account case where neighbor cells can have 0 distance
             if (adata.obsp['spatial_connectivities'].getnnz(axis=1)[i] != 
@@ -679,39 +764,77 @@ class CellGraphTokenizer(CellBaseTokenizer):
                 zero_dist_idx = set(cell_con_nz) - set(cell_dist_nz)
                 for idx in zero_dist_idx:
                     adata.obsp['spatial_distances'][i, idx] = adata.obsp[
-                        'spatial_distances'][i, idx] + 10**(-9)
+                    'spatial_distances'][i, idx] + 10**(-9)
             
             # Get sorted indices of neighbor cells based on (lower) distance to
             # index cell
             cell_start = adata.obsp['spatial_distances'].indptr[i]
             cell_end = adata.obsp['spatial_distances'].indptr[i+1]
             cell_distances = adata.obsp[
-                'spatial_distances'].data[cell_start:cell_end]
+            'spatial_distances'].data[cell_start:cell_end]
 
             sorted_indices = np.argsort(cell_distances)
             assert len(neighbors_i) == len(cell_distances), (
-                'Number of neighbors (excluding cell i) does not equal number '
-                'of distances.')
+            'Number of neighbors (excluding cell i) does not equal number '
+            'of distances.')
 
             # Loop through distance-sorted neighbor cells and add gene and
             # segment tokens and counts
             for j, k in enumerate(neighbors_i[sorted_indices]):
-                adata_dict['gene_tokens_neighborhood'][i] = np.hstack(
-                    (adata_dict['gene_tokens_neighborhood'][i],
-                     adata_dict['gene_tokens_cell'][k]))
-                adata_dict['gene_expr_neighborhood'][i] = np.hstack(
-                    (adata_dict['gene_expr_neighborhood'][i],
-                     adata_dict['gene_expr_cell'][k]))
-                adata_dict['seg_tokens_neighborhood'][i] = np.hstack(
-                    (adata_dict['seg_tokens_neighborhood'][i],
-                     [j + self.max_special_tokens + 1] * len(
-                        adata_dict['gene_tokens_cell'][k])))
+                cell_data['gene_tokens_neighborhood'] = np.hstack(
+                    (cell_data['gene_tokens_neighborhood'],
+                    adata_dict['gene_tokens_cell'][k]))
+                cell_data['gene_expr_neighborhood'] = np.hstack(
+                    (cell_data['gene_expr_neighborhood'],
+                    adata_dict['gene_expr_cell'][k]))
+                cell_data['seg_tokens_neighborhood'] = np.hstack(
+                    (cell_data['seg_tokens_neighborhood'],
+                    [j + self.max_special_tokens + 1] * len(
+                    adata_dict['gene_tokens_cell'][k])))
+
+            return cell_data
+
+        tracemalloc.start()
+        num_threads = min(self.max_threads, n_cells)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = {
+                executor.submit(
+                    process_cell_neighbors,
+                    i): i
+                for i in range(n_cells)
+            }
+            
+            results = []
+            
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    cell_index = futures[future]
+                    cell_data = future.result()
+                    results.append((cell_index, cell_data))
+                except:
+                    print("Ranking of neighborhood gene tokens failed.")
+
+        results.sort(key=lambda x: x[0])
+        
+        for i, cell_data in results:
+            adata_dict['cell_degrees'].append(cell_data['cell_degrees'])
+            adata_dict['gene_tokens_neighborhood'][i] = cell_data['gene_tokens_neighborhood']
+            adata_dict['gene_expr_neighborhood'][i] = cell_data['gene_expr_neighborhood']
+            adata_dict['seg_tokens_neighborhood'][i] = cell_data['seg_tokens_neighborhood']
+
+        del results
+        
+        current, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        print(f"Peak memory usage while Ranking Neighborhood Gene Tokens was {(peak / 10**6):.2f} MB.")
+        print(f"Current memory usage is {(current / 10**6):.2f} MB.")
+
+        # ------------------------------------------------------------
 
         # Add cell IDs for collecting metadata at inference time
         adata_dict['cell_id'] = adata.obs['cell_id'].values.tolist()
         
         # Add special tokens (positional tokens and value tokens)
-        n_cells = len(adata)
         batch_id_key = f"{adata.uns['dataset_id']}_{adata.uns['batch']}"
 
         adata_dict['batch_token'] = [self.token_dict['spt_batch']] * n_cells
@@ -753,7 +876,30 @@ class CellGraphTokenizer(CellBaseTokenizer):
         adata_dict['tissue_value'] = [self.token_dict[
             f'spv_{adata.uns["tissue"]}'] - spv_idx_subtract] * n_cells
 
-        return adata_dict
+        # ------------------------------------------------------------
+        def example_generator():
+            for i in range(n_cells):
+                yield {k: adata_dict[k][i] for k in adata_dict.keys()}
+
+        tracemalloc.start()
+        dataset = Dataset.from_generator(
+                                            example_generator,
+                                            num_proc=num_threads,
+                                            keep_in_memory=keep_in_memory,
+                                            cache_dir=cache_directory_path,
+                                            writer_batch_size=self.chunk_size,
+                                        )
+        
+        del adata, adata_dict
+        
+        current, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        print(f"Peak memory usage while Generating Batch Dataset with {n_cells} cells was {(peak / 10**6):.2f} MB.")
+        print(f"Current memory usage is {(current / 10**6):.2f} MB.")
+        print(f"Completed Tokenizing {adata_file_path}.")
+        
+        return dataset
+
             
     def _format_tokens_of_a_single_cell(self,
                                         example: dict
@@ -899,9 +1045,16 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
 
 
     @staticmethod
-    def process_chunk(chunk_start, chunk_size, adata, coding_miRNA_idx, 
-                    coding_miRNA_tokens_cell, coding_miRNA_tokens_neighborhood, 
-                    include_zero_expr_genes):
+    def rank_cell_neighborcell_genes(
+            chunk_start,
+            chunk_size,
+            adata,
+            coding_miRNA_idx,
+            coding_miRNA_tokens_cell,
+            coding_miRNA_tokens_neighborhood,
+            include_zero_expr_genes,
+        ):
+        
         chunk_data = {
             'gene_tokens_cell': [],
             'gene_tokens_neighborhood': [],
@@ -1002,7 +1155,9 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
             - cell_ids:
                 List of cell IDs.
         """
-        # Initialize dict to collect tokens and cell ids
+        # ------------------------------------------------------------
+
+        # Load adata file
         adata_dict = {}
 
         adata = ad.read_h5ad(adata_file_path)
@@ -1022,8 +1177,10 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
             delaunay=self.delaunay,
             include_self_loop=True)
 
-        print('Normalizing gene expression counts.')
+        # ------------------------------------------------------------
+
         # Perform normalization of total counts per cell
+        print('Normalizing gene expression counts.')
         if self.norm_factor == 'read_depth':
             if self.norm_method == 'analytic_pearson_residuals':
                 raise ValueError(
@@ -1098,8 +1255,11 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
             else:
                 raise ValueError(f"Invalid 'norm_method': {self.norm_method}.")
 
-        # Initialize dict to collect tokens and cell IDs
+        # ------------------------------------------------------------
+
+        # Initialize dict to collect gene tokens
         adata_dict = {}
+        n_cells = len(adata)
 
         # Retrieve gene tokens for genes contained in dataset and vocab, i.e.
         # protein-coding and miRNA genes
@@ -1114,20 +1274,22 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
         coding_miRNA_tokens_neighborhood = np.array(
             [self.token_dict[gene_id] for gene_id in coding_miRNA_ids])
 
+        # ------------------------------------------------------------
+
         # Prepare gene tokens for cell and neighborhood for this file
         adata_dict['gene_tokens_cell'] = []
         adata_dict['gene_expr_cell'] = []
         adata_dict['gene_tokens_neighborhood'] = []
         adata_dict['gene_expr_neighborhood'] = []
 
-        num_threads = min(self.max_threads, int(len(adata)/self.chunk_size))
-
         # Divide cells into chunks and loop through chunks
+        num_threads = min(self.max_threads, int(n_cells/self.chunk_size))
+
         tracemalloc.start()
         if num_threads == 1:
             print(f"Ranking gene tokens based on normalized counts using 1 thread...")
-            for i in range(0, len(adata), self.chunk_size):
-                chunk_result = self.process_chunk(
+            for i in range(0, n_cells, self.chunk_size):
+                chunk_result = self.rank_cell_neighborcell_genes(
                                     i,
                                     self.chunk_size,
                                     adata,
@@ -1146,11 +1308,16 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
             with concurrent.futures.ThreadPoolExecutor(num_threads) as executor:
                 futures = {
                     executor.submit(
-                        self.process_chunk, i, self.chunk_size, adata, coding_miRNA_idx, 
-                        coding_miRNA_tokens_cell, coding_miRNA_tokens_neighborhood, 
-                        self.include_zero_expr_genes
+                        self.rank_cell_neighborcell_genes,
+                        i,
+                        self.chunk_size,
+                        adata,
+                        coding_miRNA_idx, 
+                        coding_miRNA_tokens_cell,
+                        coding_miRNA_tokens_neighborhood, 
+                        self.include_zero_expr_genes,
                     ): i
-                    for i in range(0, len(adata), self.chunk_size)
+                    for i in range(0, n_cells, self.chunk_size)
                 }
                 
                 results = []
@@ -1171,17 +1338,18 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
                 adata_dict['gene_tokens_neighborhood'].extend(chunk_result['gene_tokens_neighborhood'])
                 adata_dict['gene_expr_cell'].extend(chunk_result['gene_expr_cell'])
                 adata_dict['gene_expr_neighborhood'].extend(chunk_result['gene_expr_neighborhood'])
-
+        
         current, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
         print(f"Peak memory usage while Ranking Gene Tokens was {(peak / 10**6):.2f} MB.")
         print(f"Current memory usage is {(current / 10**6):.2f} MB.")
 
+        # ------------------------------------------------------------
+
         # Add cell IDs for collecting metadata at inference time
         adata_dict['cell_id'] = adata.obs['cell_id'].values.tolist()
         
         # Add special tokens (positional tokens and value tokens)
-        n_cells = len(adata)
         batch_id_key = f"{adata.uns['dataset_id']}_{adata.uns['batch']}"
 
         adata_dict['batch_token'] = [self.token_dict['spt_batch']] * n_cells
@@ -1223,6 +1391,7 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
         adata_dict['tissue_value'] = [self.token_dict[
             f'spv_{adata.uns["tissue"]}'] - spv_idx_subtract] * n_cells
 
+        # ------------------------------------------------------------
 
         def example_generator():
             for i in range(n_cells):
