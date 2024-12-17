@@ -106,7 +106,7 @@ TOKEN_DICTIONARY_FILE = base_path / 'token_dictionary.pkl'
 GENE_PANEL_ID_TO_GENE_PANEL_DICT_FILE = base_path / 'gene_panel_ID_to_gene_panel_dict.pkl'
 FILE_PATH_TO_GENE_PANEL_ID_DICT_FILE = base_path / 'file_path_to_gene_panel_ID_dict.pkl'
 
-MAX_THREADS = 256
+MAX_THREADS = 16
 
 
 class CellBaseTokenizer(ABC):
