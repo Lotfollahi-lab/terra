@@ -106,7 +106,7 @@ TOKEN_DICTIONARY_FILE = base_path / 'token_dictionary.pkl'
 GENE_PANEL_ID_TO_GENE_PANEL_DICT_FILE = base_path / 'gene_panel_ID_to_gene_panel_dict.pkl'
 FILE_PATH_TO_GENE_PANEL_ID_DICT_FILE = base_path / 'file_path_to_gene_panel_ID_dict.pkl'
 
-MAX_THREADS = 16
+MAX_THREADS = 32
 
 
 class CellBaseTokenizer(ABC):
@@ -812,7 +812,7 @@ class CellGraphTokenizer(CellBaseTokenizer):
                     cell_data = future.result()
                     results.append((cell_index, cell_data))
                 except:
-                    print("Ranking of neighborhood gene tokens failed.")
+                    print("Retrieving tokens for neighborhood cells failed.")
 
         results.sort(key=lambda x: x[0])
         
@@ -826,7 +826,7 @@ class CellGraphTokenizer(CellBaseTokenizer):
         
         current, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
-        print(f"Peak memory usage while Ranking Neighborhood Gene Tokens was {(peak / 10**6):.2f} MB.")
+        print(f"Peak memory usage while Retrieving tokens for neighborhood cells was {(peak / 10**6):.2f} MB.")
         print(f"Current memory usage is {(current / 10**6):.2f} MB.")
 
         # ------------------------------------------------------------
