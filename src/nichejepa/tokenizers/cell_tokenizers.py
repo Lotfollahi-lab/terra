@@ -719,7 +719,7 @@ class CellGraphTokenizer(CellBaseTokenizer):
                 adata_dict['gene_tokens_cell'].extend(chunk_result['gene_tokens_cell'])
                 adata_dict['gene_expr_cell'].extend(chunk_result['gene_expr_cell'])
 
-        del results
+            del results
         
         current, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
@@ -736,11 +736,12 @@ class CellGraphTokenizer(CellBaseTokenizer):
             np.array([]) for i in range(n_cells)]
         adata_dict['seg_tokens_neighborhood'] = [
             np.array([]) for i in range(n_cells)]
-        
+        print("1. retrieved tokens for neighborhood cells")
         # Loop through all cells to add neighbor cell gene tokens based on
         # position of neighbor cell compared to index cell. Gene tokens of cells
         # that are closer to the index cell will be added first.
         def process_cell_neighbors(i):
+            print("2. retrieved tokens for neighborhood cells")
             cell_data = {
             'cell_degrees': 0,
             'gene_tokens_neighborhood': np.array([]),
@@ -749,12 +750,15 @@ class CellGraphTokenizer(CellBaseTokenizer):
             }
 
             # Collect all neighbors of cell i (excluding cell i)
+            print("3. retrieved tokens for neighborhood cells")
             neighbors_i = adata.obsp['spatial_connectivities'][i].nonzero()[1]
 
             # Store cell degree (number of neighbors excluding cell i)
+            print("4. retrieved tokens for neighborhood cells")
             cell_data['cell_degrees'] = int(len(neighbors_i))
 
             # Take into account case where neighbor cells can have 0 distance
+            print("5. retrieved tokens for neighborhood cells")
             if (adata.obsp['spatial_connectivities'].getnnz(axis=1)[i] != 
             adata.obsp['spatial_distances'].getnnz(axis=1)[i]):
                 cell_con_nz = np.nonzero(
@@ -768,11 +772,13 @@ class CellGraphTokenizer(CellBaseTokenizer):
             
             # Get sorted indices of neighbor cells based on (lower) distance to
             # index cell
+            print("6. retrieved tokens for neighborhood cells")
             cell_start = adata.obsp['spatial_distances'].indptr[i]
             cell_end = adata.obsp['spatial_distances'].indptr[i+1]
             cell_distances = adata.obsp[
             'spatial_distances'].data[cell_start:cell_end]
 
+            print("7. retrieved tokens for neighborhood cells")
             sorted_indices = np.argsort(cell_distances)
             assert len(neighbors_i) == len(cell_distances), (
             'Number of neighbors (excluding cell i) does not equal number '
@@ -780,6 +786,7 @@ class CellGraphTokenizer(CellBaseTokenizer):
 
             # Loop through distance-sorted neighbor cells and add gene and
             # segment tokens and counts
+            print("8. retrieved tokens for neighborhood cells")
             for j, k in enumerate(neighbors_i[sorted_indices]):
                 cell_data['gene_tokens_neighborhood'] = np.hstack(
                     (cell_data['gene_tokens_neighborhood'],
@@ -792,11 +799,14 @@ class CellGraphTokenizer(CellBaseTokenizer):
                     [j + self.max_special_tokens + 1] * len(
                     adata_dict['gene_tokens_cell'][k])))
 
+            print(f"9. {i} retrieved tokens for neighborhood cells")
             return cell_data
 
         tracemalloc.start()
-        num_threads = min(self.max_threads, n_cells)
+        # num_threads = min(self.max_threads, n_cells)
+        num_threads = 1
         with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+            print("10. retrieved tokens for neighborhood cells")
             futures = {
                 executor.submit(
                     process_cell_neighbors,
@@ -807,6 +817,7 @@ class CellGraphTokenizer(CellBaseTokenizer):
             results = []
             
             for future in concurrent.futures.as_completed(futures):
+                print("11. retrieved tokens for neighborhood cells")
                 try:
                     cell_index = futures[future]
                     cell_data = future.result()
@@ -815,6 +826,7 @@ class CellGraphTokenizer(CellBaseTokenizer):
                     print("Retrieving tokens for neighborhood cells failed.")
 
         results.sort(key=lambda x: x[0])
+        print("12. retrieved tokens for neighborhood cells")
         
         for i, cell_data in results:
             adata_dict['cell_degrees'].append(cell_data['cell_degrees'])
@@ -822,6 +834,7 @@ class CellGraphTokenizer(CellBaseTokenizer):
             adata_dict['gene_expr_neighborhood'][i] = cell_data['gene_expr_neighborhood']
             adata_dict['seg_tokens_neighborhood'][i] = cell_data['seg_tokens_neighborhood']
 
+        print("13. retrieved tokens for neighborhood cells")
         del results
         
         current, peak = tracemalloc.get_traced_memory()
