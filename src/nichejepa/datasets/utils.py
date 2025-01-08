@@ -116,14 +116,21 @@ def prepare_dataset(args: dict,
                 'test_batch_ids']) for cell_id in cell_ids]
         train_indices = [
             index for index, value in enumerate(test_batch_mask) if not value]
+        if args['data']['split_val'] > 0:
+            split_params = {'test_size': args['data']['split_val'],
+                    'random_state': args['data']['random_state']}
+            train_indices, val_indices = train_test_split(train_indices, **split_params)
         test_indices = [
             index for index, value in enumerate(test_batch_mask) if value]
-
     if split_dataset:
         train_dataset = dataset.select(train_indices)
+        if args['data']['split_val'] > 0:
+            val_dataset = dataset.select(val_indices)
+        else:
+            val_dataset = dataset.select([])
         test_dataset = dataset.select(test_indices)
 
-        return train_dataset, test_dataset
+        return train_dataset, test_dataset, val_dataset
     else:
         split_labels = {i: 'train' for i in train_indices}
         split_labels.update({i: 'test' for i in test_indices})
@@ -132,3 +139,8 @@ def prepare_dataset(args: dict,
         dataset = dataset.map(add_split_label, with_indices=True)
 
         return dataset
+
+
+
+
+
