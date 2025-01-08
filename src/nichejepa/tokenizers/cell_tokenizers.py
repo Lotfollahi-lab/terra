@@ -623,9 +623,9 @@ class CellGraphTokenizer(CellBaseTokenizer):
 
         adata_dict['batch_value_token'] = [
             self.token_dict[f'spv_{batch_id_key}']] * n_cells
-        adata_dict['gene_panel_value_token'] = [self.token_dict[
-            f'spv_{self.file_path_to_gene_panel_ID_dict[str(adata_file_path)]}']
-            ] * n_cells
+        # adata_dict['gene_panel_value_token'] = [self.token_dict[
+            # f'spv_{self.file_path_to_gene_panel_ID_dict[str(adata_file_path)]}']
+            # ] * n_cells
         adata_dict['assay_value_token'] = [
             self.token_dict[f'spv_{adata.uns["assay"]}']] * n_cells
         adata_dict['species_value_token'] = [
@@ -642,9 +642,9 @@ class CellGraphTokenizer(CellBaseTokenizer):
         spv_idx_subtract = spv_start_idx - 2 - self.max_cls_tokens
         adata_dict['batch_value'] = [
             self.token_dict[f'spv_{batch_id_key}'] - spv_idx_subtract] * n_cells
-        adata_dict['gene_panel_value'] = [self.token_dict[
-            f'spv_{self.file_path_to_gene_panel_ID_dict[str(adata_file_path)]}']
-            - spv_idx_subtract] * n_cells
+        # adata_dict['gene_panel_value'] = [self.token_dict[
+            # f'spv_{self.file_path_to_gene_panel_ID_dict[str(adata_file_path)]}']
+            # - spv_idx_subtract] * n_cells
         adata_dict['assay_value'] = [
             self.token_dict[
                 f'spv_{adata.uns["assay"]}'] - spv_idx_subtract] * n_cells
@@ -763,20 +763,20 @@ class CellGraphTokenizer(CellBaseTokenizer):
         example['assay_token'] = [example['assay_token']]
         example['species_token'] = [example['species_token']]
         example['tissue_token'] = [example['tissue_token']]
-        example['gene_panel_token'] = [example['gene_panel_token']]
+        # example['gene_panel_token'] = [example['gene_panel_token']]
         example['batch_token'] = [example['batch_token']]
 
         example['assay_value_token'] = [example['assay_value_token']]
         example['species_value_token'] = [example['species_value_token']]
         example['tissue_value_token'] = [example['tissue_value_token']]
-        example['gene_panel_value_token'] = [example['gene_panel_value_token']]
+        # example['gene_panel_value_token'] = [example['gene_panel_value_token']]
         example['batch_value_token'] = [example['batch_value_token']] 
 
         # Retrieve special token values
         example['assay_value'] = [example['assay_value']]
         example['species_value'] = [example['species_value']]
         example['tissue_value'] = [example['tissue_value']]
-        example['gene_panel_value'] = [example['gene_panel_value']]
+        # example['gene_panel_value'] = [example['gene_panel_value']]
         example['batch_value'] = [example['batch_value']]
 
         return example
