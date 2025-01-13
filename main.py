@@ -10,6 +10,7 @@ import logging
 import multiprocessing as mp
 import os
 import pprint
+import random
 import yaml
 from datetime import datetime
 
@@ -47,7 +48,7 @@ def process_main(rank, args, params, world_size, devices, logger, folder_path, i
     logger.setLevel(logging.INFO if rank == 0 else logging.ERROR)
 
     world_size, rank = init_distributed(
-        rank_and_world_size=(rank, world_size), port=40003)
+        rank_and_world_size=(rank, world_size), port=random.randint(40000, 50000))
     logger.info(f'Running... (rank: {rank}/{world_size})')
 
     # Execute training or evaluation

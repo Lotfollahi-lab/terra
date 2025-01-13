@@ -27,6 +27,7 @@ from typing import Optional
 import datasets
 import numpy as np
 import pandas as pd
+import pickle
 import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
@@ -96,9 +97,8 @@ def train(args: dict,
 
     # Load params from config file
     dataset_name = args['data']['dataset_name']
+    token_dict_folder_path = args['data']['token_dict_folder_path']
     tokenizer_type = args['data']['tokenizer_type']
-    n_special_values = args['data']['n_special_values']
-    vocab_size = args['data']['vocab_size']
     seq_len_cell = args['data']['seq_len_cell']
     seq_len_neighborhood = args['data']['seq_len_neighborhood']
     n_segments = args['data']['n_segments']
@@ -151,16 +151,24 @@ def train(args: dict,
     load_model = args['state']['load_checkpoint'] or resume_preempt
     r_file = args['state']['read_checkpoint']
 
+    # Load token dict and get token dict-specfic params
+    with open(token_dict_folder_path, 'rb') as file:
+        token_dict = pickle.load(file)
+    vocab_size = len(token_dict)
+    n_special_values = sum(1 for key in token_dict if "spv" in key)
+    
+    # Get number of max special tokens to determine correct segment tokens
+    max_special_tokens = sum(1 for key in token_dict if "cls" in key) + sum(
+        1 for key in token_dict if "spt" in key)
+
     # Define tokenizer-specific params
     if tokenizer_type == 'cell_neighborhood':
         if add_cls:
-            special_tokens = ['cls_cell', 'cls_neighborhood'] + special_tokens
-        max_special_tokens = 7              
+            special_tokens = ['cls_cell', 'cls_neighborhood'] + special_tokens            
     elif tokenizer_type == 'cell_graph':
         if add_cls:
             special_tokens = [
                 f'cls_{i}' for i in range(n_segments)] + special_tokens
-        max_special_tokens = 105
     
     max_cls_tokens = sum('cls' in token for token in special_tokens)
 
