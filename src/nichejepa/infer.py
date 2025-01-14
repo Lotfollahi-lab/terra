@@ -1,6 +1,7 @@
 import copy
 import logging
 import os
+import pickle
 import sys
 import yaml
 from collections import defaultdict
@@ -106,13 +107,12 @@ def infer(args: dict,
     use_flash_attention = args['meta']['use_flash_attention']
 
     dataset_name = args['data']['dataset_name']
+    token_dict_folder_path = args['data']['token_dict_folder_path']
     raw_data_folder_path = args['data']['raw_data_folder_path']
     batch_size = args['data']['batch_size']
-    vocab_size = args['data']['vocab_size']
     pin_memory = args['data']['pin_memory']
     num_workers = args['data']['num_workers']
     tokenizer_type = args['data']['tokenizer_type']
-    n_special_values = args['data']['n_special_values']
     seq_len_cell = args['data']['seq_len_cell']
     seq_len_neighborhood = args['data']['seq_len_neighborhood']
     n_segments = args['data']['n_segments']
@@ -133,16 +133,22 @@ def infer(args: dict,
     r_file = args['state']['read_checkpoint']
     tag = args['state']['write_tag']
     
+    # Load token dict and get token dict-specfic params
+    with open(token_dict_folder_path, 'rb') as file:
+        token_dict = pickle.load(file)
+    vocab_size = len(token_dict)
+    n_special_values = sum(1 for key in token_dict if "spv" in key)
+    max_special_tokens = sum(1 for key in token_dict if "cls" in key) + sum(
+        1 for key in token_dict if "spt" in key)
+
     # Define tokenizer-specific params
     if tokenizer_type == 'cell_neighborhood':
         if add_cls:
-            special_tokens = ['cls_cell', 'cls_neighborhood'] + special_tokens
-        max_special_tokens = 7              
+            special_tokens = ['cls_cell', 'cls_neighborhood'] + special_tokens  
     elif tokenizer_type == 'cell_graph':
         if add_cls:
             special_tokens = [
                 f'cls_{i}' for i in range(n_segments)] + special_tokens
-        max_special_tokens = 105
 
     max_cls_tokens = sum('cls' in token for token in special_tokens)
 
