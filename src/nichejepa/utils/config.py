@@ -48,24 +48,29 @@ def create_params_from_YAML_wandb_config(YAML_file:str,
 
     if update_from_sweep:
         # Update 'meta' section with values from wandb config
-        params['meta']['enc_pred_depth'] = int(sweep_config.enc_pred_depth)
-        params['meta']['pred_depth'] = int(sweep_config.enc_pred_depth % 10)
-        params['meta']['enc_depth'] = int(sweep_config.enc_pred_depth // 10)
-        params['meta']['enc_emb_dim'] = sweep_config.enc_emb_dim
-        if has_same_dimension:
-            params['meta']['pred_emb_dim'] = sweep_config.enc_emb_dim
-        params['meta']['top_layer'] = sweep_config.top_layer
-        params['meta']['top_k'] = sweep_config.top_k
+        # Update 'meta' section
+        if hasattr(sweep_config, 'enc_pred_depth'):
+            params['meta']['enc_pred_depth'] = int(sweep_config.enc_pred_depth)
+            params['meta']['pred_depth'] = int(sweep_config.enc_pred_depth % 10)
+            params['meta']['enc_depth'] = int(sweep_config.enc_pred_depth // 10)
+        if hasattr(sweep_config, 'enc_emb_dim'):
+            params['meta']['enc_emb_dim'] = sweep_config.enc_emb_dim
+            if has_same_dimension:
+                params['meta']['pred_emb_dim'] = sweep_config.enc_emb_dim
+        # Update 'mask' section
+        if hasattr(sweep_config, 'n_targets'):
+             params['mask']['n_targets'] = sweep_config.n_targets
 
-        # Update 'mask' section with values from wandb config
-        params['mask']['n_targets'] = sweep_config.n_targets
-        params['mask']['context_mask_size'] = sweep_config.context_mask_size
-        params['mask']['target_mask_size'] = sweep_config.target_mask_size
+        if hasattr(sweep_config, 'per_block_mask_ratio'):
+            params['mask']['per_block_mask_ratio'] = sweep_config.per_block_mask_ratio
 
-        # Update 'optimization' section with values from wandb config
-        params['optimization']['ema'] = sweep_config.ema
-        params['optimization']['epochs'] = sweep_config.epochs
-        params['optimization']['learnable'] = sweep_config.learnable
+        # Update 'optimization' section
+        if hasattr(sweep_config, 'ema'):
+            params['optimization']['ema'] = sweep_config.ema
 
-    # Return the updated params dictionary
+        if hasattr(sweep_config, 'epochs'):
+            params['optimization']['epochs'] = sweep_config.epochs
+
+         # Return the updated params dictionary
+        print(params)
     return params

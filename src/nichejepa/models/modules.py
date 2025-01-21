@@ -197,7 +197,6 @@ class Block(nn.Module):
 
         return x
 
-
 class ValueEmbWeightsProjection(nn.Module):
     def __init__(self,
                  dim=100):
@@ -212,6 +211,7 @@ class ValueEmbWeightsProjection(nn.Module):
         super().__init__()
         self.linear1 = nn.Linear(1, dim)
         self.leaky_relu = nn.LeakyReLU(negative_slope=0.1)
+        #self.leaky_relu = nn.GELU()
         self.linear2 = nn.Linear(dim, dim)
         self.softmax = nn.Softmax(dim=-1)
     
@@ -223,8 +223,6 @@ class ValueEmbWeightsProjection(nn.Module):
         out = self.softmax(out)
         
         return out
-
-
 class DropPath(nn.Module):
     """
     DropPath module to drop paths per observation, applied in main path of

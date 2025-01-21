@@ -29,6 +29,7 @@ class CellBaseDataset(Dataset):
                             'norm_count_rank_sampling_rep',
                             'rand_sampling',
                             'rand_sampling_rep']]=None,
+                n_nonzero_tokens_list=None,
                  ):
         """
         Torch CellBaseDataset class.
@@ -54,13 +55,18 @@ class CellBaseDataset(Dataset):
             model.
         sampling_strategy:
             Token sampling strategy.
+        n_nonzero_tokens_list:
+            List of n_nonzero_tokens
         """
         if gt_type not in ['rank', 'counts']:
             raise ValueError(f'Invalid "gt_type": {gt_type}.')
 
         self.dataset = dataset
         self.len = len(self.dataset)
-        self.n_nonzero_tokens = self.dataset['n_nonzero_tokens']
+        if n_nonzero_tokens_list:
+            self.n_nonzero_tokens = n_nonzero_tokens_list
+        else:
+            self.n_nonzero_tokens = self.dataset['n_nonzero_tokens']
         self.vocab_size = vocab_size
         self.seq_len_cell = seq_len_cell
         self.seq_len_neighborhood = seq_len_neighborhood
@@ -136,7 +142,7 @@ class CellBaseDataset(Dataset):
             elif self.gt_type == 'counts':
                 tokens = item["assay_token"] + tokens
             gene_expr = item["assay_value"] + gene_expr
-            
+        '''
         n_cls_tokens = len(item["cls_tokens"])
         n_nz_cls_tokens = sum(
             1 for token in item["cls_tokens"] if token != 0)
@@ -152,6 +158,34 @@ class CellBaseDataset(Dataset):
             range(1, 1 + n_nz_cls_tokens)) + [0] * n_zero_cls_tokens + list(
             range(1 + n_nz_cls_tokens, 1 + n_nz_cls_tokens + (self.n_special_tokens - n_cls_tokens))) + positions
 
+        return tokens, segments, positions, gene_expr
+        '''
+        if any('cls' in token for token in self.special_tokens):
+            n_cls_tokens = sum('cls' in token for token in self.special_tokens)
+            cls_tokens = item["cls_tokens"][:n_cls_tokens]
+            n_nz_cls_tokens = sum(1 for token in cls_tokens if token != 0)
+            n_zero_cls_tokens = n_cls_tokens - n_nz_cls_tokens
+            tokens = cls_tokens + tokens
+            segments = list(range(1, 1 + n_nz_cls_tokens)) \
+                + [0] * n_zero_cls_tokens \
+                + list(range(1 + n_nz_cls_tokens, 1 + n_nz_cls_tokens + (
+                    self.n_special_tokens - n_cls_tokens))) \
+                + segments
+            if self.gt_type == 'counts':
+                gene_expr = list(range(2, 2 + n_nz_cls_tokens)) \
+                    + [0] * n_zero_cls_tokens \
+                    + gene_expr
+            elif self.gt_type == 'rank':
+                positions = list(range(1, 1 + n_nz_cls_tokens)) \
+                    + [0] * n_zero_cls_tokens \
+                    + list(range(1 + n_nz_cls_tokens, 1 + n_nz_cls_tokens + (
+                        self.n_special_tokens - n_cls_tokens))) \
+                    + positions
+        else:
+            segments = list(range(1, 1 + self.n_special_tokens)) + segments
+            if self.gt_type == 'rank':
+                positions = list(
+                    range(1, 1 + self.n_special_tokens)) + positions
         return tokens, segments, positions, gene_expr
 
     def _create_sampled_token_and_count_seq(self,

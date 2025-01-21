@@ -9,6 +9,7 @@ from typing import List, Literal, Optional
 import anndata as ad
 import numpy as np
 import pandas as pd
+import pickle
 import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
@@ -52,7 +53,8 @@ def infer(args: dict,
                             'weighted_avg']='avg',
           masked_tokens: Optional[List[int]]=None,
           agg_excluded_tokens: Optional[List[int]]=None,
-          feature_norm: bool=False
+          feature_norm: bool=False,
+          check_point: int=None
           ) -> ad.AnnData:
     """
     Use a trained model for inference. Run forward pass on a given dataset and
@@ -79,7 +81,8 @@ def infer(args: dict,
         List of tokens to be excluded from the aggregation.
     feature_norm:
         If 'True', apply feature norm in the last embedding layer.
-
+    check_point:
+        If load from check_point or not.
     Returns
     -----------
     adata:
@@ -106,12 +109,11 @@ def infer(args: dict,
 
     dataset_name = args['data']['dataset_name']
     raw_data_folder_path = args['data']['raw_data_folder_path']
+    token_dict_folder_path = args['data']['token_dict_folder_path']
     batch_size = args['data']['batch_size']
-    vocab_size = args['data']['vocab_size']
     pin_memory = args['data']['pin_memory']
     num_workers = args['data']['num_workers']
     tokenizer_type = args['data']['tokenizer_type']
-    n_special_values = args['data']['n_special_values']
     seq_len_cell = args['data']['seq_len_cell']
     seq_len_neighborhood = args['data']['seq_len_neighborhood']
     n_segments = args['data']['n_segments']
@@ -128,31 +130,35 @@ def infer(args: dict,
         controlled_attention_pattern = args['mask']['controlled_attention_pattern']
     restrict_special_attention = args['mask']['restrict_special_attention']
 
+    if args['data']['precomputed_n_nonzero_tokens']:
+        with open(args['data']['precomputed_n_nonzero_tokens'], "rb") as f: 
+            n_nonzero_tokens= pickle.load(f)
+    else:
+        n_nonzero_tokens = None
+        print(n_nonzero_tokens)
+
     r_file = args['state']['read_checkpoint']
     tag = args['state']['write_tag']
     
+    # Load token dict and get token dict-specfic params
+    with open(token_dict_folder_path, 'rb') as file:
+        token_dict = pickle.load(file)
+    vocab_size = len(token_dict)
+    n_special_values = sum(1 for key in token_dict if "spv" in key)
+    max_special_tokens = sum(1 for key in token_dict if "cls" in key) + sum(
+        1 for key in token_dict if "spt" in key)
+
     # Define tokenizer-specific params
     if tokenizer_type == 'cell_neighborhood':
-        max_special_tokens = 7
-        max_cls_tokens = 2
         special_tokens = ['cls_cell', 'cls_neighborhood'] + special_tokens
     elif tokenizer_type == 'cell_graph':
-        max_special_tokens = 105
-        max_cls_tokens = 100
         special_tokens = [
-            f'cls_{i}' for i in range(max_cls_tokens)] + special_tokens
+                f'cls_{i}' for i in range(n_segments)] + special_tokens
 
+    max_cls_tokens = sum('cls' in token for token in special_tokens)
     # Get token sequence length and number of special tokens
     n_special_tokens = len(special_tokens)
     seq_len = seq_len_cell + seq_len_neighborhood + n_special_tokens
-
-    # Define tokenizer-specific params
-    if tokenizer_type == 'cell_neighborhood':
-        max_special_tokens = 7
-        max_cls_tokens = 2
-    elif tokenizer_type == 'cell_graph':
-        max_special_tokens = 105
-        max_cls_tokens = 100
 
     # Set the folder for saving extracted features
     save_folder = f"{load_folder_path}/extracted_features"
@@ -167,8 +173,11 @@ def infer(args: dict,
     world_size, rank = init_distributed()
 
     # Define checkpointing path
-    latest_path = os.path.join(load_folder_path, f'{tag}-latest.pth.tar')
-    load_path = (os.path.join(load_folder_path, r_file) if r_file is not None 
+    if check_point is None:
+       latest_path = os.path.join(load_folder_path, f'{tag}-latest.pth.tar')
+    else:
+       latest_path = os.path.join(load_folder_path, f'{tag}-ep{check_point}.pth.tar')
+    load_path = (os.path.join(load_folder_path, r_file) if r_file is not None
         else latest_path)
 
     # Initialize encoder, predictor, and target encoder
@@ -229,7 +238,9 @@ def infer(args: dict,
         tokenizer_type=tokenizer_type,
         gt_type=gt_type,
         special_tokens=special_tokens,
-        sampling_strategy=None)
+        sampling_strategy=None,
+        n_nonzero_tokens_list=n_nonzero_tokens)
+
 
     loader = init_dataloader_and_sampler(
         cell_dataset=cell_dataset,

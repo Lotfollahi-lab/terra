@@ -27,6 +27,7 @@ from typing import Optional
 import datasets
 import numpy as np
 import pandas as pd
+import pickle
 import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
@@ -63,6 +64,7 @@ def train(args: dict,
           test_dataset: datasets.Dataset,
           resume_preempt: bool=False,
           save_folder_path: Optional[str]=None,
+          train_: bool=True,
           ):
     """
     Train model.
@@ -78,6 +80,8 @@ def train(args: dict,
     resume_preempt:
     save_folder_path:
         Path for saving model artifacts.
+    train_:
+        Use this to enable training.
     """
     # Set random seeds
     np.random.seed(_GLOBAL_SEED)
@@ -96,9 +100,8 @@ def train(args: dict,
 
     # Load params from config file
     dataset_name = args['data']['dataset_name']
+    token_dict_folder_path = args['data']['token_dict_folder_path']
     tokenizer_type = args['data']['tokenizer_type']
-    n_special_values = args['data']['n_special_values']
-    vocab_size = args['data']['vocab_size']
     seq_len_cell = args['data']['seq_len_cell']
     seq_len_neighborhood = args['data']['seq_len_neighborhood']
     n_segments = args['data']['n_segments']
@@ -149,17 +152,28 @@ def train(args: dict,
     load_model = args['state']['load_checkpoint'] or resume_preempt
     r_file = args['state']['read_checkpoint']
 
+    if args['data']['precomputed_n_nonzero_tokens']:
+        with open(args['data']['precomputed_n_nonzero_tokens'], "rb") as f: 
+            n_nonzero_tokens = pickle.load(f)
+    else:
+        n_nonzero_tokens = None
+
+    # Load token dict and get token dict-specfic params
+    with open(token_dict_folder_path, 'rb') as file:
+        token_dict = pickle.load(file)
+    vocab_size = len(token_dict)
+    n_special_values = sum(1 for key in token_dict if "spv" in key)
+    max_special_tokens = sum(1 for key in token_dict if "cls" in key) + sum(
+        1 for key in token_dict if "spt" in key)
+
     # Define tokenizer-specific params
     if tokenizer_type == 'cell_neighborhood':
-        max_special_tokens = 7
-        max_cls_tokens = 2
         special_tokens = ['cls_cell', 'cls_neighborhood'] + special_tokens
     elif tokenizer_type == 'cell_graph':
-        max_special_tokens = 105
-        max_cls_tokens = 100
         special_tokens = [
-            f'cls_{i}' for i in range(max_cls_tokens)] + special_tokens
+                f'cls_{i}' for i in range(n_segments)] + special_tokens
 
+    max_cls_tokens = sum('cls' in token for token in special_tokens)
     # Get token sequence length and number of special tokens
     n_special_tokens = len(special_tokens)
     seq_len = seq_len_cell + seq_len_neighborhood + n_special_tokens
@@ -267,34 +281,11 @@ def train(args: dict,
         tokenizer_type=tokenizer_type,
         gt_type=gt_type,
         special_tokens=special_tokens,
-        sampling_strategy=sampling_strategy)
-
-    test_cell_dataset = make_cell_dataset(
-        dataset=test_dataset,
-        vocab_size=vocab_size,
-        seq_len_cell=seq_len_cell,
-        seq_len_neighborhood=seq_len_neighborhood,
-        max_cls_tokens=max_cls_tokens,
-        max_special_tokens=max_special_tokens,
-        tokenizer_type=tokenizer_type,
-        gt_type=gt_type,
-        special_tokens=special_tokens,
-        sampling_strategy=sampling_strategy)
+        sampling_strategy=sampling_strategy,
+        n_nonzero_tokens_list=n_nonzero_tokens)
 
     train_loader, train_sampler = init_dataloader_and_sampler(
         cell_dataset=train_cell_dataset,
-        batch_size=batch_size,
-        distributed=True,
-        world_size=world_size,
-        rank=rank,
-        collate_fn=mask_collator,
-        pin_memory=pin_memory,
-        num_workers=num_workers,
-        drop_last=False,
-        persistent_workers=False)
-
-    test_loader, test_sampler = init_dataloader_and_sampler(
-        cell_dataset=test_cell_dataset,
         batch_size=batch_size,
         distributed=True,
         world_size=world_size,
@@ -493,24 +484,28 @@ def train(args: dict,
                     loss = loss_fn(z, h)
 
                 # Step 2: backward pass and step
-                if use_bfloat16:
-                    scaler.scale(loss).backward()
-                    scaler.step(optimizer)
-                    scaler.update()
+                if train_:
+                    if use_bfloat16:
+                        scaler.scale(loss).backward()
+                        scaler.step(optimizer)
+                        scaler.update()
+                    else:
+                        loss.backward()
+                        optimizer.step()
+                    grad_stats = grad_logger(encoder.named_parameters())
+                    optimizer.zero_grad()
+
+                    # Step 3: momentum update of target encoder
+                    with torch.no_grad():
+                        m = next(momentum_scheduler)
+                        for param_q, param_k in zip(encoder.parameters(),
+                                                    target_encoder.parameters()):
+                            param_k.data.mul_(m).add_((1.-m) * param_q.detach().data)
+
+                if train_:
+                    return (float(loss), _new_lr, _new_wd, grad_stats)
                 else:
-                    loss.backward()
-                    optimizer.step()
-                grad_stats = grad_logger(encoder.named_parameters())
-                optimizer.zero_grad()
-
-                # Step 3: momentum update of target encoder
-                with torch.no_grad():
-                    m = next(momentum_scheduler)
-                    for param_q, param_k in zip(encoder.parameters(),
-                                                target_encoder.parameters()):
-                        param_k.data.mul_(m).add_((1.-m) * param_q.detach().data)
-
-                return (float(loss), _new_lr, _new_wd, grad_stats)
+                    return (float(loss), _new_lr, _new_wd, 0)
             (loss, _new_lr, _new_wd, grad_stats), etime = gpu_timer(train_step)
             loss_meter.update(loss)
             time_meter.update(etime)
@@ -546,9 +541,14 @@ def train(args: dict,
                             grad_stats.last_layer,
                             grad_stats.min,
                             grad_stats.max))
-            log_stats()
-            assert not np.isnan(loss), 'loss is nan'
-
+            if train_:
+                log_stats()
+                wandb.log({"loss": loss, 'lr':_new_lr})
+                assert not np.isnan(loss), 'loss is nan'
+    
         # -- Save Checkpoint after every epoch
-        logger.info('avg. loss %.3f' % loss_meter.avg)
-        save_checkpoint(epoch+1)
+        if train_:
+            logger.info('avg. loss %.3f' % loss_meter.avg)
+            save_checkpoint(epoch+1)
+        else:
+            return loss_meter.avg

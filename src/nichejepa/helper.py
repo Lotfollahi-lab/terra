@@ -11,7 +11,7 @@ from typing import Literal, Optional, Tuple
 
 import torch
 
-import nichejepa.models.gene_transformers as gt
+import src.nichejepa.models.gene_transformers as gt
 from .models.utils import trunc_normal_
 from .utils.schedulers import (CosineWDSchedule,
                                WarmupCosineSchedule)

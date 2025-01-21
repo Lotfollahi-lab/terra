@@ -23,6 +23,7 @@ from src.nichejepa.train import train
 from src.nichejepa.utils.config import create_params_from_YAML_wandb_config
 from src.nichejepa.utils.distributed import init_distributed
 from src.nichejepa.utils.evaluation import clustering_metrics
+from sklearn.model_selection import train_test_split    
 
 
 # Setup argument parsing
@@ -47,43 +48,55 @@ def process_main(rank, args, params, world_size, devices, logger, folder_path, i
     logger.setLevel(logging.INFO if rank == 0 else logging.ERROR)
 
     world_size, rank = init_distributed(
-        rank_and_world_size=(rank, world_size), port=40003)
+        rank_and_world_size=(rank, world_size), port=29503)
     logger.info(f'Running... (rank: {rank}/{world_size})')
 
     # Execute training or evaluation
     if is_training:
-        train_dataset, test_dataset = prepare_dataset(params)
+        train_dataset, val_dataset, test_dataset = prepare_dataset(params)
         train(params, train_dataset, test_dataset, save_folder_path=folder_path)
     else:
-        train_dataset, test_dataset = prepare_dataset(params)
-        train_data = infer(params, train_dataset, load_folder_path=folder_path)
+        train_dataset, test_dataset, val_dataset = prepare_dataset(params)
+        loss_val = train(params, val_dataset, test_dataset, resume_preempt=True, save_folder_path=folder_path, train_=False)
+        params['data']['test_batch_ids'] = ['1000_batch11', '1000_batch19', '1000_batch32']
+        params['data']['split_val'] = 0.0
+        train_dataset, test_dataset, val_dataset = prepare_dataset(params)
+        #indices = list(range(len(test_dataset)))
+        #split_params = {'test_size': 0.25,
+        #                'random_state': 0}
+        #train_indices, test_indices = train_test_split(indices, **split_params)
+        #val_dataset = test_dataset.select(test_indices)
+        #train_data = infer(params, train_dataset, load_folder_path=folder_path)
         test_data = infer(params, test_dataset, load_folder_path=folder_path)
-        adata_combined = ad.concat(
-            [train_data, test_data], axis=0) # concat along the obs (cells)
-        adata_combined.write(f'{folder_path}/adata.h5ad')
+        #adata_combined = ad.concat(
+        #    [train_data, test_data], axis=0) # concat along the obs (cells)
+        #adata_combined.write(f'{folder_path}/adata.h5ad')
+        
         cell_type_nmi_ari = clustering_metrics(
-            adata_combined,
+            test_data,
             emb_key=f"cell_emb_layer_{params['meta']['enc_depth'] - 1}",
             label_col='cell_type')
-        '''
+        print(f"neighborhood_emb_layer_{params['meta']['enc_depth'] - 1}")
         niche_nmi_ari = clustering_metrics(
-            adata_combined,
+            test_data,
             emb_key=f"neighborhood_emb_layer_{params['meta']['enc_depth'] - 1}",
-            label_col='major_brain_region')
+            label_col='niche_type')
         wandb.log(
             {"folder_path": folder_path,
              "niche_nmi": niche_nmi_ari['nmi'],
              "niche_ari": niche_nmi_ari['ari'],
              'cell_type_nmi': cell_type_nmi_ari['nmi'],
-             'cell_type_ari': cell_type_nmi_ari['ari']})
-        '''
+             'cell_type_ari': cell_type_nmi_ari['ari'],
+             'loss_val' : loss_val,
+             'len_dataset': len(test_data)})
+        
 
 # Function to manage sweeping process
 def sweep_func(args):
     num_gpus = len(args.devices)
     processes = []
     
-    wandb.init(project='nichejepa-sweep', mode='offline')
+    wandb.init(project='nichejepa-sweep', mode='online')
 
     if len(wandb.config.keys()) != 0:
       update_from_sweep = True
@@ -104,10 +117,13 @@ def sweep_func(args):
     current_timestamp = (
         datetime.now().strftime("%d%m%Y_%H%M%S") +
         f"_{datetime.now().microsecond // 1000:03d}")
-    folder_path = os.path.join(artifact_folder_path,
-                            params['data']['dataset_name'],
-                            current_timestamp)
-
+    print(params)
+    if params['state']['folder_path'] is None:
+        folder_path = os.path.join(artifact_folder_path,
+                        params['data']['dataset_name'],
+                        current_timestamp)
+    else:
+        folder_path = params['state']['folder_path']
     # Run the process_main function in a single or multi-GPU setting
     if args.test:
         process_main(0, args, params, num_gpus, args.devices, logger, folder_path)
@@ -140,14 +156,14 @@ if __name__ == '__main__':
     # Configuration for W&B sweep
     sweep_config = {
         'method': 'random',
-        'metric': {'name': 'niche_nmi', 'goal': 'maximize'},
+        'metric': {'name': 'loss_val', 'goal': 'minimize'},
         'parameters': {
-            'enc_pred_depth': {'values': [31,32,41]},
-            'pos_learnable': {'values': [1,0]},
-            'ema': {'distribution': 'uniform', "max": 1, "min": 0},
+            #'enc_pred_depth': {'values': [31]},
+            #'pos_learnable': {'values': [1,0]},
+            'ema': {'distribution': 'uniform', "max": 0.75, "min": 0.4},
             'per_block_mask_ratio': {'distribution': 'uniform',
-                                       "max": 0.6, "min": 0.1},
-            'n_targets': {'distribution': 'int_uniform', 'min': 1, 'max': 9},
+                                       "max": 0.7, "min": 0.4},
+            #'n_targets': {'distribution': 'int_uniform', 'min': 1, 'max': 9},
         }
     }
 
