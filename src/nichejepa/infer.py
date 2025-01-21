@@ -424,6 +424,7 @@ def infer(args: dict,
     adata_metadata = collect_adata_from_folder(raw_data_folder_path)
     adata_metadata_subset = adata_metadata[
         adata_metadata.obs['cell_id'].isin(adata.obs['cell_id'])]
+
     merged_obs = pd.merge(adata.obs,
                           adata_metadata_subset.obs,
                           on='cell_id')

@@ -34,9 +34,9 @@ def parse_arguments():
                         help='Name of the config file to load.')
     parser.add_argument('--devices', type=str, nargs='+', default=['cuda:0'],
                         help='Devices to use on the local machine.')
-    parser.add_argument('--do_sweep', action='store_true',
+    parser.add_argument('--do_sweep', action='store_true', default=False,
                         help='Enable or disable parameter sweeping.')
-    parser.add_argument('--test', action='store_true',
+    parser.add_argument('--test', action='store_true', default=False,
                         help='Run in test mode.')
     return parser.parse_args()
 
@@ -48,8 +48,9 @@ def process_main(rank, args, params, world_size, devices, logger, folder_path, i
     logger.setLevel(logging.INFO if rank == 0 else logging.ERROR)
 
     world_size, rank = init_distributed(
-        rank_and_world_size=(rank, world_size), port=random.randint(40000, 50000))
+        rank_and_world_size=(rank, world_size), port=40003)
     logger.info(f'Running... (rank: {rank}/{world_size})')
+    logger.info(f'Training mode: {is_training}')
 
     # Execute training or evaluation
     if is_training:
@@ -113,6 +114,7 @@ def sweep_func(args):
     if args.test:
         process_main(0, args, params, num_gpus, args.devices, logger, folder_path)
     else:
+
         for rank in range(num_gpus):
             p = mp.Process(target=process_main,
                            args=(rank, args, params, num_gpus, args.devices, logger, folder_path))
