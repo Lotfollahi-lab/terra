@@ -10,14 +10,14 @@ Input Data
 ----------
 Required format:
     Raw counts spatial transcriptomics (ST) data with all genes (no feature
-    selection) as '.h5ad' (anndata) files. Spatial coordinates are stored in
+    selection) as '.h5ad' (AnnData) files. Spatial coordinates are stored in
     adata.obsm['spatial'].
 Required gene attributes:
     Ensembl ID for each gene (adata.var['ensembl_id']).
 Required cell attributes:
     Cell ID in index. Metadata is retrieved at inference time via this cell ID.
 Optional cell attributes:
-    Binary indicator of whether cell should be used for tokenization based on
+    Binary indicator of whether cell should be included in tokenization based on
     user-defined filtering criteria (adata.obs['filter_pass']).
 
 Usage
@@ -40,18 +40,18 @@ Description
 ----------
 Input data is a directory with '.h5ad' files containing raw counts from ST data,
 including all genes detected without feature selection. The input file type is
-specified by the argument 'file_format' in the tokenize_data function. Genes
+specified by the argument `file_format` in the `tokenize_data()` function. Genes
 should be labeled with Ensembl IDs (adata.var['ensembl_id']), which provide a
 unique identifer for conversion to tokens. Gene names can be converted to
-Ensembl IDs via the helper function nichejepa.datasets.utils.get_ensembl_ids()
+Ensembl IDs via the helper function `nichejepa.datasets.utils.get_ensembl_ids()`
 or via the pyensembl Python package. No cell metadata is required, but the cell
 ID needs to be stored in the index. Additionally, if the original '.h5ad' file
-contains a cell attribute called adata.obs['filter_pass'], this will be used as
+contains a cell attribute called adata.obs['filter_pass'], this can be used as
 a binary indicator of whether to include these cells in the tokenization. All
 cells with '1' in this attribute will be tokenized, whereas the others will be
 excluded. One may use this column to indicate QC filtering or other criteria for
 selection for inclusion in the final tokenized dataset. If one's data is in
-other formats besides '.h5ad', one can use the relevant tools (such as Anndata
+other formats besides '.h5ad', one should the relevant tools (such as AnnData
 tools) to convert the file to '.h5ad' format prior to initializing the cell
 tokenizer.
 """
@@ -65,7 +65,7 @@ import pickle
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import List, Literal, Optional, Tuple
+from typing import Literal, Optional, Tuple
 
 import anndata as ad
 import numpy as np
@@ -73,16 +73,15 @@ import scipy.sparse as sp
 import squidpy as sq
 from datasets import Dataset
 
-from ..preprocessors.aggregators import aggregate_neighbors
-from ..preprocessors.filters import filter_poor_quality_cells
+from ..preprocessors.filters import filter_cells
+from ..preprocessors.graph import construct_neighbor_graph
 from ..preprocessors.normalizers import normalize_by_analytic_pearson_residuals
 from ..preprocessors.normalizers import normalize_by_cell_area
-from ..preprocessors.normalizers import normalize_by_mean
-from ..preprocessors.normalizers import normalize_by_nonzero_mean
+from ..preprocessors.normalizers import normalize_by_gene_corrected_read_depth
+from ..preprocessors.normalizers import normalize_by_factor
 from ..preprocessors.normalizers import normalize_by_read_depth
 from ..preprocessors.normalizers import normalize_by_seurat
 from ..preprocessors.normalizers import normalize_by_shifted_log
-from ..preprocessors.normalizers import normalize_by_shifted_log_mean
 from .tokenize import process_gene_expr, process_gene_tokens, rank_gene_tokens
 
 
@@ -91,51 +90,67 @@ logger = logging.getLogger(__name__)
 
 
 base_path = Path(__file__).parent.parent.parent.parent
-CELL_GENE_MEANS_FILE = base_path / 'cell_gene_means_dictionary.pkl'
-CELL_GENE_NZMEANS_FILE = base_path / 'cell_gene_nzmeans_dictionary.pkl'
-CELL_GENE_LOGMEANS_FILE = base_path / 'cell_gene_logmeans_dictionary.pkl'
-NEIGHBORHOOD_GENE_MEANS_FILE = base_path / 'neighborhood_gene_means_dictionary.pkl'
-NEIGHBORHOOD_GENE_NZMEANS_FILE = base_path / 'neighborhood_gene_nzmeans_dictionary.pkl'
-NEIGHBORHOOD_GENE_LOGMEANS_FILE = base_path / 'neighborhood_gene_logmeans_dictionary.pkl'
-TOKEN_DICTIONARY_FILE = base_path / 'token_dictionary.pkl'
-GENE_PANEL_ID_TO_GENE_PANEL_DICT_FILE = base_path / 'gene_panel_ID_to_gene_panel_dict.pkl'
-FILE_PATH_TO_GENE_PANEL_ID_DICT_FILE = base_path / 'file_path_to_gene_panel_ID_dict.pkl'
+norm_factor_file_path = base_path / 'norm_factors.csv'
+token_dictionary_file_path = base_path / 'token_dictionary.pkl'
 
 
 class CellBaseTokenizer(ABC):
     def __init__(
         self,
         nproc: int=1,
-        processing_mode: Optional[Literal[
-            'parallel', 'sequential']]='sequential',
+        processing_mode: Literal['parallel', 'sequential']='sequential',
         chunk_size: int=512,
         model_input_size: int=2048,
         include_zero_expr_genes: bool=False,
-        n_neighs: Optional[float]=None,
+        n_neighs: Optional[float]=10,
         radius: Optional[float]=None,
-        delaunay: bool=True,
-        norm_factor: Optional[Literal['read_depth', 'cell_area']]=None,
-        norm_method: Optional[Literal['analytic_pearson_residuals',
-                                      'mean',
-                                      'nzmean',
-                                      'seurat_v3',
-                                      'shifted_logmean'
-                                      'shifted_log']]='shifted_log',
-        cell_gene_means_file: Path | str=CELL_GENE_MEANS_FILE,
-        cell_gene_nzmeans_file: Path | str=CELL_GENE_NZMEANS_FILE,
-        cell_gene_logmeans_file: Path | str=CELL_GENE_LOGMEANS_FILE,
-        neighborhood_gene_means_file: Path | str=NEIGHBORHOOD_GENE_MEANS_FILE,
-        neighborhood_gene_nzmeans_file: Path | str=NEIGHBORHOOD_GENE_NZMEANS_FILE,
-        neighborhood_gene_logmeans_file: Path | str=NEIGHBORHOOD_GENE_LOGMEANS_FILE,
-        token_dictionary_file: Path | str=TOKEN_DICTIONARY_FILE,
-        gene_panel_ID_to_gene_panel_dict_file: Path | str=GENE_PANEL_ID_TO_GENE_PANEL_DICT_FILE,
-        file_path_to_gene_panel_ID_dict_file: Path | str=FILE_PATH_TO_GENE_PANEL_ID_DICT_FILE,
+        delaunay: bool=False,
+        rank_cell_norm_method: Optional[
+            Literal['read_depth',
+                    'gene_corrected_read_depth',
+                    'cell_area',
+                    ]]='gene_corrected_read_depth',
+        rank_gene_norm_method: Optional[
+            Literal['mean',
+                    'nonzero_mean',
+                    'seurat_v3',
+                    ]]='nonzero_mean',
+        rank_count_norm_method: Optional[
+            Literal['analytic_pearson_residuals',
+                    'shifted_log',
+                    ]]=None,
+        count_cell_norm_method: Optional[
+            Literal['read_depth',
+                    'gene_corrected_read_depth',
+                    'cell_area',
+                    ]]='gene_corrected_read_depth',
+        count_gene_norm_method: Optional[
+            Literal['mean',
+                    'nonzero_mean',
+                    'seurat_v3',
+                    ]]=None,
+        count_count_norm_method: Optional[
+            Literal['analytic_pearson_residuals',
+                    'shifted_log',
+                    ]]='shifted_log',
+        norm_factor_file_path: Path | str=norm_factor_file_path,
+        token_dictionary_file_path: Path | str=token_dictionary_file_path,
         ):
         """
         CellBaseTokenizer class.
 
         Parameters
         ----------
+        n_proc:
+            Number of processes.
+        processing_mode:
+            Processing mode.
+        chunk_size:
+            Chunk size used for splitting adata objects during tokenization.
+        model_input_size:
+            Sequence length of the cell sequence.
+        include_zero_expr_genes:
+            If 'True', include non-expressed genes in the tokenization.
         n_neighs:
             If specified, use `n_neighs` to compute the neighborhood graph. If
             'radius' or 'delaunay' are also specified, a union neighborhood
@@ -148,6 +163,22 @@ class CellBaseTokenizer(ABC):
             If 'True', compute the neighborhood graph by delaunay triangulation.
             If 'n_neighs' or 'radius' are also specified, a union neighborhood
             graph will be computed.
+        rank_cell_norm_method:
+            Normalization method on cell level for ranking genes.
+        rank_gene_norm_method:
+            Normalization method on gene level for ranking genes.
+        rank_count_norm_method:
+            Normalization method on count level for ranking genes.
+        count_cell_norm_method:
+            Normalization method on cell level for gene expression.
+        count_gene_norm_method:
+            Normalization method on gene level for gene expression.
+        count_count_norm_method:
+            Normalization method on count level for gene expression.
+        norm_factor_file_path:
+            File path to '.csv' file containing norm factors per gene.
+        token_dictionary_file_path:
+            File path to the '.pkl' file containing the token dictionary.
         """
         self.nproc = nproc
         self.processing_mode = processing_mode
@@ -157,46 +188,32 @@ class CellBaseTokenizer(ABC):
         self.n_neighs = n_neighs
         self.radius = radius
         self.delaunay = delaunay
-        self.norm_factor = norm_factor
-        self.norm_method = norm_method
-        self.cell_gene_means_file = cell_gene_means_file
-        self.cell_gene_nzmeans_file = cell_gene_nzmeans_file
-        self.cell_gene_logmeans_file = cell_gene_logmeans_file
-        self.neighborhood_gene_means_file = neighborhood_gene_means_file
-        self.neighborhood_gene_nzmeans_file = neighborhood_gene_nzmeans_file
-        self.neighborhood_gene_logmeans_file = neighborhood_gene_logmeans_file
-        self.token_dictionary_file = token_dictionary_file
-        self.gene_panel_ID_to_gene_panel_dict_file = gene_panel_ID_to_gene_panel_dict_file
-        self.file_path_to_gene_panel_ID_dict_file = file_path_to_gene_panel_ID_dict_file
+        self.rank_cell_norm_method = rank_cell_norm_method
+        self.rank_gene_norm_method = rank_gene_norm_method
+        self.rank_count_norm_method = rank_count_norm_method
+        self.count_cell_norm_method = count_cell_norm_method
+        self.count_gene_norm_method = count_gene_norm_method
+        self.count_count_norm_method = count_count_norm_method
+        self.norm_factor_file_path = norm_factor_file_path
+        self.token_dictionary_file_path = token_dictionary_file_path
 
         # Load token dictionary
         logger.info('Loading token dictionary from '
-                    f'{self.token_dictionary_file}.')
-        with open(token_dictionary_file, 'rb') as f:
+                    f'{self.token_dictionary_file_path}.')
+        with open(token_dictionary_file_path, 'rb') as f:
             self.token_dict = pickle.load(f)
 
+        # Get maximum number of cls and special tokens based on token dict
         self.max_cls_tokens = sum(1 for key in self.token_dict if "cls" in key)
         self.max_special_tokens = self.max_cls_tokens + sum(
             1 for key in self.token_dict if "spt" in key)
-
-        # Load gene panel ID to gene panel dictionary
-        logger.info('Loading gene panel ID to gene panel dictionary from '
-                    f'{self.gene_panel_ID_to_gene_panel_dict_file}.')
-        with open(self.gene_panel_ID_to_gene_panel_dict_file, 'rb') as f:
-            self.gene_panel_ID_to_gene_panel_dict = pickle.load(f)
-            
-        # Load dictionary of file paths to gene panel IDs
-        logger.info('Loading file path to gene panel ID dictionary from '
-                    f'{self.file_path_to_gene_panel_ID_dict_file}.')
-        with open(self.file_path_to_gene_panel_ID_dict_file, 'rb') as f:
-            self.file_path_to_gene_panel_ID_dict = pickle.load(f)
             
         # Get vocabulary and gene Ensembl IDs (protein-coding and miRNA genes)
         self.vocab = list(self.token_dict.keys())
         self.coding_miRNA_ids = [
             key for key in list(self.vocab) if 'ENS' in key]
         self.coding_miRNA_dict = dict(
-            zip(self.coding_miRNA_ids, [True] * len(self.vocab)))   
+            zip(self.coding_miRNA_ids, [True] * len(self.vocab)))
 
     def tokenize_data(self,
                       input_directory: Path | str,
@@ -215,14 +232,14 @@ class CellBaseTokenizer(ABC):
         Parameters
         ----------
         input_directory:
-            Path to directory containing '.h5ad' (anndata) files.
+            Path to directory containing '.h5ad' (AnnData) files.
         output_directory:
             Path to directory where tokenized data will be saved as '.dataset'
             file.
         output_file_prefix:
             Prefix for output file.
         file_format:
-            Format of input files. Can be '.h5ad'.
+            Format of input files. Must be '.h5ad' currently.
         use_generator:
             If 'True', use generator for tokenization, else dict.
         cache_directory_path:
@@ -394,12 +411,12 @@ class CellGraphTokenizer(CellBaseTokenizer):
                         adata_file_path: Path | str,
                         ) -> dict:
         """
-        Tokenize cells from an '.h5ad' (anndata) file.
+        Tokenize cells from an '.h5ad' (AnnData) file, equivalent to one batch.
 
         Parameters
         ----------
         adata_file_path:
-            Path to anndata file containing cells to be tokenized.
+            Path to AnnData file containing cells to be tokenized.
 
         Returns
         ----------
@@ -428,79 +445,181 @@ class CellGraphTokenizer(CellBaseTokenizer):
                 List containing batch token.
             - cell_ids:
                 List of cell IDs.
+            - cell_total_counts:
+                Cell and neighbor cell read depth.
+            - cell_n_probed_genes:
+                Number of genes probed.
         """
-        # Initialize dict to collect tokens and cell ids
+        # Initialize dict to collect tokens, cell ids, and metadata
         adata_dict = {}
 
+        # Read batch
         adata = ad.read_h5ad(adata_file_path)
 
-        print('Filtering cells.')
-        # Filter to remove poor quality cells
-        adata = filter_poor_quality_cells(adata)
+        print('Filtering cells...')
+        # Filter cells based on adata.obs['filter_pass']
+        adata = filter_cells(adata)
 
-        print('Computing spatial neighborhood graph.')
-        adata = aggregate_neighbors(
+        print('Computing spatial neighborhood...')
+        # Construct neighbor graph
+        adata = construct_neighbor_graph(
             adata,
             n_neighs=self.n_neighs,
             radius=self.radius,
             delaunay=self.delaunay,
-            include_self_loop=False)
+            include_self_loop=False,
+            compute_neighbor_counts=False)
 
-        print('Normalizing gene expression counts.')
-        # Perform normalization of total counts per cell
-        if self.norm_factor == 'read_depth':
-            if self.norm_method == 'analytic_pearson_residuals':
-                raise ValueError(
-                    "Invalid combination of 'norm_factor' and 'norm_method': "
-                    f'({self.norm_factor} / {self.norm_method}).')
-            adata.X = normalize_by_read_depth(adata.X)
+        print('Normalizing gene expression counts...')
+        # Perform normalization of counts per cell for rank and count
+        # tokenization
+        if self.rank_cell_norm_method == 'read_depth':
+            adata.layers['X_rank'] = normalize_by_read_depth(adata.X)
 
-        elif self.norm_factor == 'cell_area':
-            if self.norm_method == 'analytic_pearson_residuals':
-                raise ValueError(
-                    "Invalid combination of 'norm_factor' and 'norm_method': "
-                    f'({self.norm_factor} / {self.norm_method}).')
-            adata.X = normalize_by_cell_area(
+        elif self.rank_cell_norm_method == 'gene_corrected_read_depth':
+            adata.layers['X_rank'] = normalize_by_gene_corrected_read_depth(adata.X) 
+
+        elif self.rank_cell_norm_method == 'cell_area':
+            adata.layers['X_rank'] = normalize_by_cell_area(
                 adata.X,
                 cell_areas=adata.obs['cell_area'].values)
         else:
-            if self.norm_factor is None:
-                pass
+            if self.rank_cell_norm_method is None:
+                adata.layers['X_rank'] = adata.X
             else:
-                raise ValueError(f"Invalid 'norm_factor' {self.norm_factor}.")
-                
-        # Perform normalization of counts
-        if self.norm_method == 'analytic_pearson_residuals':
-            adata.X = normalize_by_analytic_pearson_residuals(adata.X)
-        elif self.norm_method == 'seurat_v3':
-            adata.X = normalize_by_seurat(adata.X)
-        elif self.norm_method == 'mean':
-            adata.X = normalize_by_mean(
+                raise ValueError(
+                    f"Invalid 'cell_norm_method' {self.rank_cell_norm_method}.")
+
+        if self.count_cell_norm_method == 'read_depth':
+            adata.layers['X_count'] = normalize_by_read_depth(adata.X)
+
+        elif self.count_cell_norm_method == 'gene_corrected_read_depth':
+            adata.layers['X_count'] = normalize_by_gene_corrected_read_depth(adata.X) 
+
+        elif self.count_cell_norm_method == 'cell_area':
+            adata.layers['X_count'] = normalize_by_cell_area(
                 adata.X,
-                gene_means_file=self.cell_gene_means_file,
-                probed_genes=adata.var['ensembl_id'])
-        elif self.norm_method == 'nzmean':
-            adata.X = normalize_by_nonzero_mean(
-                adata.X,
-                gene_nzmeans_file=self.cell_gene_nzmeans_file,
-                probed_genes=adata.var['ensembl_id'])
-        elif self.norm_method == 'shifted_logmean':
-            adata.X = normalize_by_shifted_log_mean(
-                adata.X,
-                gene_logmeans_file=self.cell_gene_logmeans_file,
-                probed_genes=adata.var['ensembl_id'])
-        elif self.norm_method == 'shifted_log':
-            adata.X = normalize_by_shifted_log(adata.X)
+                cell_areas=adata.obs['cell_area'].values)
         else:
-            if self.norm_method is None:
+            if self.count_cell_norm_method is None:
+                adata.layers['X_count'] = adata.X
+            else:
+                raise ValueError(
+                    f"Invalid 'cell_norm_method' {self.count_cell_norm_method}.")
+
+        # Perform normalization of counts per gene for rank and count
+        # tokenization
+        if self.rank_gene_norm_method == 'mean':
+            if self.rank_cell_norm_method is None:
+                norm_factor = 'mean'
+            elif self.rank_cell_norm_method == 'read_depth':
+                norm_factor = 'read_depth_mean'
+            elif self.rank_cell_norm_method == 'gene_corrected_read_depth':
+                norm_factor = 'gene_corrected_read_depth_mean'
+            elif self.rank_cell_norm_method == 'cell_area':
+                norm_factor = 'cell_area_mean'
+            adata.layers['X_rank'] = normalize_by_factor(
+                adata.layers['X_rank'],
+                norm_factor_file_path=self.norm_factor_file_path,
+                probed_genes=adata.var['ensembl_id'],
+                norm_factor=norm_factor)
+        elif self.rank_gene_norm_method == 'nonzero_mean':
+            if self.rank_cell_norm_method is None:
+                norm_factor = 'nonzero_mean'
+            elif self.rank_cell_norm_method == 'read_depth':
+                norm_factor = 'read_depth_nonzero_mean'
+            elif self.rank_cell_norm_method == 'gene_corrected_read_depth':
+                norm_factor = 'gene_corrected_read_depth_nonzero_mean'
+            elif self.rank_cell_norm_method == 'cell_area':
+                norm_factor = 'cell_area_nonzero_mean'
+            adata.layers['X_rank'] = normalize_by_factor(
+                adata.layers['X_rank'],
+                norm_factor_file_path=self.norm_factor_file_path,
+                probed_genes=adata.var['ensembl_id'],
+                norm_factor=norm_factor)
+        elif self.rank_gene_norm_method == 'seurat_v3':
+            adata.layers['X_rank'] = normalize_by_seurat(adata.X)
+        else:
+            if self.rank_gene_norm_method is None:
                 pass
             else:
-                raise ValueError(f"Invalid 'norm_method': {self.norm_method}.")
+                raise ValueError(
+                    f"Invalid 'gene_norm_method' {self.rank_gene_norm_method}.")
+
+        if self.count_gene_norm_method == 'mean':
+            if self.count_cell_norm_method is None:
+                norm_factor = 'mean'
+            elif self.count_cell_norm_method == 'read_depth':
+                norm_factor = 'read_depth_mean'
+            elif self.count_cell_norm_method == 'gene_corrected_read_depth':
+                norm_factor = 'gene_corrected_read_depth_mean'
+            elif self.count_cell_norm_method == 'cell_area':
+                norm_factor = 'cell_area_mean'
+            adata.layers['X_count'] = normalize_by_factor(
+                adata.layers['X_count'],
+                norm_factor_file_path=self.norm_factor_file_path,
+                probed_genes=adata.var['ensembl_id'],
+                norm_factor=norm_factor)
+        elif self.count_gene_norm_method == 'nonzero_mean':
+            if self.count_cell_norm_method is None:
+                norm_factor = 'nonzero_mean'
+            elif self.count_cell_norm_method == 'read_depth':
+                norm_factor = 'read_depth_nonzero_mean'
+            elif self.count_cell_norm_method == 'gene_corrected_read_depth':
+                norm_factor = 'gene_corrected_read_depth_nonzero_mean'
+            elif self.count_cell_norm_method == 'cell_area':
+                norm_factor = 'cell_area_nonzero_mean'
+            adata.layers['X_count'] = normalize_by_factor(
+                adata.layers['X_count'],
+                norm_factor_file_path=self.norm_factor_file_path,
+                probed_genes=adata.var['ensembl_id'],
+                norm_factor=norm_factor)
+        elif self.count_gene_norm_method == 'seurat_v3':
+            adata.layers['X_count'] = normalize_by_seurat(adata.X)
+        else:
+            if self.count_gene_norm_method is None:
+                pass
+            else:
+                raise ValueError(
+                    f"Invalid 'gene_norm_method' {self.count_gene_norm_method}.")
+
+        # Perform normalization of counts for rank and count tokenization
+        if self.rank_count_norm_method == 'analytic_pearson_residuals':
+            if (self.rank_cell_norm_method is not None) or (
+                self.rank_gene_norm_method is not None):
+                raise ValueError('Invalid combination of norm methods.')
+            adata.layers['X_rank'] = normalize_by_analytic_pearson_residuals(
+                adata.layers['X_rank'])
+        elif self.rank_count_norm_method == 'shifted_log':
+            adata.layers['X_rank'] = normalize_by_shifted_log(
+                adata.layers['X_rank'])
+        else:
+            if self.rank_count_norm_method is None:
+                pass
+            else:
+                raise ValueError(
+                    f"Invalid 'counts_norm_method': {self.rank_count_norm_method}.")
+
+        if self.count_count_norm_method == 'analytic_pearson_residuals':
+            if (self.count_cell_norm_method is not None) or (
+                self.count_gene_norm_method is not None):
+                raise ValueError('Invalid combination of norm methods.')
+            adata.layers['X_count'] = normalize_by_analytic_pearson_residuals(
+                adata.layers['X_count'])
+        elif self.count_count_norm_method == 'shifted_log':
+            adata.layers['X_count'] = normalize_by_shifted_log(
+                adata.layers['X_count'])
+        else:
+            if self.count_count_norm_method is None:
+                pass
+            else:
+                raise ValueError(
+                    f"Invalid 'counts_norm_method': {self.count_count_norm_method}.")
 
         # Initialize dict to collect tokens and cell IDs
         adata_dict = {}
 
-        # Retrieve gene tokens for genes contained in dataset and vocab, i.e.
+        # Retrieve gene tokens for genes contained in batch and vocab, i.e.
         # protein-coding and miRNA genes
         print('Retrieving gene tokens.')
         coding_miRNA_idx = np.where(
@@ -511,7 +630,7 @@ class CellGraphTokenizer(CellBaseTokenizer):
         coding_miRNA_tokens_cell = np.array(
             [self.token_dict[gene_id] for gene_id in coding_miRNA_ids])
 
-        # Prepare gene tokens for cell and neighborhood for this file
+        # Prepare gene tokens for cell and neighborhood for this batch
         adata_dict['gene_tokens_cell'] = []
         adata_dict['gene_expr_cell'] = []
         adata_dict['gene_tokens_neighborhood'] = []
@@ -521,33 +640,39 @@ class CellGraphTokenizer(CellBaseTokenizer):
         print('Ranking gene tokens based on normalized counts.')
         for i in range(0, len(adata), self.chunk_size):
             if self.include_zero_expr_genes:
-                norm_counts_cell = adata[
-                    i : i + self.chunk_size, coding_miRNA_idx].X.toarray()
+                norm_counts_cell_rank = adata[
+                    i : i + self.chunk_size, coding_miRNA_idx].layers['X_rank'].toarray()
+                norm_counts_cell_count = adata[
+                    i : i + self.chunk_size, coding_miRNA_idx].layers['X_count'].toarray()
 
                 # Rank gene tokens and append across chunks
                 adata_dict['gene_tokens_cell'] += [
-                    rank_gene_tokens(norm_counts_cell[j],
+                    rank_gene_tokens(norm_counts_cell_rank[j],
                     coding_miRNA_tokens_cell)
-                    for j in range(norm_counts_cell.shape[0])]
+                    for j in range(norm_counts_cell_rank.shape[0])]
 
                 # Rank gene expression and append across chunks
                 adata_dict['gene_expr_cell'] += [
-                    norm_counts_cell[j][np.argsort(-norm_counts_cell[j])]
+                    norm_counts_cell_count[j][np.argsort(-norm_counts_cell_rank[j])]
                     for j in range(norm_counts_cell.shape[0])]
             else:
-                norm_counts_cell = sp.csr_matrix(adata[
-                    i : i + self.chunk_size, coding_miRNA_idx].X)
+                norm_counts_cell_rank = sp.csr_matrix(adata[
+                    i : i + self.chunk_size, coding_miRNA_idx].layers['X_rank'])
+                norm_counts_cell_count = sp.csr_matrix(adata[
+                    i : i + self.chunk_size, coding_miRNA_idx].layers['X_count'])
 
                 # Rank gene tokens and append across chunks
                 adata_dict['gene_tokens_cell'] += [
-                    rank_gene_tokens(norm_counts_cell[j].data,
-                    coding_miRNA_tokens_cell[norm_counts_cell[j].indices])
-                    for j in range(norm_counts_cell.shape[0])]
+                    rank_gene_tokens(
+                        norm_counts_cell_rank[j].data,
+                        coding_miRNA_tokens_cell[norm_counts_cell_rank[j].indices])
+                    for j in range(norm_counts_cell_rank.shape[0])]
 
                 # Rank gene expression and append across chunks
                 adata_dict['gene_expr_cell'] += [
-                    norm_counts_cell[j].data[np.argsort(-norm_counts_cell[j].data)]
-                    for j in range(norm_counts_cell.shape[0])]
+                    norm_counts_cell_count[j].data[
+                        np.argsort(-norm_counts_cell_rank[j].data)]
+                    for j in range(norm_counts_cell_count.shape[0])]
 
         print('Retrieving tokens for neighborhood cells.')
         adata_dict['gene_tokens_neighborhood'] = [
@@ -558,12 +683,19 @@ class CellGraphTokenizer(CellBaseTokenizer):
             np.array([]) for i in range(len(adata))]
         
         adata_dict['cell_degrees'] = []
+
+        n_cells = len(adata)
+
+        # Add read depth and number of genes
+        adata_dict['cell_total_counts'] = [
+            [total_counts] for total_counts in adata.X.sum(axis=1).A1.tolist()]
+        adata_dict['cell_n_probed_genes'] = [adata.X.shape[1]] * n_cells
         
         # Loop through all cells to add neighbor cell gene tokens based on
         # position of neighbor cell compared to index cell. Gene tokens of cells
         # that are closer to the index cell will be added first.
         for i in range(len(adata)):
-            # Collect all neighbors of cell i (excluding cell i)
+            # Collect all neighbors of cell i
             neighbors_i = adata.obsp['spatial_connectivities'][i].nonzero()[1]
 
             # Store cell degree (number of neighbors excluding cell i)
@@ -590,8 +722,7 @@ class CellGraphTokenizer(CellBaseTokenizer):
 
             sorted_indices = np.argsort(cell_distances)
             assert len(neighbors_i) == len(cell_distances), (
-                'Number of neighbors (excluding cell i) does not equal number '
-                'of distances.')
+                'Number of neighbors does not equal number of distances.')
 
             # Loop through distance-sorted neighbor cells and add gene and
             # segment tokens and counts
@@ -607,11 +738,12 @@ class CellGraphTokenizer(CellBaseTokenizer):
                      [j + self.max_special_tokens + 1] * len(
                         adata_dict['gene_tokens_cell'][k])))
 
+                adata_dict['cell_total_counts'][i].append(adata.X[j].sum())
+
         # Add cell IDs for collecting metadata at inference time
         adata_dict['cell_id'] = adata.obs['cell_id'].values.tolist()
         
         # Add special tokens (positional tokens and value tokens)
-        n_cells = len(adata)
         batch_id_key = f"{adata.uns['dataset_id']}_{adata.uns['batch']}"
 
         adata_dict['batch_token'] = [self.token_dict['spt_batch']] * n_cells
@@ -623,9 +755,9 @@ class CellGraphTokenizer(CellBaseTokenizer):
 
         adata_dict['batch_value_token'] = [
             self.token_dict[f'spv_{batch_id_key}']] * n_cells
-        # adata_dict['gene_panel_value_token'] = [self.token_dict[
-            # f'spv_{self.file_path_to_gene_panel_ID_dict[str(adata_file_path)]}']
-            # ] * n_cells
+        adata_dict['gene_panel_value_token'] = [self.token_dict[
+            f'spv_gene_panel{len(adata.var_names)}']
+            ] * n_cells
         adata_dict['assay_value_token'] = [
             self.token_dict[f'spv_{adata.uns["assay"]}']] * n_cells
         adata_dict['species_value_token'] = [
@@ -642,9 +774,8 @@ class CellGraphTokenizer(CellBaseTokenizer):
         spv_idx_subtract = spv_start_idx - 2 - self.max_cls_tokens
         adata_dict['batch_value'] = [
             self.token_dict[f'spv_{batch_id_key}'] - spv_idx_subtract] * n_cells
-        # adata_dict['gene_panel_value'] = [self.token_dict[
-            # f'spv_{self.file_path_to_gene_panel_ID_dict[str(adata_file_path)]}']
-            # - spv_idx_subtract] * n_cells
+        adata_dict['gene_panel_value'] = [self.token_dict[
+            f'spv_gene_panel{len(adata.var_names)}'] - spv_idx_subtract] * n_cells
         adata_dict['assay_value'] = [
             self.token_dict[
                 f'spv_{adata.uns["assay"]}'] - spv_idx_subtract] * n_cells
@@ -683,15 +814,15 @@ class CellGraphTokenizer(CellBaseTokenizer):
         n_nonzero_neighborhood_tokens = 0
 
         if n_gene_segments > 1:
-            for segment in range(self.max_special_tokens + 1, n_gene_segments + self.max_special_tokens):
+            for segment in range(self.max_special_tokens + 1, self.max_special_tokens + n_gene_segments):
                 gene_tokens_neighborhood_segment = [
-                    example['gene_tokens_neighborhood'][i] for i in range(
-                        len(example['gene_tokens_neighborhood']))
-                        if example['seg_tokens_neighborhood'][i] == segment]
+                    gene for gene, seg in zip(
+                        example['gene_tokens_neighborhood'],
+                        example['seg_tokens_neighborhood']) 
+                    if seg == segment]
                 seg_tokens_neighborhood_segment = [
-                    example['seg_tokens_neighborhood'][i] for i in range(
-                        len(example['seg_tokens_neighborhood']))
-                        if example['seg_tokens_neighborhood'][i] == segment]
+                    seg for seg in example['seg_tokens_neighborhood'] 
+                    if seg == segment]
 
                 gene_tokens_neighborhood_segment, n_nonzero_neighborhood_segment_tokens = process_gene_tokens(
                     gene_tokens_neighborhood_segment,
@@ -711,9 +842,10 @@ class CellGraphTokenizer(CellBaseTokenizer):
                 n_nonzero_neighborhood_tokens += n_nonzero_neighborhood_segment_tokens
 
                 gene_expr_neighborhood_segment = [
-                    example['gene_expr_neighborhood'][i] for i in range(
-                        len(example['gene_expr_neighborhood']))
-                        if example['seg_tokens_neighborhood'][i] == segment]
+                    gene_expr for gene_expr, seg in zip(
+                        example['gene_expr_neighborhood'],
+                        example['seg_tokens_neighborhood']) 
+                    if seg == segment]
 
                 gene_expr_neighborhood_segment = process_gene_expr(
                     gene_expr_neighborhood_segment,
@@ -726,15 +858,13 @@ class CellGraphTokenizer(CellBaseTokenizer):
         del example['gene_expr_neighborhood']
         del example['seg_tokens_neighborhood']
         example['gene_tokens'] = np.concatenate(
-            (gene_tokens_cell.copy(), gene_tokens_neighborhood.copy())).astype(
-                int)
+            (gene_tokens_cell, gene_tokens_neighborhood)).astype(int)
         example['gene_expr'] = np.concatenate(
-            (gene_expr_cell.copy(), gene_expr_neighborhood.copy())).astype(
-                float)
+            (gene_expr_cell, gene_expr_neighborhood)).astype(float)
         example['seg_tokens'] = np.concatenate(
             (np.array([self.max_special_tokens if gene_token != 0 else 0 for gene_token in
                        gene_tokens_cell]),
-             seg_tokens_neighborhood.copy())).astype(int)
+             seg_tokens_neighborhood)).astype(int)
 
         # Retrieve attributes
         example['n_nonzero_tokens'] = (
@@ -763,20 +893,20 @@ class CellGraphTokenizer(CellBaseTokenizer):
         example['assay_token'] = [example['assay_token']]
         example['species_token'] = [example['species_token']]
         example['tissue_token'] = [example['tissue_token']]
-        # example['gene_panel_token'] = [example['gene_panel_token']]
+        example['gene_panel_token'] = [example['gene_panel_token']]
         example['batch_token'] = [example['batch_token']]
 
         example['assay_value_token'] = [example['assay_value_token']]
         example['species_value_token'] = [example['species_value_token']]
         example['tissue_value_token'] = [example['tissue_value_token']]
-        # example['gene_panel_value_token'] = [example['gene_panel_value_token']]
+        example['gene_panel_value_token'] = [example['gene_panel_value_token']]
         example['batch_value_token'] = [example['batch_value_token']] 
 
         # Retrieve special token values
         example['assay_value'] = [example['assay_value']]
         example['species_value'] = [example['species_value']]
         example['tissue_value'] = [example['tissue_value']]
-        # example['gene_panel_value'] = [example['gene_panel_value']]
+        example['gene_panel_value'] = [example['gene_panel_value']]
         example['batch_value'] = [example['batch_value']]
 
         return example
@@ -831,6 +961,10 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
                 List containing batch token.
             - cell_ids:
                 List of cell IDs.
+            - cell_total_counts:
+                Cell and neighborhood read depth.
+            - cell_n_probed_genes:
+                Number of genes probed.
         """
         # Initialize dict to collect tokens and cell ids
         adata_dict = {}
@@ -839,92 +973,210 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
 
         print('Filtering cells.')
         # Filter to remove poor quality cells
-        adata = filter_poor_quality_cells(adata)
+        adata = filter_cells(adata)
 
         print('Computing spatial neighborhood graph and aggregating counts.')
         # Aggregate neighborhood cell gene expression
-        adata = aggregate_neighbors(
+        adata = construct_neighbor_graph(
             adata,
             n_neighs=self.n_neighs,
             radius=self.radius,
             delaunay=self.delaunay,
-            include_self_loop=True)
+            include_self_loop=True,
+            compute_neighbor_counts=True)
 
-        print('Normalizing gene expression counts.')
-        # Perform normalization of total counts per cell
-        if self.norm_factor == 'read_depth':
-            if self.norm_method == 'analytic_pearson_residuals':
-                raise ValueError(
-                    "Invalid combination of 'norm_factor' and 'norm_method': "
-                    f'({self.norm_factor} / {self.norm_method}).')
-            adata.X = normalize_by_read_depth(adata.X)
-            adata.layers['X_neighborhood'] = normalize_by_read_depth(
+        print('Normalizing gene expression counts...')
+        # Perform normalization of counts per cell for rank and count
+        # tokenization
+        if self.rank_cell_norm_method == 'read_depth':
+            adata.layers['X_rank'] = normalize_by_read_depth(adata.X)
+            adata.layers['X_neighborhood_rank'] = normalize_by_read_depth(
                 adata.layers['X_neighborhood'])
-        elif self.norm_factor == 'cell_area':
-            if self.norm_method == 'analytic_pearson_residuals':
-                raise ValueError(
-                    "Invalid combination of 'norm_factor' and 'norm_method': "
-                    f'({self.norm_factor} / {self.norm_method}).')
-            adata.X = normalize_by_cell_area(
+
+        elif self.rank_cell_norm_method == 'gene_corrected_read_depth':
+            adata.layers['X_rank'] = normalize_by_gene_corrected_read_depth(adata.X)
+            adata.layers['X_neighborhood_rank'] = normalize_by_gene_corrected_read_depth(
+                adata.layers['X_neighborhood']) 
+
+        elif self.rank_cell_norm_method == 'cell_area':
+            adata.layers['X_rank'] = normalize_by_cell_area(
                 adata.X,
                 cell_areas=adata.obs['cell_area'].values)
-            adata.obs['neighborhood_cell_area'] = np.array(
-                adata.obsp['spatial_connectivities'].T @
-                adata.obs['cell_area'].values.reshape(-1, 1))
-            adata.X = normalize_by_cell_area(
-                adata.layers['X_neighborhood'],
+            adata.layers['X_neighborhood_rank'] = normalize_by_cell_area(
+                adata.X,
                 cell_areas=adata.obs['neighborhood_cell_area'].values)
         else:
-            if self.norm_factor is None:
-                pass
+            if self.rank_cell_norm_method is None:
+                adata.layers['X_rank'] = adata.X
+                adata.layers['X_neighborhood_rank'] = adata.layers['X_neighborhood']
             else:
-                raise ValueError(f"Invalid 'norm_factor' {self.norm_factor}.")
-                
-        # Perform normalization of counts
-        if self.norm_method == 'analytic_pearson_residuals':
-            adata.X = normalize_by_analytic_pearson_residuals(adata.X)
-            adata.layers['X_neighborhood'] = normalize_by_analytic_pearson_residuals(
+                raise ValueError(
+                    f"Invalid 'cell_norm_method' {self.rank_cell_norm_method}.")
+
+        if self.count_cell_norm_method == 'read_depth':
+            adata.layers['X_count'] = normalize_by_read_depth(adata.X)
+            adata.layers['X_neighborhood_count'] = normalize_by_read_depth(
                 adata.layers['X_neighborhood'])
-        elif self.norm_method == 'seurat_v3':
-            adata.X = normalize_by_seurat(adata.X)
-            adata.layers['X_neighborhood'] = normalize_by_seurat(
-                adata.layers['X_neighborhood'])
-        elif self.norm_method == 'mean':
-            adata.X = normalize_by_mean(
+
+        elif self.count_cell_norm_method == 'gene_corrected_read_depth':
+            adata.layers['X_count'] = normalize_by_gene_corrected_read_depth(adata.X)
+            adata.layers['X_neighborhood_count'] = normalize_by_gene_corrected_read_depth(
+                adata.layers['X_neighborhood']) 
+
+        elif self.count_cell_norm_method == 'cell_area':
+            adata.layers['X_count'] = normalize_by_cell_area(
                 adata.X,
-                gene_means_file=self.cell_gene_means_file,
-                probed_genes=adata.var['ensembl_id'])
-            adata.layers['X_neighborhood'] = normalize_by_mean(
-                adata.layers['X_neighborhood'],
-                gene_means_file=self.neighborhood_gene_means_file,
-                probed_genes=adata.var['ensembl_id'])
-        elif self.norm_method == 'nzmean':
-            adata.X = normalize_by_nonzero_mean(
+                cell_areas=adata.obs['cell_area'].values)
+            adata.layers['X_neighborhood_count'] = normalize_by_cell_area(
                 adata.X,
-                gene_nzmeans_file=self.cell_gene_nzmeans_file,
-                probed_genes=adata.var['ensembl_id'])
-            adata.layers['X_neighborhood'] = normalize_by_nonzero_mean(
-                adata.layers['X_neighborhood'],
-                gene_nzmeans_file=self.neighborhood_gene_nzmeans_file,
-                probed_genes=adata.var['ensembl_id'])
-        elif self.norm_method == 'shifted_logmean':
-            adata.X = normalize_by_shifted_log_mean(
-                adata.X,
-                gene_logmeans_file=self.cell_gene_logmeans_file,
-                probed_genes=adata.var['ensembl_id'])
-            adata.layers['X_neighborhood'] = normalize_by_shifted_log_mean(
-                adata.layers['X_neighborhood'],
-                gene_logmeans_file=self.neighborhood_gene_logmeans_file,
-                probed_genes=adata.var['ensembl_id'])
-        elif self.norm_method == 'shifted_log':
-            adata.X = normalize_by_shifted_log(adata.X)
-            adata.layers['X_neighborhood'] = normalize_by_shifted_log(
-                adata.layers['X_neighborhood'])
+                cell_areas=adata.obs['neighborhood_cell_area'].values)
         else:
-            if self.norm_method is None:
+            if self.count_cell_norm_method is None:
+                adata.layers['X_count'] = adata.X
+                adata.layers['X_neighborhood_count'] = adata.layers['X_neighborhood']
+            else:
+                raise ValueError(
+                    f"Invalid 'cell_norm_method' {self.count_cell_norm_method}.")
+
+        # Perform normalization of counts per gene for rank and count
+        # tokenization
+        if self.rank_gene_norm_method == 'mean':
+            if self.rank_cell_norm_method is None:
+                norm_factor = 'mean'
+            elif self.rank_cell_norm_method == 'read_depth':
+                norm_factor = 'read_depth_mean'
+            elif self.rank_cell_norm_method == 'gene_corrected_read_depth':
+                norm_factor = 'gene_corrected_read_depth_mean'
+            elif self.rank_cell_norm_method == 'cell_area':
+                norm_factor = 'cell_area_mean'
+            adata.layers['X_rank'] = normalize_by_factor(
+                adata.layers['X_rank'],
+                norm_factor_file_path=self.norm_factor_file_path,
+                probed_genes=adata.var['ensembl_id'],
+                norm_factor=norm_factor)
+            adata.layers['X_neighborhood_rank'] = normalize_by_factor(
+                adata.layers['X_neighborhood_rank'],
+                norm_factor_file_path=self.norm_factor_file_path,
+                probed_genes=adata.var['ensembl_id'],
+                norm_factor=f"{norm_factor}_neighborhood")
+        elif self.rank_gene_norm_method == 'nonzero_mean':
+            if self.rank_cell_norm_method is None:
+                norm_factor = 'nonzero_mean'
+            elif self.rank_cell_norm_method == 'read_depth':
+                norm_factor = 'read_depth_nonzero_mean'
+            elif self.rank_cell_norm_method == 'gene_corrected_read_depth':
+                norm_factor = 'gene_corrected_read_depth_nonzero_mean'
+            elif self.rank_cell_norm_method == 'cell_area':
+                norm_factor = 'cell_area_nonzero_mean'
+            adata.layers['X_rank'] = normalize_by_factor(
+                adata.layers['X_rank'],
+                norm_factor_file_path=self.norm_factor_file_path,
+                probed_genes=adata.var['ensembl_id'],
+                norm_factor=norm_factor)
+            adata.layers['X_neighborhood_rank'] = normalize_by_factor(
+                adata.layers['X_neighborhood_rank'],
+                norm_factor_file_path=self.norm_factor_file_path,
+                probed_genes=adata.var['ensembl_id'],
+                norm_factor=f"{norm_factor}_neighborhood")
+        elif self.rank_gene_norm_method == 'seurat_v3':
+            adata.layers['X_rank'] = normalize_by_seurat(adata.layers['X_rank'])
+            adata.layers['X_neighborhood_rank'] = normalize_by_seurat(
+                adata.layers['X_neighborhood_rank'])
+        else:
+            if self.rank_gene_norm_method is None:
                 pass
             else:
-                raise ValueError(f"Invalid 'norm_method': {self.norm_method}.")
+                raise ValueError(
+                    f"Invalid 'gene_norm_method' {self.rank_gene_norm_method}.")
+
+        if self.count_gene_norm_method == 'mean':
+            if self.count_cell_norm_method is None:
+                norm_factor = 'mean'
+            elif self.count_cell_norm_method == 'read_depth':
+                norm_factor = 'read_depth_mean'
+            elif self.count_cell_norm_method == 'gene_corrected_read_depth':
+                norm_factor = 'gene_corrected_read_depth_mean'
+            elif self.count_cell_norm_method == 'cell_area':
+                norm_factor = 'cell_area_mean'
+            adata.layers['X_count'] = normalize_by_factor(
+                adata.layers['X_count'],
+                norm_factor_file_path=self.norm_factor_file_path,
+                probed_genes=adata.var['ensembl_id'],
+                norm_factor=norm_factor)
+            adata.layers['X_neighborhood_count'] = normalize_by_factor(
+                adata.layers['X_neighborhood_count'],
+                norm_factor_file_path=self.norm_factor_file_path,
+                probed_genes=adata.var['ensembl_id'],
+                norm_factor=f"{norm_factor}_neighborhood")
+        elif self.count_gene_norm_method == 'nonzero_mean':
+            if self.count_cell_norm_method is None:
+                norm_factor = 'nonzero_mean'
+            elif self.count_cell_norm_method == 'read_depth':
+                norm_factor = 'read_depth_nonzero_mean'
+            elif self.count_cell_norm_method == 'gene_corrected_read_depth':
+                norm_factor = 'gene_corrected_read_depth_nonzero_mean'
+            elif self.count_cell_norm_method == 'cell_area':
+                norm_factor = 'cell_area_nonzero_mean'
+            adata.layers['X_count'] = normalize_by_factor(
+                adata.layers['X_count'],
+                norm_factor_file_path=self.norm_factor_file_path,
+                probed_genes=adata.var['ensembl_id'],
+                norm_factor=norm_factor)
+            adata.layers['X_neighborhood_count'] = normalize_by_factor(
+                adata.layers['X_neighborhood_count'],
+                norm_factor_file_path=self.norm_factor_file_path,
+                probed_genes=adata.var['ensembl_id'],
+                norm_factor=f"{norm_factor}_neighborhood")
+        elif self.count_gene_norm_method == 'seurat_v3':
+            adata.layers['X_count'] = normalize_by_seurat(
+                adata.layers['X_count'])
+        else:
+            if self.count_gene_norm_method is None:
+                pass
+            else:
+                raise ValueError(
+                    f"Invalid 'gene_norm_method' {self.count_gene_norm_method}.")
+
+        # Perform normalization of counts for rank and count tokenization
+        if self.rank_count_norm_method == 'analytic_pearson_residuals':
+            if (self.rank_cell_norm_method is not None) or (
+                self.rank_gene_norm_method is not None):
+                raise ValueError('Invalid combination of norm methods.')
+            adata.layers['X_rank'] = normalize_by_analytic_pearson_residuals(
+                adata.layers['X_rank'])
+            adata.layers['X_neighborhood_rank'] = normalize_by_analytic_pearson_residuals(
+                adata.layers['X_neighborhood_rank'])
+        elif self.rank_count_norm_method == 'shifted_log':
+            adata.layers['X_rank'] = normalize_by_shifted_log(
+                adata.layers['X_rank'])
+            adata.layers['X_neighborhood_rank'] = normalize_by_shifted_log(
+                adata.layers['X_neighborhood_rank'])
+        else:
+            if self.rank_count_norm_method is None:
+                pass
+            else:
+                raise ValueError(
+                    f"Invalid 'counts_norm_method': {self.rank_count_norm_method}.")
+
+        if self.count_count_norm_method == 'analytic_pearson_residuals':
+            if (self.count_cell_norm_method is not None) or (
+                self.count_gene_norm_method is not None):
+                raise ValueError('Invalid combination of norm methods.')
+            adata.layers['X_count'] = normalize_by_analytic_pearson_residuals(
+                adata.layers['X_count'])
+            adata.layers['X_neighborhood_count'] = normalize_by_analytic_pearson_residuals(
+                adata.layers['X_neighborhood_count'])
+        elif self.count_count_norm_method == 'shifted_log':
+            adata.layers['X_count'] = normalize_by_shifted_log(
+                adata.layers['X_count'])
+            adata.layers['X_neighborhood_count'] = normalize_by_shifted_log(
+                adata.layers['X_neighborhood_count'])
+        else:
+            if self.count_count_norm_method is None:
+                pass
+            else:
+                raise ValueError(
+                    f"Invalid 'counts_norm_method': {self.count_count_norm_method}.")
 
         # Initialize dict to collect tokens and cell IDs
         adata_dict = {}
@@ -952,62 +1204,82 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
         print('Ranking gene tokens based on normalized counts.')
         for i in range(0, len(adata), self.chunk_size):
             if self.include_zero_expr_genes:
-                norm_counts_cell = adata[
-                    i : i + self.chunk_size, coding_miRNA_idx].X.toarray()
-                norm_counts_neighborhood = adata[
+                norm_counts_cell_rank = adata[
+                    i : i + self.chunk_size, coding_miRNA_idx].layers['X_rank'].toarray()
+                norm_counts_neighborhood_rank = adata[
                     i : i + self.chunk_size, coding_miRNA_idx].layers[
-                        'X_neighborhood'].toarray()
+                        'X_neighborhood_rank'].toarray()
+                norm_counts_cell_count = adata[
+                    i : i + self.chunk_size, coding_miRNA_idx].layers['X_count'].toarray()
+                norm_counts_neighborhood_count = adata[
+                    i : i + self.chunk_size, coding_miRNA_idx].layers[
+                        'X_neighborhood_count'].toarray()
 
                 # Rank gene tokens and append across chunks
                 adata_dict['gene_tokens_cell'] += [
-                    rank_gene_tokens(norm_counts_cell[j],
+                    rank_gene_tokens(norm_counts_cell_rank[j],
                     coding_miRNA_tokens_cell)
-                    for j in range(norm_counts_cell.shape[0])]
+                    for j in range(norm_counts_cell_rank.shape[0])]
                 adata_dict['gene_tokens_neighborhood'] += [
-                    rank_gene_tokens(norm_counts_neighborhood[j],
+                    rank_gene_tokens(norm_counts_neighborhood_rank[j],
                     coding_miRNA_tokens_neighborhood)
                     for j in range(norm_counts_neighborhood.shape[0])]
 
                 # Rank gene expression and append across chunks
                 adata_dict['gene_expr_cell'] += [
-                    norm_counts_cell[j][np.argsort(-norm_counts_cell[j])]
-                    for j in range(norm_counts_cell.shape[0])]
+                    norm_counts_cell_count[j][np.argsort(-norm_counts_cell_rank[j])]
+                    for j in range(norm_counts_cell_rank.shape[0])]
                 adata_dict['gene_expr_neighborhood'] += [
-                    norm_counts_neighborhood[j][
-                        np.argsort(-norm_counts_neighborhood[j])]
-                    for j in range(norm_counts_neighborhood.shape[0])]
+                    norm_counts_neighborhood_count[j][
+                        np.argsort(-norm_counts_neighborhood_rank[j])]
+                    for j in range(norm_counts_neighborhood_rank.shape[0])]
             else:
-                norm_counts_cell = sp.csr_matrix(adata[
-                    i : i + self.chunk_size, coding_miRNA_idx].X)
-                norm_counts_neighborhood = sp.csr_matrix(adata[
+                norm_counts_cell_rank = sp.csr_matrix(adata[
+                    i : i + self.chunk_size, coding_miRNA_idx].layers['X_rank'])
+                norm_counts_neighborhood_rank = sp.csr_matrix(adata[
                     i : i + self.chunk_size, coding_miRNA_idx].layers[
-                        'X_neighborhood'])
+                        'X_neighborhood_rank'])
+                norm_counts_cell_count = sp.csr_matrix(adata[
+                    i : i + self.chunk_size, coding_miRNA_idx].layers['X_count'])
+                norm_counts_neighborhood_count = sp.csr_matrix(adata[
+                    i : i + self.chunk_size, coding_miRNA_idx].layers[
+                        'X_neighborhood_count'])
 
                 # Rank gene tokens and append across chunks
                 adata_dict['gene_tokens_cell'] += [
-                    rank_gene_tokens(norm_counts_cell[j].data,
-                    coding_miRNA_tokens_cell[norm_counts_cell[j].indices])
-                    for j in range(norm_counts_cell.shape[0])]
+                    rank_gene_tokens(norm_counts_cell_rank[j].data,
+                    coding_miRNA_tokens_cell[norm_counts_cell_rank[j].indices])
+                    for j in range(norm_counts_cell_rank.shape[0])]
                 adata_dict['gene_tokens_neighborhood'] += [
-                    rank_gene_tokens(norm_counts_neighborhood[j].data,
+                    rank_gene_tokens(norm_counts_neighborhood_rank[j].data,
                     coding_miRNA_tokens_neighborhood[
-                        norm_counts_neighborhood[j].indices])
-                    for j in range(norm_counts_neighborhood.shape[0])]
+                        norm_counts_neighborhood_rank[j].indices])
+                    for j in range(norm_counts_neighborhood_rank.shape[0])]
 
                 # Rank gene expression and append across chunks
                 adata_dict['gene_expr_cell'] += [
-                    norm_counts_cell[j].data[np.argsort(-norm_counts_cell[j].data)]
-                    for j in range(norm_counts_cell.shape[0])]
+                    norm_counts_cell_count[j].data[np.argsort(
+                        -norm_counts_cell_rank[j].data)]
+                    for j in range(norm_counts_cell_rank.shape[0])]
                 adata_dict['gene_expr_neighborhood'] += [
-                    norm_counts_neighborhood[j].data[
-                        np.argsort(-norm_counts_neighborhood[j].data)]
-                    for j in range(norm_counts_neighborhood.shape[0])]
+                    norm_counts_neighborhood_count[j].data[
+                        np.argsort(-norm_counts_neighborhood_rank[j].data)]
+                    for j in range(norm_counts_neighborhood_rank.shape[0])]
 
         # Add cell IDs for collecting metadata at inference time
         adata_dict['cell_id'] = adata.obs['cell_id'].values.tolist()
         
-        # Add special tokens (positional tokens and value tokens)
         n_cells = len(adata)
+
+        # Add read depth and number of genes
+        adata_dict['cell_total_counts'] = [
+            [total_counts, total_neighborhood_counts] for 
+            total_counts, total_neighborhood_counts in zip(
+                adata.X.sum(axis=1).A1.tolist(),
+                adata.layers['X_neighborhood'].sum(axis=1).A1.tolist())]
+        adata_dict['cell_n_probed_genes'] = [adata.X.shape[1]] * n_cells
+
+        # Add special tokens (positional tokens and value tokens)
         batch_id_key = f"{adata.uns['dataset_id']}_{adata.uns['batch']}"
 
         adata_dict['batch_token'] = [self.token_dict['spt_batch']] * n_cells
@@ -1020,7 +1292,7 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
         adata_dict['batch_value_token'] = [
             self.token_dict[f'spv_{batch_id_key}']] * n_cells
         adata_dict['gene_panel_value_token'] = [self.token_dict[
-            f'spv_{self.file_path_to_gene_panel_ID_dict[str(adata_file_path)]}']
+            f'spv_gene_panel{len(adata.var_names)}']
             ] * n_cells
         adata_dict['assay_value_token'] = [
             self.token_dict[f'spv_{adata.uns["assay"]}']] * n_cells
@@ -1039,7 +1311,7 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
         adata_dict['batch_value'] = [
             self.token_dict[f'spv_{batch_id_key}'] - spv_idx_subtract] * n_cells
         adata_dict['gene_panel_value'] = [self.token_dict[
-            f'spv_{self.file_path_to_gene_panel_ID_dict[str(adata_file_path)]}']
+            f'spv_gene_panel{len(adata.var_names)}']
             - spv_idx_subtract] * n_cells
         adata_dict['assay_value'] = [
             self.token_dict[
@@ -1097,8 +1369,8 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
                        )).astype(int)
         
         # Retrieve special tokens
-        example['cls_tokens'] = [self.token_dict['<cls_cell>'],
-                                 self.token_dict['<cls_neighborhood>']]
+        example['cls_tokens'] = [self.token_dict['<cls_0>'],
+                                 self.token_dict['<cls_1>']]
         example['assay_token'] = [example['assay_token']]
         example['species_token'] = [example['species_token']]
         example['tissue_token'] = [example['tissue_token']]

@@ -2,7 +2,7 @@ import anndata as ad
 import numpy as np
 
 
-def filter_poor_quality_cells(adata: ad.AnnData) -> ad.AnnData:
+def filter_cells(adata: ad.AnnData) -> ad.AnnData:
     """
     Filter cells that do not pass QC.
 
@@ -10,13 +10,13 @@ def filter_poor_quality_cells(adata: ad.AnnData) -> ad.AnnData:
 
     Parameters
     --------
-    adata: ad.AnnData
+    adata:
         An AnnData object containing a QC field in `adata.obs['filter_pass']`.
 
     Returns
     --------
-    adata: ad.AnnData
-        A filtered AnnData object.
+    adata:
+        The filtered AnnData object.
     """
     if 'filter_pass' not in adata.obs.columns:
         print("No 'filter_pass' column in 'adata.obs'; returning full adata.")

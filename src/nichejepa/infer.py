@@ -47,8 +47,7 @@ def infer(args: dict,
           load_folder_path: str,
           cell_gene_ids: List=[],
           neighborhood_gene_ids: List=[],
-          agg_type: Literal['cls_cell',
-                            'cls_neighborhood',
+          agg_type: Literal['cls',
                             'avg',
                             'weighted_avg']='avg',
           masked_tokens: Optional[List[int]]=None,
@@ -144,7 +143,7 @@ def infer(args: dict,
     # Define tokenizer-specific params
     if tokenizer_type == 'cell_neighborhood':
         if add_cls:
-            special_tokens = ['cls_cell', 'cls_neighborhood'] + special_tokens  
+            special_tokens = ['cls_0', 'cls_1'] + special_tokens  
     elif tokenizer_type == 'cell_graph':
         if add_cls:
             special_tokens = [
@@ -414,7 +413,7 @@ def infer(args: dict,
                     if itr == 0:
                         all_neighborhood_gene_emb_dict[gene_id] = [gene_emb]
                     else:
-                        all_neighborhood_gene_emb_dict[gene_id].append(gene_emb)                  
+                        all_neighborhood_gene_emb_dict[gene_id].append(gene_emb)                
 
     adata = ad.AnnData(
         obs=pd.DataFrame({'cell_id': all_cell_ids},
