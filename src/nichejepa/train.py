@@ -480,6 +480,8 @@ def train(args: dict,
                     return z
 
                 def loss_fn(z, h):
+                    print(z.shape)
+                    print(h.shape)
                     loss = F.smooth_l1_loss(z, h)
                     loss = AllReduce.apply(loss)
                     return loss
