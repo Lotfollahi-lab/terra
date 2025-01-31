@@ -115,7 +115,8 @@ def create_binary_selection_mask(tokens: torch.Tensor,
                                                          'gene_neighborhood'],
                                  excluded_tokens: Optional[List]=None,
                                  top_k: Optional[int]=None,
-                                 gene_id: Optional[int]=None
+                                 gene_id: Optional[int]=None,
+                                 n_segments: Optional[int]=None,
                                  ) -> torch.Tensor:
     """
     Create a selection mask for cell and neighborhood tokens based on
@@ -139,7 +140,8 @@ def create_binary_selection_mask(tokens: torch.Tensor,
     gene_id:
         The ID of the gene for which the embedding is retrieved. Only relevant
         if 'selection_type' is 'gene_cell' or 'gene_neighborhood'.
-
+    n_segments:
+        The n_segments in cell_graph tokenizer.
     Returns
     -----------
     selection_mask:

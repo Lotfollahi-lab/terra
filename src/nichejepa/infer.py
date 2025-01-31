@@ -326,7 +326,8 @@ def infer(args: dict,
                     seq_len_cell=seq_len_cell,
                     n_special_tokens=n_special_tokens,
                     max_cls_tokens=max_cls_tokens,
-                    top_k = top_k)
+                    top_k = top_k,
+                    n_segments = n_segments)
                 if tokenizer_type == 'cell_neighborhood':
                     neighborhood_mask = create_binary_selection_mask(
                         tokens,
@@ -334,7 +335,8 @@ def infer(args: dict,
                         seq_len_cell=seq_len_cell,
                         n_special_tokens=n_special_tokens,
                         max_cls_tokens=max_cls_tokens,
-                        top_k = top_k)
+                        top_k = top_k,
+                        n_segments = n_segments)
 
                 elif tokenizer_type == 'cell_graph':
                     neighborhood_mask = create_binary_selection_mask(
@@ -343,7 +345,8 @@ def infer(args: dict,
                         seq_len_cell=seq_len_cell,
                         n_special_tokens=n_special_tokens,
                         max_cls_tokens=max_cls_tokens,
-                        top_k = top_k)
+                        top_k = top_k,
+                        n_segments = n_segments)
 
                 cell_emb = compute_mean_unmasked_emb(emb,
                                                      cell_mask)
@@ -359,7 +362,8 @@ def infer(args: dict,
                     seq_len_cell=seq_len_cell,
                     n_special_tokens=n_special_tokens,
                     max_cls_tokens=max_cls_tokens,
-                    top_k = top_k)
+                    top_k = top_k,
+                    n_segments = n_segments)
 
                 if tokenizer_type == 'cell_neighborhood':
                     neighborhood_mask = create_binary_selection_mask(
@@ -369,7 +373,8 @@ def infer(args: dict,
                         seq_len_cell=seq_len_cell,
                         n_special_tokens=n_special_tokens,
                         max_cls_tokens=max_cls_tokens,
-                        top_k = top_k)
+                        top_k = top_k,
+                        n_segments = n_segments)
                 elif tokenizer_type == 'cell_graph':
                     neighborhood_mask = create_binary_selection_mask(
                         tokens,
@@ -378,7 +383,8 @@ def infer(args: dict,
                         seq_len_cell=seq_len_cell,
                         n_special_tokens=n_special_tokens,
                         max_cls_tokens=max_cls_tokens,
-                        top_k = top_k)                   
+                        top_k = top_k,
+                        n_segments = n_segments)                
 
                 if agg_type == 'avg':
                     cell_emb = compute_mean_unmasked_emb(emb,
