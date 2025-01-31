@@ -181,10 +181,6 @@ class BlockMaskCollator:
             context_block_mask = context_block_mask[
                 torch.randperm(len(context_block_mask))]
 
-            context_block_mask = torch.cat((
-                            torch.arange(self.n_special_tokens),
-                            context_block_mask))
-
             context_masks.append(context_block_mask)
 
             start = end
@@ -230,8 +226,7 @@ class BlockMaskCollator:
         collated_target_masks = []
         collated_context_masks = []
         collated_special_masks = []
-        collated_masks_attention_enc = []
-        collated_masks_attention_pred = []
+        collated_masks_attention = []
 
         # Track the minimum length of masks across the batch
         keep_tokens_target = self.seq_len_genes
@@ -253,8 +248,8 @@ class BlockMaskCollator:
             collated_target_masks.append(target_masks)
             collated_context_masks.append(context_masks)
 
-            collated_masks_attention_enc.append((batch[i][0][self.n_special_tokens:] != 0).int())
-            collated_masks_attention_pred.append((batch[i][0] != 0).int())
+            collated_masks_attention.append(
+                (batch[i][0][self.n_special_tokens:] != 0).int())
 
         # Trim masks to the minimum size across the batch and collate them
         collated_target_masks = [
@@ -268,9 +263,7 @@ class BlockMaskCollator:
             collated_target_masks)
         collated_context_masks = torch.utils.data.default_collate(
             collated_context_masks)        
-        collated_masks_attention_enc = torch.utils.data.default_collate(
-            collated_masks_attention_enc).unsqueeze(1).unsqueeze(1)
-        collated_masks_attention_pred = torch.utils.data.default_collate(
-            collated_masks_attention_pred).unsqueeze(1).unsqueeze(1)
+        collated_masks_attention = torch.utils.data.default_collate(
+            collated_masks_attention).unsqueeze(1).unsqueeze(1)
 
-        return collated_batch, collated_context_masks, collated_target_masks, collated_masks_attention_enc, collated_masks_attention_pred
+        return collated_batch, collated_context_masks, collated_target_masks, collated_masks_attention
