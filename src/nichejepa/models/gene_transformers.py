@@ -479,8 +479,6 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
                 x = apply_masks(x, masks)
 
             print(x.shape)
-            if masks is not None:
-                print(masks[0].shape)
             print(masks_attention.shape)
             
             # Run forward prop
