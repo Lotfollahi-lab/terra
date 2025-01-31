@@ -198,8 +198,13 @@ def create_binary_selection_mask(tokens: torch.Tensor,
                 torch.tensor(excluded_tokens).to(tokens.device))] = False
         if top_k:
             # Exclude tokens beyond the top_k positions in all segments
-            selection_mask[
-                :, n_special_tokens + top_k:] = False        
+            for i in range(n_segments - 1):
+                selection_mask[
+                        :, 
+                        n_special_tokens + seq_len_cell * i + top_k : n_special_tokens + seq_len_cell * (i + 1)
+                ] = False
+            selection_mask[:, n_special_tokens + seq_len_cell * (n_segments-1) + top_k :] = False
+        
     elif selection_type == 'gene_cell':
         # Select only positions corresponding to the specified gene_id in the
         # cell segment

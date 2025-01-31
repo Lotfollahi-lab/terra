@@ -54,7 +54,8 @@ def infer(args: dict,
           masked_tokens: Optional[List[int]]=None,
           agg_excluded_tokens: Optional[List[int]]=None,
           feature_norm: bool=False,
-          check_point: int=None
+          check_point: int=None,
+          top_k: int=None,
           ) -> ad.AnnData:
     """
     Use a trained model for inference. Run forward pass on a given dataset and
@@ -83,6 +84,8 @@ def infer(args: dict,
         If 'True', apply feature norm in the last embedding layer.
     check_point:
         If load from check_point or not.
+    top_k:
+        Include top_k genes or not.
     Returns
     -----------
     adata:
@@ -322,21 +325,25 @@ def infer(args: dict,
                     selection_type='cls_0',
                     seq_len_cell=seq_len_cell,
                     n_special_tokens=n_special_tokens,
-                    max_cls_tokens=max_cls_tokens)
+                    max_cls_tokens=max_cls_tokens,
+                    top_k = top_k)
                 if tokenizer_type == 'cell_neighborhood':
                     neighborhood_mask = create_binary_selection_mask(
                         tokens,
                         selection_type='cls_1',
                         seq_len_cell=seq_len_cell,
                         n_special_tokens=n_special_tokens,
-                        max_cls_tokens=max_cls_tokens)
+                        max_cls_tokens=max_cls_tokens,
+                        top_k = top_k)
+
                 elif tokenizer_type == 'cell_graph':
                     neighborhood_mask = create_binary_selection_mask(
                         tokens,
                         selection_type='cls_all',
                         seq_len_cell=seq_len_cell,
                         n_special_tokens=n_special_tokens,
-                        max_cls_tokens=max_cls_tokens)
+                        max_cls_tokens=max_cls_tokens,
+                        top_k = top_k)
 
                 cell_emb = compute_mean_unmasked_emb(emb,
                                                      cell_mask)
@@ -351,7 +358,9 @@ def infer(args: dict,
                     excluded_tokens=agg_excluded_tokens,
                     seq_len_cell=seq_len_cell,
                     n_special_tokens=n_special_tokens,
-                    max_cls_tokens=max_cls_tokens)
+                    max_cls_tokens=max_cls_tokens,
+                    top_k = top_k)
+
                 if tokenizer_type == 'cell_neighborhood':
                     neighborhood_mask = create_binary_selection_mask(
                         tokens,
@@ -359,7 +368,8 @@ def infer(args: dict,
                         excluded_tokens=agg_excluded_tokens,
                         seq_len_cell=seq_len_cell,
                         n_special_tokens=n_special_tokens,
-                        max_cls_tokens=max_cls_tokens)
+                        max_cls_tokens=max_cls_tokens,
+                        top_k = top_k)
                 elif tokenizer_type == 'cell_graph':
                     neighborhood_mask = create_binary_selection_mask(
                         tokens,
@@ -367,7 +377,8 @@ def infer(args: dict,
                         excluded_tokens=agg_excluded_tokens,
                         seq_len_cell=seq_len_cell,
                         n_special_tokens=n_special_tokens,
-                        max_cls_tokens=max_cls_tokens)                    
+                        max_cls_tokens=max_cls_tokens,
+                        top_k = top_k)                   
 
                 if agg_type == 'avg':
                     cell_emb = compute_mean_unmasked_emb(emb,
