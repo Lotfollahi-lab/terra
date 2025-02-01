@@ -451,7 +451,7 @@ def train(args: dict,
                             masks=masks_enc,
                             masks_attention=None)                       
                     elif gt_type == 'counts':
-                        z, pos_emb, seg_emb, token_emb = encoder(
+                        z, token_emb, seg_emb, value_emb = encoder(
                             tokens=tokens,
                             segments=segments,
                             counts=counts,
@@ -470,12 +470,11 @@ def train(args: dict,
                                       masks_attention=None)
                     elif gt_type == 'counts':
                         z = predictor(z=z,
-                                      tokens=tokens,
-                                      segments=segments,
+                                      token_embed=token_emb,
+                                      seg_embed=seg_emb,
+                                      value_embed=value_emb,
                                       masks_enc=masks_enc,
                                       masks_pred=masks_pred,
-                                      enc_seg_embed=encoder.module.seg_embed,
-                                      enc_token_embed=encoder.module.token_embed,
                                       masks_attention=None)
                     return z
 
