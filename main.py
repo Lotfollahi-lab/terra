@@ -42,13 +42,13 @@ def parse_arguments():
 
 
 # Main function to handle training or evaluation per process
-def process_main(rank, args, params, world_size, devices, logger, folder_path, is_training=True):
+def process_main(rank, args, params, world_size, port, devices, logger, folder_path, is_training=True):
     os.environ['CUDA_VISIBLE_DEVICES'] = str(devices[rank].split(':')[-1])
 
     logger.setLevel(logging.INFO if rank == 0 else logging.ERROR)
 
     world_size, rank = init_distributed(
-        rank_and_world_size=(rank, world_size), port=40003)
+        rank_and_world_size=(rank, world_size), port=port)
     logger.info(f'Running... (rank: {rank}/{world_size})')
     logger.info(f'Training mode: {is_training}')
 
@@ -110,14 +110,16 @@ def sweep_func(args):
                             params['data']['dataset_name'],
                             current_timestamp)
 
+    port = random.randint(40000, 50000)
+
     # Run the process_main function in a single or multi-GPU setting
     if args.test:
-        process_main(0, args, params, num_gpus, args.devices, logger, folder_path)
+        process_main(0, args, params, num_gpus, port, args.devices, logger, folder_path)
     else:
 
         for rank in range(num_gpus):
             p = mp.Process(target=process_main,
-                           args=(rank, args, params, num_gpus, args.devices, logger, folder_path))
+                           args=(rank, args, params, num_gpus, port, args.devices, logger, folder_path))
             p.start()
             processes.append(p)
 
@@ -125,11 +127,11 @@ def sweep_func(args):
             p.join()  
     processes = []
     if args.test:
-       process_main(0, args, params, 1, [args.devices[0]], logger, folder_path, is_training=False)
+       process_main(0, args, params, 1, port, [args.devices[0]], logger, folder_path, is_training=False)
     else:
        for rank in range(1):
             p = mp.Process(target=process_main,
-                           args=(rank, args, params, 1, [args.devices[0]], logger, folder_path, False))
+                           args=(rank, args, params, 1, port, [args.devices[0]], logger, folder_path, False))
             p.start()
             processes.append(p)
 

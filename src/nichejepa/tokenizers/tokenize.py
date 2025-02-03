@@ -1,9 +1,9 @@
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 
 
-def process_gene_tokens(gene_tokens: List[int],
+def process_gene_tokens(gene_tokens: list[int],
                         length: int,
                         token_dict: dict,
                         ) -> Tuple[np.ndarray, int]:
@@ -45,12 +45,11 @@ def process_gene_tokens(gene_tokens: List[int],
     return processed_gene_tokens, num_nonzero_tokens
 
 
-def process_gene_expr(gene_expr: List,
+def process_gene_expr(gene_expr: list[float],
                       length: int,
                       ) -> np.ndarray:
     """
-    Pad gene expression with '-np.inf' or truncate gene expression based on
-    length.
+    Pad gene expression with '0.' or truncate gene expression based on length.
 
     Parameters
     ----------
@@ -86,14 +85,12 @@ def rank_gene_tokens(gene_scores: np.ndarray,
                      n_tokens: Optional[int]=None,
                      ) -> np.ndarray:
     """
-    Rank gene tokens based on matching gene scores (highest gene score -> rank 1
-    gene).
+    Rank gene tokens based on matching gene scores (highest score -> rank 1).
 
     Parameters
     ----------
     gene_scores:
-        1D vector containing gene scores (read depth normalized gene expression
-        scaled by means and regularizing standard deviations).
+        1D vector containing gene scores (normalized gene expression).
     gene_tokens:
         1D vector containing gene tokens.
     n_tokens:

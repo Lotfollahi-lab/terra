@@ -115,6 +115,7 @@ def create_binary_selection_mask(tokens: torch.Tensor,
                                                          'gene_neighborhood'],
                                  excluded_tokens: Optional[List]=None,
                                  top_k: Optional[int]=None,
+                                 n_segments: Optional[int]=None,
                                  gene_id: Optional[int]=None
                                  ) -> torch.Tensor:
     """
@@ -136,6 +137,8 @@ def create_binary_selection_mask(tokens: torch.Tensor,
         List of tokens to be excluded from the selection.
     top_k:
         If specified, only 'top_k' of the selected tokens are retrieved.
+    n_segments:
+        Number of gene segments.
     gene_id:
         The ID of the gene for which the embedding is retrieved. Only relevant
         if 'selection_type' is 'gene_cell' or 'gene_neighborhood'.
@@ -198,8 +201,13 @@ def create_binary_selection_mask(tokens: torch.Tensor,
                 torch.tensor(excluded_tokens).to(tokens.device))] = False
         if top_k:
             # Exclude tokens beyond the top_k positions in all segments
+            for i in range(n_segments - 1):
+                selection_mask[
+                    :, 
+                    (n_special_tokens + seq_len_cell * i + top_k):
+                    (n_special_tokens + seq_len_cell * (i + 1))] = False
             selection_mask[
-                :, n_special_tokens + top_k:] = False        
+                :, n_special_tokens + seq_len_cell * (n_segments - 1) + top_k:] = False  
     elif selection_type == 'gene_cell':
         # Select only positions corresponding to the specified gene_id in the
         # cell segment

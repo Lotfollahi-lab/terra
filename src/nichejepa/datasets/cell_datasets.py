@@ -1,4 +1,4 @@
-from typing import List, Literal, Optional, Tuple, Union
+from typing import Literal, Optional, Tuple, Union
 
 import datasets
 import numpy as np
@@ -14,12 +14,10 @@ class CellBaseDataset(Dataset):
                  seq_len_cell: int,
                  seq_len_neighborhood: int,
                  max_special_tokens: int,
-                 special_tokens: List=[
-                    'cls_cell',
-                    'cls_neigh',
-                    'assay',
+                 special_tokens: list=[
                     'species',
                     'tissue',
+                    'assay',
                     'gene_panel',
                     'batch'],
                  sampling_strategy: Optional[
@@ -75,16 +73,16 @@ class CellBaseDataset(Dataset):
 
     def _add_special_seq(self,
                          item: int,
-                         tokens: List[int],
-                         segments: List[int],
-                         positions: Optional[List[int]]=None,
-                         values: Optional[List[float]]=None,
-                         ) -> Union[Tuple[List[int],
-                                          List[int],
-                                          List[int]],
-                                    Tuple[List[int],
-                                          List[int],
-                                          List[float]]]:
+                         tokens: list[int],
+                         segments: list[int],
+                         positions: Optional[list[int]]=None,
+                         values: Optional[list[float]]=None,
+                         ) -> Union[Tuple[list[int],
+                                          list[int],
+                                          list[int]],
+                                    Tuple[list[int],
+                                          list[int],
+                                          list[float]]]:
         """
         Add special tokens to sequence and update positions/values and segments.
 
@@ -150,24 +148,31 @@ class CellBaseDataset(Dataset):
             n_nz_cls_tokens = sum(1 for token in cls_tokens if token != 0)
             n_zero_cls_tokens = n_cls_tokens - n_nz_cls_tokens
             tokens = cls_tokens + tokens
+            
+            # Add <cls> and special token segments
             segments = list(range(1, 1 + n_nz_cls_tokens)) \
                 + [0] * n_zero_cls_tokens \
                 + list(range(1 + n_nz_cls_tokens, 1 + n_nz_cls_tokens + (
                     self.n_special_tokens - n_cls_tokens))) \
                 + segments
             if self.gt_type == 'counts':
+                # Add <cls> values
                 values = list(range(2, 2 + n_nz_cls_tokens)) \
                     + [0] * n_zero_cls_tokens \
                     + values
             elif self.gt_type == 'rank':
+                # Add <cls> and special token positions
                 positions = list(range(1, 1 + n_nz_cls_tokens)) \
                     + [0] * n_zero_cls_tokens \
                     + list(range(1 + n_nz_cls_tokens, 1 + n_nz_cls_tokens + (
                         self.n_special_tokens - n_cls_tokens))) \
                     + positions
+
         else:
+            # Add special token segments
             segments = list(range(1, 1 + self.n_special_tokens)) + segments
             if self.gt_type == 'rank':
+                # Add special token positions
                 positions = list(
                     range(1, 1 + self.n_special_tokens)) + positions
 
@@ -177,11 +182,11 @@ class CellBaseDataset(Dataset):
             return tokens, segments, values
 
     def _sample_seq(self,
-                    tokens: List[int],
-                    values: Optional[List],
+                    tokens: list[int],
+                    values: Optional[list],
                     n_nz_tokens: int,
                     size: int,
-                    ) -> Tuple[List[int], List[int]]:
+                    ) -> Tuple[list[int], list[int]]:
         """
         Sample a subset of gene tokens and corresponding values based on a
         sampling strategy.
@@ -248,7 +253,7 @@ class CellBaseDataset(Dataset):
                          item: int,
                          segment: int,
                          segment_seq_len: int,
-                         ) -> Tuple[List[int], List[int]]:
+                         ) -> Tuple[list[int], list[int]]:
             """
             Get gene tokens and values for a given segment based on a sampling
             strategy.
@@ -330,18 +335,18 @@ class CellGraphDataset(CellBaseDataset):
         super().__init__(**base_dataset_kwargs)
 
     def __getitem__(self,
-                    item: int
+                    item: int,
                     ) -> Tuple[torch.Tensor,
                                torch.Tensor,
                                torch.Tensor,
-                               List[int]]:
+                               list[int]]:
         # Retrieve Hugging Face item once
         item = self.dataset[item]
 
         # Get (sampled) gene tokens and values/positions for index cell segment
         tokens, values = self._get_segment_seq(
             item=item,
-            segment=self.max_special_tokens, # index cell segment
+            segment=self.max_special_tokens, # first cell (index cell) segment
             segment_seq_len=self.seq_len_cell)
         if self.gt_type == 'rank':
             positions = [position if tokens[i] != 0 else 0 for i, position in 
@@ -350,8 +355,8 @@ class CellGraphDataset(CellBaseDataset):
             positions = None
 
         # Get non-padded segments for index cell segment
-        segments = [self.max_special_tokens if token != 0 else 0 for
-            token in tokens]
+        segments = [
+            self.max_special_tokens if token != 0 else 0 for token in tokens]
 
         # Get (sampled) gene tokens, values/positions and non-padded segments
         # for neighbor cell segments
@@ -437,7 +442,7 @@ class CellNeighborhoodDataset(CellBaseDataset):
                     ) -> Tuple[torch.Tensor,
                                torch.Tensor,
                                torch.Tensor,
-                               List[int]]:
+                               list[int]]:
         # Retrieve Hugging Face item once
         item = self.dataset[item]
 
@@ -461,7 +466,7 @@ class CellNeighborhoodDataset(CellBaseDataset):
             positions = list(range(1, len(gene_tokens_cell) + 1)) + list(
                 range(1, len(gene_tokens_neigh) + 1))
             positions = [position if tokens[i] != 0 else 0 for i, position in 
-                        enumerate(positions)]
+                         enumerate(positions)]
         elif self.gt_type == 'counts':
             values = values_cell + values_neigh
 
@@ -491,7 +496,7 @@ class CellNeighborhoodDataset(CellBaseDataset):
 
 def make_cell_dataset(tokenizer_type: Literal['cell_graph',
                                               'cell_neigh'],
-                      **cell_dataset_kwargs
+                      **cell_dataset_kwargs,
                       ) -> Union[CellGraphDataset,
                                  CellNeighborhoodDataset]:
     """

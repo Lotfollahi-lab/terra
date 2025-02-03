@@ -162,7 +162,7 @@ def train(args: dict,
     # Define tokenizer-specific params
     if tokenizer_type == 'cell_neighborhood':
         if add_cls:
-            special_tokens = ['cls_cell', 'cls_neighborhood'] + special_tokens            
+            special_tokens = ['cls_0', 'cls_1'] + special_tokens            
     elif tokenizer_type == 'cell_graph':
         if add_cls:
             special_tokens = [
