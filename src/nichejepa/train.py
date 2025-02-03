@@ -254,10 +254,7 @@ def train(args: dict,
             max_special_tokens=max_special_tokens,
             n_special_tokens=n_special_tokens,
             max_cls_tokens=max_cls_tokens,
-            per_block_mask_ratio=per_block_mask_ratio,
-            controlled_attention_pattern=controlled_attention_pattern,
-            controlled_attention_type=controlled_attention_type,
-            restrict_special_attention=restrict_special_attention)
+            per_block_mask_ratio=per_block_mask_ratio)
     else:
         mask_collator = RandomMaskCollator(
             n_targets=n_targets,
@@ -386,7 +383,7 @@ def train(args: dict,
         maskB_meter = AverageMeter()
         time_meter = AverageMeter()
 
-        for itr, (udata, masks_enc, masks_pred, masks_attention, masks_attention_enc, masks_attention_pred) in enumerate(
+        for itr, (udata, masks_enc, masks_pred, masks_attention) in enumerate(
         train_loader):
             tokens = udata[0].to(device, non_blocking=True)
             segments = udata[1].to(device, non_blocking=True)
@@ -397,10 +394,6 @@ def train(args: dict,
             masks_enc = [u.to(device, non_blocking=True) for u in masks_enc]
             masks_pred = [u.to(device, non_blocking=True) for u in masks_pred]
             masks_attention = masks_attention.to(device, non_blocking=True)
-            if masks_attention_enc is not None:
-                masks_attention_enc = masks_attention_enc.to(device, non_blocking=True)
-            if masks_attention_pred is not None:
-                masks_attention_pred = masks_attention_pred.to(device, non_blocking=True)
 
             maskA_meter.update(len(masks_enc[0][0]))
             maskB_meter.update(len(masks_pred[0][0]))
@@ -414,12 +407,12 @@ def train(args: dict,
                         # Target encorder forward pass with output dim 
                         # (BATCH_SIZE, SEQ_LEN, EMBED_DIM)
                         if gt_type == 'rank':
-                            h = target_encoder(tokens=tokens,
+                            h, _, _, _ = target_encoder(tokens=tokens,
                                                segments=segments,
                                                positions=positions,
                                                masks_attention=masks_attention)
                         elif gt_type == 'counts':
-                            h = target_encoder(tokens=tokens,
+                            h, _, _, _ = target_encoder(tokens=tokens,
                                                segments=segments,
                                                counts=counts,
                                                masks_attention=masks_attention)
@@ -451,38 +444,38 @@ def train(args: dict,
                     # minmum context size in the batch after removal of
                     # overlapping targets
                     if gt_type == 'rank':
-                        z = encoder(positions=positions,
-                                    segments=segments,
-                                    tokens=tokens,
-                                    masks=masks_enc,
-                                    masks_attention=masks_attention_enc)                       
+                        z, pos_emb, seg_emb, token_emb = encoder(
+                            positions=positions,
+                            segments=segments,
+                            tokens=tokens,
+                            masks=masks_enc,
+                            masks_attention=None)                       
                     elif gt_type == 'counts':
-                        z = encoder(tokens=tokens,
-                                    segments=segments,
-                                    counts=counts,
-                                    masks=masks_enc,
-                                    masks_attention=masks_attention_enc)
+                        z, token_emb, seg_emb, value_emb = encoder(
+                            tokens=tokens,
+                            segments=segments,
+                            counts=counts,
+                            masks=masks_enc,
+                            masks_attention=None)
 
                     # Predictor forward pass with output dim (BATCH_SIZE *
                     # N_TARGETS * N_CONTEXTS, TARGET_MASK_SIZE, EMB_DIM)
                     if gt_type == 'rank':
                         z = predictor(z=z,
-                                      positions=positions,
-                                      segments=segments,
+                                      pos_embed=pos_emb,
+                                      seg_embed=seg_emb,
+                                      token_embed=token_emb,
                                       masks_enc=masks_enc,
                                       masks_pred=masks_pred,
-                                      enc_seg_embed=encoder.module.seg_embed,
-                                      enc_pos_embed=encoder.module.pos_embed,
-                                      masks_attention=masks_attention_pred)
+                                      masks_attention=None)
                     elif gt_type == 'counts':
                         z = predictor(z=z,
-                                      tokens=tokens,
-                                      segments=segments,
+                                      token_embed=token_emb,
+                                      seg_embed=seg_emb,
+                                      value_embed=value_emb,
                                       masks_enc=masks_enc,
                                       masks_pred=masks_pred,
-                                      enc_seg_embed=encoder.module.seg_embed,
-                                      enc_token_embed=encoder.module.token_embed,
-                                      masks_attention=masks_attention_pred)
+                                      masks_attention=None)
                     return z
 
                 def loss_fn(z, h):

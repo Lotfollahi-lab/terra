@@ -210,10 +210,7 @@ def infer(args: dict,
             max_special_tokens=max_special_tokens,
             n_special_tokens=n_special_tokens,
             max_cls_tokens=max_cls_tokens,
-            per_block_mask_ratio=per_block_mask_ratio,
-            controlled_attention_pattern=controlled_attention_pattern,
-            controlled_attention_type=controlled_attention_type,
-            restrict_special_attention=restrict_special_attention)
+            per_block_mask_ratio=per_block_mask_ratio)
     else:
         mask_collator = RandomMaskCollator(
             n_targets=n_targets,
@@ -266,7 +263,7 @@ def infer(args: dict,
     all_cell_gene_emb_dict = {}
     all_neighborhood_gene_emb_dict = {}
 
-    for itr, (udata, _, _, masks_attention, _, _) in tqdm(enumerate(loader)):
+    for itr, (udata, _, _, masks_attention) in tqdm(enumerate(loader)):
         # Load gene tokens and segmentation label to the specified device
         tokens = udata[0].to(device, non_blocking=True)
         segments = udata[1].to(device, non_blocking=True)
@@ -310,82 +307,55 @@ def infer(args: dict,
                                             (emb_list[-1].size(-1),))
 
         # Aggregate gene embeddings into cell and neighborhood embeddings
+        ns_tokens = tokens[:, n_special_tokens:]
+
         for i, emb in enumerate(emb_list):
             # Keep only <cls> token; at the moment there is only 1 <cls> token
-            if agg_type == 'cls':
-                cell_mask = create_binary_selection_mask(
-                    tokens,
-                    selection_type='cls_0',
-                    seq_len_cell=seq_len_cell,
-                    n_special_tokens=n_special_tokens,
-                    max_cls_tokens=max_cls_tokens)
-                if tokenizer_type == 'cell_neighborhood':
-                    neighborhood_mask = create_binary_selection_mask(
-                        tokens,
-                        selection_type='cls_1',
-                        seq_len_cell=seq_len_cell,
-                        n_special_tokens=n_special_tokens,
-                        max_cls_tokens=max_cls_tokens)
-                elif tokenizer_type == 'cell_graph':
-                    neighborhood_mask = create_binary_selection_mask(
-                        tokens,
-                        selection_type='cls_all',
-                        seq_len_cell=seq_len_cell,
-                        n_special_tokens=n_special_tokens,
-                        max_cls_tokens=max_cls_tokens)
-
-                cell_emb = compute_mean_unmasked_emb(emb,
-                                                     cell_mask)
-                neighborhood_emb = compute_mean_unmasked_emb(
-                    emb,
-                    neighborhood_mask)
-            # Keep elements relevant to cell embedding
-            elif (agg_type == "avg") or (agg_type == "weighted_avg"):
-                cell_mask = create_binary_selection_mask(
-                    tokens,
-                    selection_type="agg_cell",
+            cell_mask = create_binary_selection_mask(
+                ns_tokens,
+                selection_type="agg_cell",
+                excluded_tokens=agg_excluded_tokens,
+                seq_len_cell=seq_len_cell,
+                n_special_tokens=n_special_tokens,
+                max_cls_tokens=max_cls_tokens,
+                top_k=top_k)
+            if tokenizer_type == 'cell_neighborhood':
+                neighborhood_mask = create_binary_selection_mask(
+                    ns_tokens,
+                    selection_type="agg_neighborhood",
                     excluded_tokens=agg_excluded_tokens,
                     seq_len_cell=seq_len_cell,
                     n_special_tokens=n_special_tokens,
                     max_cls_tokens=max_cls_tokens,
                     top_k=top_k)
-                if tokenizer_type == 'cell_neighborhood':
-                    neighborhood_mask = create_binary_selection_mask(
-                        tokens,
-                        selection_type="agg_neighborhood",
-                        excluded_tokens=agg_excluded_tokens,
-                        seq_len_cell=seq_len_cell,
-                        n_special_tokens=n_special_tokens,
-                        max_cls_tokens=max_cls_tokens,
-                        top_k=top_k)
-                elif tokenizer_type == 'cell_graph':
-                    neighborhood_mask = create_binary_selection_mask(
-                        tokens,
-                        selection_type="agg_graph",
-                        excluded_tokens=agg_excluded_tokens,
-                        seq_len_cell=seq_len_cell,
-                        n_special_tokens=n_special_tokens,
-                        max_cls_tokens=max_cls_tokens,
-                        top_k=top_k,
-                        n_segments=n_segments)                    
+            elif tokenizer_type == 'cell_graph':
+                neighborhood_mask = create_binary_selection_mask(
+                    ns_tokens,
+                    selection_type="agg_graph",
+                    excluded_tokens=agg_excluded_tokens,
+                    seq_len_cell=seq_len_cell,
+                    n_special_tokens=n_special_tokens,
+                    max_cls_tokens=max_cls_tokens,
+                    top_k=top_k,
+                    n_segments=n_segments)                    
 
-                if agg_type == 'avg':
-                    cell_emb = compute_mean_unmasked_emb(emb,
-                                                         cell_mask)
-                    neighborhood_emb = compute_mean_unmasked_emb(
-                        emb,
-                        neighborhood_mask)
-                elif agg_type == "weighted_avg":
-                    cell_weights = compute_unmasked_rank_based_weights(
-                        tokens, cell_mask)
-                    cell_emb = compute_mean_unmasked_emb(
-                        emb * cell_weights.unsqueeze(-1),
-                        cell_mask)
-                    neighborhood_weights = compute_unmasked_rank_based_weights(
-                        tokens, neighborhood_mask)
-                    neighborhood_emb = compute_mean_unmasked_emb(
-                        emb * neighborhood_weights.unsqueeze(-1),
-                        neighborhood_mask)
+            if agg_type == 'avg':
+                cell_emb = compute_mean_unmasked_emb(emb,
+                                                     cell_mask)
+                neighborhood_emb = compute_mean_unmasked_emb(
+                    emb,
+                    neighborhood_mask)
+            elif agg_type == "weighted_avg":
+                cell_weights = compute_unmasked_rank_based_weights(
+                    tokens, cell_mask)
+                cell_emb = compute_mean_unmasked_emb(
+                    emb * cell_weights.unsqueeze(-1),
+                    cell_mask)
+                neighborhood_weights = compute_unmasked_rank_based_weights(
+                    tokens, neighborhood_mask)
+                neighborhood_emb = compute_mean_unmasked_emb(
+                    emb * neighborhood_weights.unsqueeze(-1),
+                    neighborhood_mask)
 
             # Concat layer-specific embeddings across batches
             if itr == 0:

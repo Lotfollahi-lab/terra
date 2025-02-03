@@ -103,7 +103,7 @@ def compute_mean_unmasked_emb(emb: torch.Tensor,
     return mean_emb
 
 
-def create_binary_selection_mask(tokens: torch.Tensor,
+def create_binary_selection_mask(ns_tokens: torch.Tensor,
                                  seq_len_cell: int,
                                  n_special_tokens: int,
                                  max_cls_tokens: int,
@@ -148,66 +148,52 @@ def create_binary_selection_mask(tokens: torch.Tensor,
     selection_mask:
         The resulting 2D selection mask tensor.
     """
-    selection_mask = torch.zeros_like(tokens, dtype=torch.bool)
+    selection_mask = torch.zeros_like(ns_tokens, dtype=torch.bool)
 
-    if selection_type == 'cls_0':
-        # Select only the first <cls> token
-        selection_mask[:, 0] = True
-        return selection_mask
-    elif selection_type == 'cls_1':
-        # Select only the second <cls> token
-        selection_mask[:, 1] = True
-        return selection_mask
-    elif selection_type == 'cls_all':
-        # Select non-padding <cls> tokens
-        selection_mask[:, :max_cls_tokens] = True
-        selection_mask[tokens == 0] = False
-        return selection_mask       
-    elif selection_type == 'agg_cell':
+    if selection_type == 'agg_cell':
         # Select non-padding tokens in the cell segment
-        selection_mask[:, n_special_tokens:
-                          n_special_tokens + seq_len_cell] = True
-        selection_mask[tokens == 0] = False
+        selection_mask[:, :seq_len_cell] = True
+        selection_mask[ns_tokens == 0] = False
         if excluded_tokens:
             # Exclude other excluded tokens
             selection_mask[torch.isin(
-                tokens,
+                ns_tokens,
                 torch.tensor(excluded_tokens).to(tokens.device))] = False
         if top_k:
             # Exclude tokens beyond the top_k positions in the cell segment
-            selection_mask[:, n_special_tokens + top_k:] = False
+            selection_mask[:, top_k:] = False
     elif selection_type == 'agg_neighborhood':
         # Select non-padding tokens in the neighborhood segments
-        selection_mask[:, n_special_tokens + seq_len_cell:] = True
-        selection_mask[tokens == 0] = False
+        selection_mask[:, seq_len_cell:] = True
+        selection_mask[ns_tokens == 0] = False
         if excluded_tokens:
             # Exclude other excluded tokens
             selection_mask[torch.isin(
-                tokens,
+                ns_tokens,
                 torch.tensor(excluded_tokens).to(tokens.device))] = False
         if top_k:
             # Exclude tokens beyond the top_k positions in the neighborhood
             # segments
             selection_mask[
-                :, n_special_tokens + seq_len_cell + top_k:] = False
+                :, seq_len_cell + top_k:] = False
     elif selection_type == 'agg_graph':
         # Select non-padding tokens in all segments
-        selection_mask[:, n_special_tokens:] = True
-        selection_mask[tokens == 0] = False
+        selection_mask[:, :] = True
+        selection_mask[ns_tokens == 0] = False
         if excluded_tokens:
             # Exclude other excluded tokens
             selection_mask[torch.isin(
-                tokens,
+                ns_tokens,
                 torch.tensor(excluded_tokens).to(tokens.device))] = False
         if top_k:
             # Exclude tokens beyond the top_k positions in all segments
             for i in range(n_segments - 1):
                 selection_mask[
                     :, 
-                    (n_special_tokens + seq_len_cell * i + top_k):
-                    (n_special_tokens + seq_len_cell * (i + 1))] = False
+                    (seq_len_cell * i + top_k):
+                    (seq_len_cell * (i + 1))] = False
             selection_mask[
-                :, n_special_tokens + seq_len_cell * (n_segments - 1) + top_k:] = False  
+                :, seq_len_cell * (n_segments - 1) + top_k:] = False  
     elif selection_type == 'gene_cell':
         # Select only positions corresponding to the specified gene_id in the
         # cell segment
