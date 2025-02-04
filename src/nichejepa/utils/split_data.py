@@ -16,7 +16,8 @@ test_batch_ids = [
     '1002_batch4', '78_batch3', '78_batch10', '78_batch1', '78_batch0', '78_batch2',
     '78_batch6', '78_batch7', '78_batch9', '78_batch8', '78_batch4', '78_batch5',
     '59_batch0', '59_batch3', '59_batch6', '59_batch7', '59_batch2', '59_batch4',
-    '59_batch1', '59_batch5','49_batch0'
+    '59_batch1', '59_batch5','49_batch0', '1007_batch0', '1007_batch1', '1007_batch2',
+	'1007_batch3', '1007_batch4', '1007_batch5', '1007_batch6', '1007_batch7',
 ]
 
 '''
@@ -46,7 +47,8 @@ with open("cell_ids.pkl", "rb") as f:
 cell_ids = cell_ids[0:1000]
 cell_ids = random_items
 '''
-with open("cell_ids.pkl", "rb") as f:
+ID ='human_cohort2_60m_32_None_None_None_gene_corrected_read_depth_None_shifted_log_knn_10'
+with open(f"pickle_folder/cell_ids_{ID}_.pkl", "rb") as f:
     cell_ids = pickle.load(f)
 
 #cell_ids = cell_ids[0:1000]
@@ -94,13 +96,13 @@ print("Test unique identifiers:", test_unique)
 print('done4')
 
 # Save the splits as pickle files
-with open("precomputed_split_validation.pkl", "wb") as f:
+with open(f"pickle_folder/precomputed_split_{ID}_validation.pkl", "wb") as f:
     pickle.dump(validation_indices, f)
 
-with open("precomputed_split_test.pkl", "wb") as f:
+with open(f"pickle_folder/precomputed_split_{ID}_test.pkl", "wb") as f:
     pickle.dump(test_indices, f)
 
-with open("precomputed_split_train.pkl", "wb") as f:
+with open(f"pickle_folder/precomputed_split_{ID}_train.pkl", "wb") as f:
     pickle.dump(train_indices, f)
 
-print("Splits saved as precomputed_split_validation.pkl, precomputed_split_test.pkl, and precomputed_split_train.pkl")
+print("Splits saved as precomputed_split_60m_validation.pkl, precomputed_split_60m_test.pkl, and precomputed_split_60m_train.pkl")

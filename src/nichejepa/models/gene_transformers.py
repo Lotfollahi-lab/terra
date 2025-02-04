@@ -530,6 +530,9 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
             positions[:, self.max_cls_tokens:self.n_special_tokens] = 0
             segments[:, self.max_cls_tokens:self.n_special_tokens] = 0
             tokens[:, self.max_cls_tokens:self.n_special_tokens] = 0
+            #positions[:, self.n_special_tokens-1:self.n_special_tokens] = 0
+            #segments[:, self.n_special_tokens-1:self.n_special_tokens] = 0
+            #tokens[:, self.n_special_tokens-1:self.n_special_tokens] = 0
 
         # Get positional, segment and token embeddings
         pos_emb = self.pos_embed(positions)

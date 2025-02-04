@@ -297,6 +297,7 @@ def train(args: dict,
         persistent_workers=False)
 
     ipe = len(train_loader)
+    print(ipe)
 
     # Initialize optimizer and scheduler
     optimizer, scaler, scheduler, wd_scheduler = init_opt(
@@ -543,7 +544,7 @@ def train(args: dict,
                             grad_stats.max))
             if train_:
                 log_stats()
-                wandb.log({"loss": loss, 'lr':_new_lr})
+                wandb.log({"loss": loss, 'lr':_new_lr, "epoch": epoch})
                 assert not np.isnan(loss), 'loss is nan'
     
         # -- Save Checkpoint after every epoch
