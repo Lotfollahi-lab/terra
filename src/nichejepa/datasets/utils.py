@@ -92,11 +92,11 @@ def prepare_dataset(args: dict,
 
     # Load precomputed data split if specified
     if args['data']['precomputed_split']:
-        with open(args['data']['precomputed_split']+ "_train.pkl", "rb") as f: 
+        with open(args['data']['precomputed_split'] + "_train.pkl", "rb") as f: 
             train_indices= pickle.load(f)
-        with open(args['data']['precomputed_split']+ "_test.pkl", "rb") as f: 
+        with open(args['data']['precomputed_split'] + "_test.pkl", "rb") as f: 
             test_indices= pickle.load(f)
-        with open(args['data']['precomputed_split']+ "_validation.pkl", "rb") as f: 
+        with open(args['data']['precomputed_split'] + "_validation.pkl", "rb") as f: 
             val_indices= pickle.load(f)
         val_dataset = dataset.select(val_indices)
         test_dataset = dataset.select(test_indices)
