@@ -53,13 +53,13 @@ def process_main(rank, args, params, world_size, devices, logger, folder_path, i
 
     # Execute training or evaluation
     if is_training:
-        train_dataset, val_dataset, test_dataset = prepare_dataset(params)
-        train(params, train_dataset, test_dataset, save_folder_path=folder_path)
+        train_dataset, _, _ = prepare_dataset(params)
+        train(params, train_dataset, train_dataset, save_folder_path=folder_path)
     else:
-        train_dataset, test_dataset, val_dataset = prepare_dataset(params)
-        loss_val = train(params, val_dataset, test_dataset, resume_preempt=True, save_folder_path=folder_path, train_=False)
-        params['data']['test_batch_ids'] = ['1000_batch11', '1000_batch19', '1000_batch32']
-        params['data']['split_val'] = 0.0
+        #train_dataset, test_dataset, val_dataset = prepare_dataset(params)
+        #loss_val = train(params, val_dataset, test_dataset, resume_preempt=True, save_folder_path=folder_path, train_=False, top_k=64)
+        #params['data']['test_batch_ids'] = ['1000_batch11', '1000_batch19', '1000_batch32']
+        #params['data']['split_val'] = 0.0
         train_dataset, test_dataset, val_dataset = prepare_dataset(params)
         #indices = list(range(len(test_dataset)))
         #split_params = {'test_size': 0.25,
@@ -67,7 +67,7 @@ def process_main(rank, args, params, world_size, devices, logger, folder_path, i
         #train_indices, test_indices = train_test_split(indices, **split_params)
         #val_dataset = test_dataset.select(test_indices)
         #train_data = infer(params, train_dataset, load_folder_path=folder_path)
-        test_data = infer(params, test_dataset, load_folder_path=folder_path)
+        test_data = infer(params, train_dataset, load_folder_path=folder_path, top_k= 64)
         #adata_combined = ad.concat(
         #    [train_data, test_data], axis=0) # concat along the obs (cells)
         #adata_combined.write(f'{folder_path}/adata.h5ad')
