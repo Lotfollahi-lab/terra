@@ -424,9 +424,6 @@ def train(args: dict,
                                                counts=counts,
                                                masks_attention=masks_attention)
 
-                        # Normalize over feature dim
-                        # h = F.layer_norm(h, (h.size(-1),))
-
                         if centering:
                             # Update center over batch for centering like in DINO
                             if center is not None:
@@ -438,6 +435,9 @@ def train(args: dict,
                             
                             # Center over batch
                             h = h - center
+                        else:
+                            # Normalize over feature dim
+                            h = F.layer_norm(h, (h.size(-1),))
 
                         # Only keep encoded targets (masked genes of h); output
                         # dim (BATCH_SIZE * N_TARGETS, TARGET_MASK_SIZE, 
