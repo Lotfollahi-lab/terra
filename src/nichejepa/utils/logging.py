@@ -9,7 +9,7 @@ https://github.com/facebookresearch/ijepa/blob/main/src/utils/logging.py
 import torch
 
 
-def gpu_timer(closure, log_timings: bool=True):
+def gpu_timer(closure, center, log_timings: bool=True):
     """
     Helper to time gpu-time to execute closure().
     """
@@ -21,7 +21,7 @@ def gpu_timer(closure, log_timings: bool=True):
         end = torch.cuda.Event(enable_timing=True)
         start.record()
 
-    result = closure()
+    result = closure(center)
 
     if log_timings:
         end.record()

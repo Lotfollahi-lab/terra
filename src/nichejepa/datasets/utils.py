@@ -3,6 +3,7 @@ import random
 import requests
 from typing import List, Literal, Tuple, Union
 
+import pickle
 import datasets
 from datasets import load_from_disk
 from sklearn.model_selection import train_test_split
@@ -89,6 +90,19 @@ def prepare_dataset(args: dict,
     data_path = args['data']['tokenized_data_folder_path']
     dataset = load_from_disk(data_path)
 
+    # Load precomputed data split if specified
+    if args['data']['precomputed_split']:
+        with open(args['data']['precomputed_split'] + "_train.pkl", "rb") as f: 
+            train_indices= pickle.load(f)
+        with open(args['data']['precomputed_split'] + "_test.pkl", "rb") as f: 
+            test_indices= pickle.load(f)
+        with open(args['data']['precomputed_split'] + "_validation.pkl", "rb") as f: 
+            val_indices= pickle.load(f)
+        val_dataset = dataset.select(val_indices)
+        test_dataset = dataset.select(test_indices)
+        train_dataset = dataset.select(train_indices)
+        return train_dataset, val_dataset, test_dataset
+
     # Sample subset if specified
     if args['data']['sample_subset']:
         total_size = len(dataset)
@@ -117,14 +131,23 @@ def prepare_dataset(args: dict,
             for cell_id in cell_ids]
         train_indices = [
             index for index, value in enumerate(test_batch_mask) if not value]
+        if args['data']['split_val'] > 0:
+            split_params = {
+                'test_size': args['data']['split_val'],
+                'random_state': args['data']['random_state']}
+            train_indices, val_indices = train_test_split(train_indices, **split_params)
         test_indices = [
             index for index, value in enumerate(test_batch_mask) if value]
 
     if split_dataset:
         train_dataset = dataset.select(train_indices)
+        if args['data']['split_val'] > 0:
+            val_dataset = dataset.select(val_indices)
+        else:
+            val_dataset = dataset.select([])
         test_dataset = dataset.select(test_indices)
 
-        return train_dataset, test_dataset
+        return train_dataset, val_dataset, test_dataset
     else:
         split_labels = {i: 'train' for i in train_indices}
         split_labels.update({i: 'test' for i in test_indices})

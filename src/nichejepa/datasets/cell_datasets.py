@@ -25,6 +25,7 @@ class CellBaseDataset(Dataset):
                             'norm_value_rank_sampling_rep',
                             'rand_sampling',
                             'rand_sampling_rep']]=None,
+                 n_nonzero_tokens_list=None,
                  ):
         """
         Torch CellBaseDataset class.
@@ -48,6 +49,8 @@ class CellBaseDataset(Dataset):
             Special tokens to be included in the token sequences.
         sampling_strategy:
             Token sampling strategy.
+        n_nonzero_tokens_list:
+            List of n_nonzero_tokens.
         """
         if gt_type not in ['rank', 'counts']:
             raise ValueError(f'Invalid "gt_type": {gt_type}.')
@@ -66,7 +69,10 @@ class CellBaseDataset(Dataset):
                         self.n_special_tokens)
         self.sampling_strategy = sampling_strategy
 
-        self.n_nz_tokens = self.dataset['n_nonzero_tokens']
+        if n_nonzero_tokens_list:
+            self.n_nz_tokens = n_nonzero_tokens_list
+        else:
+            self.n_nz_tokens = self.dataset['n_nonzero_tokens']
 
     def __len__(self) -> int:
         return self.len
