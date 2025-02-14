@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 import torch
-
+import torch.nn.functional as F
 
 def compute_unmasked_rank_based_weights(tokens: torch.Tensor,
                                         mask: torch.Tensor
@@ -106,13 +106,13 @@ def compute_mean_unmasked_emb(emb: torch.Tensor,
 def create_binary_selection_mask(tokens: torch.Tensor,
                                  seq_len_cell: int,
                                  n_special_tokens: int,
-                                 max_cls_tokens: int,
                                  selection_type: Literal['cls_cell',
                                                          'cls_neighborhood',
                                                          'agg_cell',
                                                          'agg_neighborhood',
                                                          'gene_cell',
                                                          'gene_neighborhood'],
+                                 max_cls_tokens: Optional[int]=None,
                                  excluded_tokens: Optional[List]=None,
                                  top_k: Optional[int]=None,
                                  gene_id: Optional[int]=None,
@@ -231,9 +231,10 @@ def create_binary_selection_mask(tokens: torch.Tensor,
 def retrieve_gene_emb(tokens: torch.Tensor,
                       seq_len_cell: int,
                       n_special_tokens: int,
-                      emb: torch.Tensor,
                       gene_type: Literal["cell", "neighborhood"],
                       gene_id: int,
+                      emb: torch.Tensor=None,
+                      aggregate_multiple: bool=False,
                       ) -> torch.Tensor:
     """
     Retrieve contextual gene embeddings for a given gene based on a specified
@@ -247,13 +248,15 @@ def retrieve_gene_emb(tokens: torch.Tensor,
         The length of cell tokens in the sequence.
     n_special_tokens:
         Number of special tokens.
-    emb:
-        A 3D tensor containg the embeddings of all genes.
     gene_type:
         Defines whether to retrieve the cell or neighborhood gene embedding for
         the given gene ID.
     gene_id:
         Gene ID of the gene for which the embedding will be retrieved.
+    emb:
+        A 3D tensor containg the embeddings of all genes.
+    aggregate_multiple: bool. 
+        If True, averages multiple occurrences; else assumes at most one.
 
     Returns
     --------
@@ -266,24 +269,23 @@ def retrieve_gene_emb(tokens: torch.Tensor,
         n_special_tokens=n_special_tokens,
         selection_type=f"gene_{gene_type}",
         gene_id=gene_id)
+    
+    gene_presence = gene_mask.any(dim=1)           # (N,) True if gene is present in a sequence
 
-    gene_indices = torch.argmax(gene_mask.to(torch.int),
-                                dim=1,
-                                keepdim=True) # shape: (3, 1)
+    if aggregate_multiple:
+        # Average over all occurrences.
+        gene_mask_float = gene_mask.float()  # Convert to float: shape (N, L)
+        counts = gene_mask_float.sum(dim=1, keepdim=True)  # (N, 1)
+        summed = (emb * gene_mask_float.unsqueeze(-1)).sum(dim=1)  # (N, D)
+        avg_emb = summed / (counts + 1e-6)  # Avoid division by zero.
+        return avg_emb, gene_presence
+    else:
+        # Assume at most one occurrence per sequence. For sequences with no occurrence, embedding remains 0.
+        # We use argmax on the float mask (note: if no occurrence exists, argmax returns 0, but presence will be 0).
+        gene_mask_float = gene_mask.float()
+        gene_indices = gene_mask_float.argmax(dim=1)  # (N,) index of the (first) occurrence
 
-    # Use gather to get the correct embeddings for each cell based on the
-    # indices (if gene is not present, the index will be wrong but is
-    # overwritten below)
-    gene_emb = torch.gather(
-        emb,
-        1,
-        gene_indices.unsqueeze(-1).expand(-1, -1, emb.size(2))).squeeze(1)
-
-    # For rows with no True values, set them to zero embeddings
-    gene_emb[gene_mask.sum(dim=1) == 0] = torch.zeros(emb.size(2)).to(
-        gene_emb.device)
-
-    return gene_emb
+    return gene_presence, gene_indices
 
 
 def collect_adata_from_folder(load_folder_path: str) -> ad.AnnData:
@@ -310,3 +312,57 @@ def collect_adata_from_folder(load_folder_path: str) -> ad.AnnData:
     concatenated_adata = ad.concat(adata_list, join='outer', index_unique=None)
     
     return concatenated_adata
+
+
+    import torch
+import torch.nn.functional as F
+
+def compute_cosine_similarity_components(
+    cell_embs: torch.Tensor,
+    neb_embs: torch.Tensor,
+    cell_presence: torch.Tensor,
+    neb_presence: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Computes the sum of cosine similarities and the count of valid sequences 
+    for each (cell gene, neighborhood gene) pair.
+
+    Parameters
+    ----------
+    cell_embs : torch.Tensor
+        A tensor of shape (N, num_cell_genes, D) containing embeddings for cell genes.
+    neb_embs : torch.Tensor
+        A tensor of shape (N, num_neb_genes, D) containing embeddings for neighborhood genes.
+    cell_presence : torch.Tensor
+        A binary tensor of shape (N, num_cell_genes) indicating presence (1) or absence (0) of each cell gene per sequence.
+    neb_presence : torch.Tensor
+        A binary tensor of shape (N, num_neb_genes) indicating presence (1) or absence (0) of each neighborhood gene per sequence.
+
+    Returns
+    -------
+    sum_cos_sim : torch.Tensor
+        A tensor of shape (num_cell_genes, num_neb_genes) containing the sum 
+        of cosine similarities for each gene pair across sequences.
+    count : torch.Tensor
+        A tensor of shape (num_cell_genes, num_neb_genes) containing the count 
+        of valid sequences where both genes are present.
+    """
+
+    # Normalize embeddings to ensure cosine similarity reduces to dot product
+    cell_embs = F.normalize(cell_embs, p=2, dim=-1)
+    neb_embs = F.normalize(neb_embs, p=2, dim=-1)
+
+    # Compute cosine similarity per sequence
+    cos_sim = torch.bmm(cell_embs, neb_embs.transpose(1, 2))  # Shape: (N, num_cell_genes, num_neb_genes)
+
+    # Compute presence mask: consider only sequences where both genes are present
+    combined_presence = cell_presence.unsqueeze(2) * neb_presence.unsqueeze(1)  # Shape: (N, num_cell_genes, num_neb_genes)
+    
+    # Apply mask to cosine similarity values
+    masked_cos_sim = cos_sim * combined_presence  # Zero out cosine similarities where either gene is absent
+
+    # Sum valid cosine similarities and count valid occurrences per gene pair
+    sum_cos_sim = masked_cos_sim.sum(dim=0)  # Shape: (num_cell_genes, num_neb_genes)
+    count = combined_presence.sum(dim=0)  # Shape: (num_cell_genes, num_neb_genes)
+
+    return sum_cos_sim, count

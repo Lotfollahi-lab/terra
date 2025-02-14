@@ -27,7 +27,8 @@ from .utils.embedding import (create_binary_selection_mask,
                               compute_mean_unmasked_emb,
                               compute_unmasked_rank_based_weights,
                               collect_adata_from_folder,
-                              retrieve_gene_emb)
+                              retrieve_gene_emb,
+                              compute_cosine_similarity_components)
 from .utils.logging import CSVLogger
 
 
@@ -274,7 +275,7 @@ def infer(args: dict,
     all_neighborhood_emb_list = []
     all_cell_gene_emb_dict = {}
     all_neighborhood_gene_emb_dict = {}
-
+    sum_cos_sim, count  = None, None
     for itr, (udata, _, _, masks_attention, _, _) in tqdm(enumerate(loader)):
         # Load gene tokens and segmentation label to the specified device
         tokens = udata[0].to(device, non_blocking=True)
@@ -414,31 +415,47 @@ def infer(args: dict,
 
             # Store cell and neighborhood gene embeddings of last layer
             if i == (len(emb_list) - 1):
-                for gene_id in cell_gene_ids:
-                    gene_emb = retrieve_gene_emb(
+                if len(cell_gene_ids)!=0:
+                    cell_embs = torch.zeros((emb.shape[0], len(cell_gene_ids), emb.shape[-1]), device=emb.device)
+                    neb_embs = torch.zeros((emb.shape[0], len(neighborhood_gene_ids), emb.shape[-1]), device=emb.device)
+                    cell_presence = torch.zeros((emb.shape[0], len(cell_gene_ids)), device=emb.device)
+                    neb_presence = torch.zeros((emb.shape[0], len(neighborhood_gene_ids)), device=emb.device)
+                for j, gene_id in enumerate(cell_gene_ids):
+                    gene_presence, gene_indices = retrieve_gene_emb(
                         tokens=tokens,
-                        emb=emb,
                         gene_id=gene_id,
                         gene_type="cell",
                         seq_len_cell=seq_len_cell,
                         n_special_tokens=n_special_tokens)
+                    rows = torch.arange(emb.shape[0], device=emb.device)
+                     # Only update for sequences where presence is True.
+                    cell_embs[rows[gene_presence], j, :] = emb[rows[gene_presence], gene_indices[gene_presence], :]
+                    cell_presence[:, j] = gene_presence.float()
                     if itr == 0:
-                        all_cell_gene_emb_dict[gene_id] = [gene_emb]
+                        all_cell_gene_emb_dict[gene_id] = [cell_embs]
                     else:
-                        all_cell_gene_emb_dict[gene_id].append(gene_emb)
-                for gene_id in neighborhood_gene_ids:
-                    gene_emb = retrieve_gene_emb(
+                        all_cell_gene_emb_dict[gene_id].append([cell_embs])
+                for j, gene_id in enumerate(neighborhood_gene_ids):
+                    gene_emb, gene_presence = retrieve_gene_emb(
                         tokens=tokens,
                         emb=emb,
                         gene_id=gene_id,
                         gene_type="neighborhood",
                         seq_len_cell=seq_len_cell,
-                        n_special_tokens=n_special_tokens)
+                        n_special_tokens=n_special_tokens,
+                        aggregate_multiple=True)
+                    neb_embs[:, j, :] = gene_emb
+                    neb_presence[:, j] = gene_presence.float()
                     if itr == 0:
-                        all_neighborhood_gene_emb_dict[gene_id] = [gene_emb]
+                        all_neighborhood_gene_emb_dict[gene_id] = [neb_embs]
                     else:
-                        all_neighborhood_gene_emb_dict[gene_id].append(gene_emb)                  
-
+                        all_neighborhood_gene_emb_dict[gene_id].append([neb_embs])                  
+                if itr == 0 and len(cell_gene_ids)!=0:
+                    sum_cos_sim, count =compute_cosine_similarity_components(cell_embs, neb_embs, cell_presence, neb_presence)
+                elif len(cell_gene_ids)!=0:
+                    sum_cos_sim_temp, count_temp =compute_cosine_similarity_components(cell_embs, neb_embs, cell_presence, neb_presence)
+                    sum_cos_sim += sum_cos_sim_temp
+                    count += count_temp
     adata = ad.AnnData(
         obs=pd.DataFrame({'cell_id': all_cell_ids},
         index=range(len(all_cell_ids))))
