@@ -57,6 +57,7 @@ def infer(args: dict,
           feature_norm: bool=False,
           check_point: int=None,
           top_k: int=None,
+          return_all: bool=True,
           ) -> ad.AnnData:
     """
     Use a trained model for inference. Run forward pass on a given dataset and
@@ -87,6 +88,8 @@ def infer(args: dict,
         If load from check_point or not.
     top_k:
         Include top_k genes or not.
+    return_all: 
+        If return all inferenced information or not.
     Returns
     -----------
     adata:
@@ -434,7 +437,7 @@ def infer(args: dict,
                     if itr == 0:
                         all_cell_gene_emb_dict[gene_id] = [cell_embs]
                     else:
-                        all_cell_gene_emb_dict[gene_id].append([cell_embs])
+                        all_cell_gene_emb_dict[gene_id].append(cell_embs)
                 for j, gene_id in enumerate(neighborhood_gene_ids):
                     gene_emb, gene_presence = retrieve_gene_emb(
                         tokens=tokens,
@@ -449,17 +452,18 @@ def infer(args: dict,
                     if itr == 0:
                         all_neighborhood_gene_emb_dict[gene_id] = [neb_embs]
                     else:
-                        all_neighborhood_gene_emb_dict[gene_id].append([neb_embs])                  
+                        all_neighborhood_gene_emb_dict[gene_id].append(neb_embs)                  
                 if itr == 0 and len(cell_gene_ids)!=0:
                     sum_cos_sim, count =compute_cosine_similarity_components(cell_embs, neb_embs, cell_presence, neb_presence)
                 elif len(cell_gene_ids)!=0:
                     sum_cos_sim_temp, count_temp =compute_cosine_similarity_components(cell_embs, neb_embs, cell_presence, neb_presence)
                     sum_cos_sim += sum_cos_sim_temp
                     count += count_temp
+    if return_all is False:
+        return sum_cos_sim, count
     adata = ad.AnnData(
         obs=pd.DataFrame({'cell_id': all_cell_ids},
-        index=range(len(all_cell_ids))))
-
+        index=range(len(all_cell_ids))))    
     # Add metadata
     adata_metadata = collect_adata_from_folder(raw_data_folder_path)
     adata_metadata_subset = adata_metadata[
@@ -492,4 +496,4 @@ def infer(args: dict,
             all_neighborhood_gene_emb_dict[gene_id],
             dim=0).cpu())
 
-    return adata
+    return adata, sum_cos_sim, count
