@@ -435,9 +435,9 @@ def infer(args: dict,
                     cell_embs[rows[gene_presence], j, :] = emb[rows[gene_presence], gene_indices[gene_presence], :]
                     cell_presence[:, j] = gene_presence.float()
                     if itr == 0:
-                        all_cell_gene_emb_dict[gene_id] = [cell_embs]
+                        all_cell_gene_emb_dict[gene_id] = [cell_embs[:, j, :]]
                     else:
-                        all_cell_gene_emb_dict[gene_id].append(cell_embs)
+                        all_cell_gene_emb_dict[gene_id].append(cell_embs[:, j, :])
                 for j, gene_id in enumerate(neighborhood_gene_ids):
                     gene_emb, gene_presence = retrieve_gene_emb(
                         tokens=tokens,
@@ -450,9 +450,9 @@ def infer(args: dict,
                     neb_embs[:, j, :] = gene_emb
                     neb_presence[:, j] = gene_presence.float()
                     if itr == 0:
-                        all_neighborhood_gene_emb_dict[gene_id] = [neb_embs]
+                        all_neighborhood_gene_emb_dict[gene_id] = [neb_embs[:, j, :]]
                     else:
-                        all_neighborhood_gene_emb_dict[gene_id].append(neb_embs)                  
+                        all_neighborhood_gene_emb_dict[gene_id].append(neb_embs[:, j, :])                  
                 if itr == 0 and len(cell_gene_ids)!=0:
                     sum_cos_sim, count =compute_cosine_similarity_components(cell_embs, neb_embs, cell_presence, neb_presence)
                 elif len(cell_gene_ids)!=0:
