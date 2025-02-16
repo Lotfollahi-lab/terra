@@ -418,11 +418,16 @@ def infer(args: dict,
 
             # Store cell and neighborhood gene embeddings of last layer
             if i == (len(emb_list) - 1):
-                if len(cell_gene_ids)!=0:
-                    cell_embs = torch.zeros((emb.shape[0], len(cell_gene_ids), emb.shape[-1]), device=emb.device)
-                    neb_embs = torch.zeros((emb.shape[0], len(neighborhood_gene_ids), emb.shape[-1]), device=emb.device)
-                    cell_presence = torch.zeros((emb.shape[0], len(cell_gene_ids)), device=emb.device)
-                    neb_presence = torch.zeros((emb.shape[0], len(neighborhood_gene_ids)), device=emb.device)
+                if len(cell_gene_ids)!=0 and itr ==0:
+                    cell_embs = torch.zeros((emb.shape[0], len(cell_gene_ids), emb.shape[-1]))
+                    neb_embs = torch.zeros((emb.shape[0], len(neighborhood_gene_ids), emb.shape[-1]))
+                    cell_presence = torch.zeros((emb.shape[0], len(cell_gene_ids)))
+                    neb_presence = torch.zeros((emb.shape[0], len(neighborhood_gene_ids)))
+                elif len(cell_gene_ids)!=0:
+                    cell_embs.zero_()
+                    neb_embs.zero_()
+                    cell_presence.zero_()
+                    neb_presence.zero_()
                 for j, gene_id in enumerate(cell_gene_ids):
                     gene_presence, gene_indices = retrieve_gene_emb(
                         tokens=tokens,
@@ -430,9 +435,11 @@ def infer(args: dict,
                         gene_type="cell",
                         seq_len_cell=seq_len_cell,
                         n_special_tokens=n_special_tokens)
-                    rows = torch.arange(emb.shape[0], device=emb.device)
+                    rows = torch.arange(emb.shape[0])
                      # Only update for sequences where presence is True.
-                    cell_embs[rows[gene_presence], j, :] = emb[rows[gene_presence], gene_indices[gene_presence], :]
+                    gene_presence = gene_presence.cpu()
+                    gene_indices = gene_indices.cpu()
+                    cell_embs[rows[gene_presence], j, :] = emb.cpu()[rows[gene_presence], gene_indices[gene_presence], :]
                     cell_presence[:, j] = gene_presence.float()
                     if itr == 0 and return_all:
                         all_cell_gene_emb_dict[gene_id] = [cell_embs[:, j, :]]
@@ -447,7 +454,7 @@ def infer(args: dict,
                         seq_len_cell=seq_len_cell,
                         n_special_tokens=n_special_tokens,
                         aggregate_multiple=True)
-                    neb_embs[:, j, :] = gene_emb
+                    neb_embs[:, j, :] = gene_emb.cpu()
                     neb_presence[:, j] = gene_presence.float()
                     if itr == 0 and return_all:
                         all_neighborhood_gene_emb_dict[gene_id] = [neb_embs[:, j, :]]
@@ -459,6 +466,9 @@ def infer(args: dict,
                     sum_cos_sim_temp, count_temp =compute_cosine_similarity_components(cell_embs, neb_embs, cell_presence, neb_presence)
                     sum_cos_sim += sum_cos_sim_temp
                     count += count_temp
+        np.save("sim_new.npy", sum_cos_sim.cpu())
+        np.save("count_new.npy", count.cpu())
+
     if return_all is False:
         return sum_cos_sim, count
     adata = ad.AnnData(
