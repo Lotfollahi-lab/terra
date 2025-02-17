@@ -148,7 +148,7 @@ def train(args: dict,
     r_file = args['state']['read_checkpoint']
 
     if args['data']['precomputed_n_nonzero_tokens']:
-        with open(args['data']['precomputed_n_nonzero_tokens'] + "_train.pkl", "rb") as f: 
+        with open(args['data']['precomputed_n_nonzero_tokens'], "rb") as f: 
             n_nonzero_tokens= pickle.load(f)
     else:
         n_nonzero_tokens = None
@@ -284,31 +284,8 @@ def train(args: dict,
         sampling_strategy=sampling_strategy,
         n_nonzero_tokens_list=n_nonzero_tokens)
 
-    test_cell_dataset = make_cell_dataset(
-        dataset=test_dataset,
-        vocab_size=vocab_size,
-        seq_len_cell=seq_len_cell,
-        seq_len_neighborhood=seq_len_neighborhood,
-        max_special_tokens=max_special_tokens,
-        tokenizer_type=tokenizer_type,
-        gt_type=gt_type,
-        special_tokens=special_tokens,
-        sampling_strategy=sampling_strategy)
-
     train_loader, train_sampler = init_dataloader_and_sampler(
         cell_dataset=train_cell_dataset,
-        batch_size=batch_size,
-        distributed=True,
-        world_size=world_size,
-        rank=rank,
-        collate_fn=mask_collator,
-        pin_memory=pin_memory,
-        num_workers=num_workers,
-        drop_last=False,
-        persistent_workers=False)
-
-    test_loader, test_sampler = init_dataloader_and_sampler(
-        cell_dataset=test_cell_dataset,
         batch_size=batch_size,
         distributed=True,
         world_size=world_size,

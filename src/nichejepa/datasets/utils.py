@@ -90,19 +90,15 @@ def prepare_dataset(args: dict,
     data_path = args['data']['tokenized_data_folder_path']
     dataset = load_from_disk(data_path)
 
-    # Load precomputed data split if specified
+    # Load dataset from the specified path
+    data_path = args['data']['tokenized_data_folder_path']
+    dataset = load_from_disk(data_path)
+    #return dataset,dataset,dataset
     if args['data']['precomputed_split']:
-        with open(args['data']['precomputed_split'] + "_train.pkl", "rb") as f: 
-            train_indices= pickle.load(f)
-        with open(args['data']['precomputed_split'] + "_test.pkl", "rb") as f: 
-            test_indices= pickle.load(f)
-        with open(args['data']['precomputed_split'] + "_validation.pkl", "rb") as f: 
-            val_indices= pickle.load(f)
-        val_dataset = dataset.select(val_indices)
-        test_dataset = dataset.select(test_indices)
-        train_dataset = dataset.select(train_indices)
-        return train_dataset, val_dataset, test_dataset
-
+        with open(args['data']['precomputed_split'], "rb") as f: 
+            indices= pickle.load(f)
+        dataset = dataset.select(indices)
+        return dataset, 'empty', 'empty'
     # Sample subset if specified
     if args['data']['sample_subset']:
         total_size = len(dataset)
