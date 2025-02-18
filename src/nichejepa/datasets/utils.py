@@ -89,10 +89,6 @@ def prepare_dataset(args: dict,
     # Load dataset from the specified path
     data_path = args['data']['tokenized_data_folder_path']
     dataset = load_from_disk(data_path)
-
-    # Load dataset from the specified path
-    data_path = args['data']['tokenized_data_folder_path']
-    dataset = load_from_disk(data_path)
     #return dataset,dataset,dataset
     if args['data']['precomputed_split']:
         with open(args['data']['precomputed_split'], "rb") as f: 
