@@ -61,7 +61,6 @@ logger = logging.getLogger()
 
 def train(args: dict,
           train_dataset: datasets.Dataset,
-          test_dataset: datasets.Dataset,
           resume_preempt: bool=False,
           save_folder_path: Optional[str]=None,
           ):
@@ -74,8 +73,6 @@ def train(args: dict,
         Dictionary containing the hyperparams from the config file.
     train_dataset:
         Train split of huggingface dataset.
-    test_dataset:
-        Test split of huggingface dataset.
     resume_preempt:
     save_folder_path:
         Path for saving model artifacts.
@@ -148,8 +145,8 @@ def train(args: dict,
     r_file = args['state']['read_checkpoint']
 
     if args['data']['precomputed_n_nonzero_tokens']:
-        with open(args['data']['precomputed_n_nonzero_tokens'] + "_train.pkl", "rb") as f: 
-            n_nonzero_tokens= pickle.load(f)
+        with open(args['data']['precomputed_n_nonzero_tokens'], "rb") as f:
+            n_nonzero_tokens = pickle.load(f)
     else:
         n_nonzero_tokens = None
         print(n_nonzero_tokens)
@@ -271,7 +268,7 @@ def train(args: dict,
             target_mask_size=target_mask_size,
             context_mask_size=context_mask_size,)
     
-    # Initialize train and test datasets, dataloaders and samplers
+    # Initialize train datasets, dataloaders and samplers
     train_cell_dataset = make_cell_dataset(
         dataset=train_dataset,
         vocab_size=vocab_size,
@@ -284,31 +281,8 @@ def train(args: dict,
         sampling_strategy=sampling_strategy,
         n_nonzero_tokens_list=n_nonzero_tokens)
 
-    test_cell_dataset = make_cell_dataset(
-        dataset=test_dataset,
-        vocab_size=vocab_size,
-        seq_len_cell=seq_len_cell,
-        seq_len_neighborhood=seq_len_neighborhood,
-        max_special_tokens=max_special_tokens,
-        tokenizer_type=tokenizer_type,
-        gt_type=gt_type,
-        special_tokens=special_tokens,
-        sampling_strategy=sampling_strategy)
-
     train_loader, train_sampler = init_dataloader_and_sampler(
         cell_dataset=train_cell_dataset,
-        batch_size=batch_size,
-        distributed=True,
-        world_size=world_size,
-        rank=rank,
-        collate_fn=mask_collator,
-        pin_memory=pin_memory,
-        num_workers=num_workers,
-        drop_last=False,
-        persistent_workers=False)
-
-    test_loader, test_sampler = init_dataloader_and_sampler(
-        cell_dataset=test_cell_dataset,
         batch_size=batch_size,
         distributed=True,
         world_size=world_size,
@@ -564,7 +538,7 @@ def train(args: dict,
                             grad_stats.last_layer,
                             grad_stats.min,
                             grad_stats.max))
-            log_stats()
+            #log_stats()
             wandb.log({"loss": loss, 'lr':_new_lr, "epoch": epoch})
             assert not np.isnan(loss), 'loss is nan'
 
