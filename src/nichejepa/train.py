@@ -543,7 +543,6 @@ def train(args: dict,
                             grad_stats.last_layer,
                             grad_stats.min,
                             grad_stats.max))
-            #log_stats()
             wandb.log({"loss": loss, 'lr':_new_lr, "epoch": epoch })
             assert not np.isnan(loss), 'loss is nan'
 
