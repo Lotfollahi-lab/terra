@@ -404,8 +404,8 @@ def train(args: dict,
 
                         if centering:
                             # Update center over batch for centering like in DINO
-                            # create batch_center over gpus using AllReduceSum
-                            # function to sync sum between different host
+                            # Create batch_center across GPUs using AllReduceSum
+                            # to synchronize the sum between different hosts
                             batch_center = torch.sum(h, dim=0, keepdim=True)
                             batch_center = AllReduceSum.apply(batch_center)
                             batch_centers = batch_center / (len(h) * world_size)
