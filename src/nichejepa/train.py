@@ -46,8 +46,8 @@ from .masks.block_masking  import BlockMaskCollator
 from .masks.utils import apply_masks
 from .models.utils import repeat_interleave_batch
 from .utils.distributed import (AllReduce,
-                                AllReduceSum,
-                                init_distributed)
+                                init_distributed,
+                                AllReduceSum)
 from .utils.logging import (AverageMeter,
                             CSVLogger,
                             gpu_timer,
