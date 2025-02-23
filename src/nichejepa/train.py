@@ -326,8 +326,7 @@ def train(args: dict,
 
     start_epoch = 0
     # Load training checkpoint
-    #load_path = '../nichejepa-reproducibility/artifacts/graph_70m/17022025_184233_663/nichejepa-latest.pth.tar'
-    if False:
+    if load_model:
         encoder, predictor, target_encoder, optimizer, scaler, start_epoch = load_checkpoint(
             device=device,
             r_path=load_path,
