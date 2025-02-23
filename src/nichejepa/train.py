@@ -121,6 +121,8 @@ def train(args: dict,
     use_flash_attention = args['meta']['use_flash_attention']
     centering = args['meta']['centering']
     center_momentum = args['meta']['center_momentum']
+    # Initialize center for target centering
+    center = None
 
     n_contexts = args['mask']['n_contexts']
     n_targets = args['mask']['n_targets']
@@ -246,9 +248,6 @@ def train(args: dict,
         seg_learnable=seg_learnable,
         use_flash_attention=use_flash_attention)
     target_encoder = copy.deepcopy(encoder)
-
-    # Initialize center for target centering
-    center = None
 
     # Initialize mask collator
     if block_masking:
