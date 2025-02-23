@@ -387,7 +387,8 @@ def train(args: dict,
                 _new_wd = wd_scheduler.step()
 
                 def forward_target(center):
-                    with torch.no_grad(): # no backward pass for target encoder
+                    with torch.no_grad(): 
+                        # no backward pass for target encoder
                         # Target encorder forward pass with output dim 
                         # (BATCH_SIZE, SEQ_LEN, EMBED_DIM)
                         if gt_type == 'rank':
@@ -403,6 +404,8 @@ def train(args: dict,
 
                         if centering:
                             # Update center over batch for centering like in DINO
+                            # create batch_center over gpus using AllReduceSum
+                            # function to sync sum between different host
                             batch_center = torch.sum(h, dim=0, keepdim=True)
                             batch_center = AllReduceSum.apply(batch_center)
                             batch_centers = batch_center / (len(h) * world_size)
