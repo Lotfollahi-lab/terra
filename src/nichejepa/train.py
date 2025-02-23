@@ -46,6 +46,7 @@ from .masks.block_masking  import BlockMaskCollator
 from .masks.utils import apply_masks
 from .models.utils import repeat_interleave_batch
 from .utils.distributed import (AllReduce,
+                                AllReduceSum,
                                 init_distributed)
 from .utils.logging import (AverageMeter,
                             CSVLogger,
@@ -325,7 +326,8 @@ def train(args: dict,
 
     start_epoch = 0
     # Load training checkpoint
-    if load_model:
+    #load_path = '../nichejepa-reproducibility/artifacts/graph_70m/17022025_184233_663/nichejepa-latest.pth.tar'
+    if False:
         encoder, predictor, target_encoder, optimizer, scaler, start_epoch = load_checkpoint(
             device=device,
             r_path=load_path,
@@ -403,13 +405,14 @@ def train(args: dict,
 
                         if centering:
                             # Update center over batch for centering like in DINO
+                            batch_center = torch.sum(h, dim=0, keepdim=True)
+                            batch_center = AllReduceSum.apply(batch_center)
+                            batch_center = batch_center / (len(h) * world_size)
                             if center is not None:
                                 center = center_momentum * center + (
-                                    1-center_momentum) * h.mean(
-                                        dim=0, keepdim=True)
+                                    1-center_momentum) * batch_center
                             else:
-                                center = h.mean(dim=0, keepdim=True)
-                            
+                                center = batch_center
                             # Center over batch
                             h = h - center
                         else:
@@ -541,8 +544,8 @@ def train(args: dict,
                             grad_stats.last_layer,
                             grad_stats.min,
                             grad_stats.max))
-            log_stats()
-            wandb.log({"loss": loss, 'lr':_new_lr, "epoch": epoch})
+            #log_stats()
+            wandb.log({"loss": loss, 'lr':_new_lr, "epoch": epoch//4 +1 })
             assert not np.isnan(loss), 'loss is nan'
 
         # -- Save Checkpoint after every epoch
