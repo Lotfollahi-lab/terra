@@ -544,7 +544,7 @@ def train(args: dict,
                             grad_stats.min,
                             grad_stats.max))
             #log_stats()
-            wandb.log({"loss": loss, 'lr':_new_lr, "epoch": epoch//4 +1 })
+            wandb.log({"loss": loss, 'lr':_new_lr, "epoch": epoch })
             assert not np.isnan(loss), 'loss is nan'
 
         # -- Save Checkpoint after every epoch
