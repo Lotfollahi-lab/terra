@@ -406,12 +406,12 @@ def train(args: dict,
                             # Update center over batch for centering like in DINO
                             batch_center = torch.sum(h, dim=0, keepdim=True)
                             batch_center = AllReduceSum.apply(batch_center)
-                            batch_center = batch_center / (len(h) * world_size)
+                            batch_centers = batch_center / (len(h) * world_size)
                             if center is not None:
                                 center = center_momentum * center + (
-                                    1-center_momentum) * batch_center
+                                    1-center_momentum) * batch_centers
                             else:
-                                center = batch_center
+                                center = batch_centers
                             # Center over batch
                             h = h - center
                         else:
