@@ -94,7 +94,7 @@ def prepare_dataset(args: dict,
         with open(args['data']['precomputed_split'], "rb") as f: 
             indices= pickle.load(f)
         dataset = dataset.select(indices)
-        return dataset, 'empty', 'empty'
+        return dataset, None, None
     # Sample subset if specified
     if args['data']['sample_subset']:
         total_size = len(dataset)
