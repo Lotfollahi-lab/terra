@@ -234,9 +234,18 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         pass
 
     @abstractmethod
+    def return_layer_emb() -> List[torch.Tensor]:
+        """
+        Encoder-specific logic for returning layer-specific embeddings during
+        inference.
+        """
+        pass
+
+    @abstractmethod
     def return_multi_layer_emb() -> List[torch.Tensor]:
         """
-        Encoder-specific logic for returning embeddings during inference.
+        Encoder-specific logic for returning multi-layer embeddings during
+        inference.
         """
         pass
 
@@ -486,6 +495,76 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
             return x, pos_emb, seg_emb, token_emb
 
     @torch.no_grad()
+    def return_layer_emb(self,
+                         layer: int,
+                         positions: torch.Tensor,
+                         segments: torch.Tensor,
+                         tokens: torch.Tensor,
+                         masks: Optional[Union[
+                             List[torch.Tensor], torch.Tensor]]=None,
+                         masks_attention: Optional[torch.Tensor]=None,
+                         ) -> List[torch.Tensor]:
+        """
+        Run encoder forward pass on a batch of input token sequences, applying
+        masks if provided, and return the embeddings of a specific layer.
+
+        Parameters
+        -----------
+        layer:
+            Index of the specific layer to be returned
+        positions:
+            Tensor containing position labels with shape (BATCH_SIZE, SEQ_LEN).
+        segments:
+            Tensor containing segment labels with shape (BATCH_SIZE, SEQ_LEN).
+        tokens:
+            Tensor containing input tokens with shape (BATCH_SIZE, SEQ_LEN).
+        masks:
+            List of N_MASKS tensors containing indices (within the sequence) of
+            tokens to keep with shape (BATCH_SIZE, MASK_SIZE).
+        masks_attention:
+            An attention tensor that controls how different tokens attend to
+            each other within a sequence.
+
+        Returns
+        -----------
+        x:
+            Embeddings of a specific layer with shape (BATCH_SIZE * N_MASKS,
+            MIN_MASK_SIZE, EMBED_DIM), where MIN_MASK_SIZE is minimum mask size
+            in the batch. 
+        """
+        # Format masks
+        if masks is not None:
+                if not isinstance(masks, list):
+                    masks = [masks]
+
+        # Get positional, segment and token embeddings
+        pos_emb = self.pos_embed(positions)
+        seg_emb = self.seg_embed(segments)
+        token_emb = self.token_embed(tokens)
+
+        # Add positional and segment embeddings to token embeddings
+        x = pos_emb + seg_emb + token_emb
+        #B, N, D = x.shape
+
+        # Remove special tokens before encoding
+        x = x[:, self.n_special_tokens:]
+
+        # Mask token embeddings if masks are provided
+        if masks is not None:
+            x = apply_masks(x, masks)
+
+        # Run forward prop and store embeddings after each block
+        n_blocks = len(self.blocks)
+        for i, blk in enumerate(self.blocks):
+            x = blk(x, masks=masks_attention)
+            if (i == (n_blocks - 1)) and (self.norm is not None):
+                x = self.norm(x)
+            if i == (layer-1):
+                break
+
+        return x
+
+    @torch.no_grad()
     def return_multi_layer_emb(self,
                                positions: torch.Tensor,
                                segments: torch.Tensor,
@@ -661,6 +740,95 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
             return x, token_emb, seg_emb, value_emb
 
     @torch.no_grad()
+    def return_layer_emb(self,
+                         layer: int,
+                         tokens: torch.Tensor,
+                         segments: torch.Tensor,
+                         counts: torch.Tensor,
+                         masks: Optional[Union[
+                             List[torch.Tensor], torch.Tensor]]=None,
+                         masks_attention: Optional[torch.Tensor]=None, 
+                         ) -> List[torch.Tensor]:
+        """
+        Run encoder forward pass on a batch of input token sequences, applying
+        masks if provided, and return the embeddings of a specific layer.
+
+        Parameters
+        -----------
+        layer:
+            Index of the specific layer to be returned
+        positions:
+            Tensor containing position labels with shape (BATCH_SIZE, SEQ_LEN).
+        segments:
+            Tensor containing segment labels with shape (BATCH_SIZE, SEQ_LEN).
+        tokens:
+            Tensor containing input tokens with shape (BATCH_SIZE, SEQ_LEN).
+        masks:
+            List of N_MASKS tensors containing indices (within the sequence) of
+            tokens to keep with shape (BATCH_SIZE, MASK_SIZE).
+        masks_attention:
+            An attention tensor that controls how different tokens attend to
+            each other within a sequence.
+
+        Returns
+        -----------
+        x:
+            Embeddings of a specific layer with shape (BATCH_SIZE * N_MASKS,
+            MIN_MASK_SIZE, EMBED_DIM), where MIN_MASK_SIZE is minimum mask size
+            in the batch. 
+        """
+        # Format masks
+        if masks is not None:
+            if not isinstance(masks, list):
+                masks = [masks]
+
+        # Get embeddings for sequence of tokens and segments
+        token_emb = self.token_embed(tokens)
+        seg_emb = self.seg_embed(segments)
+
+        # Get value embeddings
+        value_emb_weights = self.value_emb_weights_projection(
+            counts.unsqueeze(dim=-1))
+        value_emb = torch.matmul(value_emb_weights, self.value_embed.weight)
+
+        # Assign padding value embedding to 0 counts 
+        zero_counts_mask = counts == 0.0
+        zero_value_embed = self.special_value_embed(
+            torch.tensor(0, device=tokens.device)).to(value_emb.dtype)
+        value_emb[zero_counts_mask] = zero_value_embed
+        
+        # Assign special value embeddings to <cls> tokens
+        cls_value_embed = self.special_value_embed(
+            counts[:, :self.max_cls_tokens].int()).to(value_emb.dtype)
+        value_emb[:, :self.max_cls_tokens, :] = cls_value_embed
+
+        # Assign zero value embeddings to other special tokens
+        value_emb[
+            :, self.max_cls_tokens:self.n_special_tokens, :] = zero_value_embed
+
+        # Add token and segment embeddings to value embeddings
+        x = token_emb + seg_emb + value_emb
+        # B, N, D = x.shape # B: BATCH_SIZE, N: SEQ_LEN, D: EMBED_DIM
+
+        # Remove special tokens before encoding
+        x = x[:, self.n_special_tokens:]
+
+        # Mask token embeddings if masks are provided
+        if masks is not None:
+            x = apply_masks(x, masks)
+
+        # Run forward prop and store embeddings after each block
+        n_blocks = len(self.blocks)
+        for i, blk in enumerate(self.blocks):
+            x = blk(x, masks=masks_attention)
+            if (i == (n_blocks - 1)) and (self.norm is not None):
+                x = self.norm(x)
+            if i == (layer-1):
+                break
+
+        return x
+
+    @torch.no_grad()
     def return_multi_layer_emb(self,
                                tokens: torch.Tensor,
                                segments: torch.Tensor,
@@ -816,7 +984,7 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
             B = len(z) // len(masks_enc)
 
             # MLP projection layer
-            z = self.predictor_embed(z)
+            #z = self.predictor_embed(z)
 
             # Retrieve special token embedding
             x_special = (
@@ -882,7 +1050,7 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
             z = z[:, :pred_tokens.size(1), :]
 
             # MLP projection layer
-            z = self.predictor_proj(z)
+            #z = self.predictor_proj(z)
 
             return z
 
@@ -954,7 +1122,7 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
             B = len(z) // len(masks_enc)
 
             # MLP projection layer
-            z = self.predictor_embed(z)
+            #z = self.predictor_embed(z)
 
             # Retrieve special token embedding
             x_special = (
@@ -1020,7 +1188,7 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
             z = z[:, :pred_tokens.size(1), :]
 
             # MLP projection layer
-            z = self.predictor_proj(z)
+            #z = self.predictor_proj(z)
 
             return z
 

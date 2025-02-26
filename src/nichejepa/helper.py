@@ -27,7 +27,8 @@ def load_checkpoint(device: str,
                     predictor: gt.GeneTransformerBasePredictor,
                     target_encoder: gt.GeneTransformerBaseEncoder,
                     opt: torch.optim.AdamW,
-                    scaler: torch.cuda.amp.GradScaler
+                    scaler: torch.cuda.amp.GradScaler,
+                    is_training: bool=True,
                     ) -> Tuple[gt.GeneTransformerBaseEncoder,
                                gt.GeneTransformerBasePredictor,
                                gt.GeneTransformerBaseEncoder,
@@ -54,6 +55,8 @@ def load_checkpoint(device: str,
         Torch optimizer.
     scaler:
         Torch scaler for automatic mixed precision training.
+    is_training:
+        If 'True', load state dict into DDP module.
 
     Returns
     -----------
@@ -80,21 +83,27 @@ def load_checkpoint(device: str,
         epoch = checkpoint['epoch']
 
         # Load state into context encoder
-        pretrained_dict = checkpoint['encoder']
-        msg = encoder.load_state_dict(pretrained_dict)
-        logger.info(
-            f'Loaded pretrained encoder from epoch {epoch} with msg: {msg}.')
+        if encoder is not None:
+            pretrained_dict = checkpoint['encoder']
+            msg = encoder.load_state_dict(pretrained_dict)
+            logger.info(
+                f'Loaded pretrained encoder from epoch {epoch} with msg: {msg}.')
 
         # Load state into predictor
-        pretrained_dict = checkpoint['predictor']
-        msg = predictor.load_state_dict(pretrained_dict)
-        logger.info(
-            f'Loaded pretrained predictor from epoch {epoch} with msg: {msg}.')
+        if predictor is not None:
+            pretrained_dict = checkpoint['predictor']
+            msg = predictor.load_state_dict(pretrained_dict)
+            logger.info(
+                f'Loaded pretrained predictor from epoch {epoch} with msg: {msg}.')
 
         # Load state into target encoder
         if target_encoder is not None:
             print(list(checkpoint.keys()))
             pretrained_dict = checkpoint['target_encoder']
+            if not is_training:
+                pretrained_dict = {
+                    key.replace("module.", ""): value for key, value in 
+                    pretrained_dict.items()}
             msg = target_encoder.load_state_dict(pretrained_dict)
             logger.info(
                 f'Loaded pretrained target encoder from epoch {epoch} with msg:'

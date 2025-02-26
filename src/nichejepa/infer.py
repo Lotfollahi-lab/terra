@@ -5,7 +5,8 @@ import pickle
 import sys
 import yaml
 from collections import defaultdict
-from typing import List, Literal, Optional
+from pathlib import Path
+from typing import List, Literal, Optional, Tuple
 
 import anndata as ad
 import numpy as np
@@ -13,16 +14,16 @@ import pandas as pd
 import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
-from datasets import load_from_disk
-from torch.nn.parallel import DistributedDataParallel
+from datasets import Dataset, load_from_disk
 from tqdm import tqdm
+from pyensembl import EnsemblRelease
 
 from .datasets.cell_datasets import CellBaseDataset, make_cell_dataset
 from .datasets.dataloaders import init_dataloader_and_sampler
 from .helper import init_model, load_checkpoint
 from .masks.block_masking  import BlockMaskCollator
 from .masks.random_masking import RandomMaskCollator
-from .utils.distributed import init_distributed
+from .tokenizers import cell_tokenizers
 from .utils.embedding import (create_binary_selection_mask,
                               compute_mean_unmasked_emb,
                               compute_unmasked_rank_based_weights,
@@ -45,6 +46,10 @@ logger = logging.getLogger()
 def infer(args: dict,
           dataset: CellBaseDataset,
           load_folder_path: str,
+          dataset_ids: Optional[list]=None,
+          obs_cols: Optional[list]=None,
+          uns_cols: Optional[list]=None,
+          emb_layers: Optional[list]=None,
           cell_gene_ids: List=[],
           neighborhood_gene_ids: List=[],
           agg_type: Literal['cls',
@@ -66,8 +71,12 @@ def infer(args: dict,
         Dictionary containing the hyperparameters from the config file.
     dataset:
         Cell dataset for which embeddings will be inferred.
+    load_folder_path:
+        Path where the checkpoint is stored.
+    emb_layers:
+        Layers for which to retrieve the embedding.
     cell_gene_ids:
-        List with gene IDs for which cell gene embeddings will be retrived.
+        List with gene IDs for which cell gene embeddings will be retrieved.
     neighborhood_gene_ids:
         List with gene IDs for which neighborhood gene embeddings will be
         retrived.
@@ -131,7 +140,7 @@ def infer(args: dict,
 
     if args['data']['precomputed_n_nonzero_tokens']:
         with open(args['data']['precomputed_n_nonzero_tokens'], "rb") as f: 
-            n_nonzero_tokens= pickle.load(f)
+            n_nonzero_tokens = pickle.load(f)
     else:
         n_nonzero_tokens = None
         print(n_nonzero_tokens)
@@ -159,6 +168,10 @@ def infer(args: dict,
     n_special_tokens = len(special_tokens)
     seq_len = seq_len_cell + seq_len_neighborhood + n_special_tokens
 
+    # Specify last emb layer if not defined
+    if emb_layers is None:
+        emb_layers = [enc_depth]
+
     # Set the folder for saving extracted features
     save_folder = f"{load_folder_path}/extracted_features"
     feature_path = f"{save_folder}/"
@@ -168,16 +181,13 @@ def infer(args: dict,
     with open(dump, 'w') as f:
         yaml.dump(args, f)
 
-    # Initialize torch distributed backend
-    world_size, rank = init_distributed()
-
     # Define checkpointing path
     latest_path = os.path.join(load_folder_path, f'{tag}-latest.pth.tar')
     load_path = (os.path.join(load_folder_path, r_file) if r_file is not None 
         else latest_path)
 
     # Initialize encoder, predictor, and target encoder
-    encoder, predictor = init_model(
+    target_encoder, _ = init_model(
         gt_type=gt_type,
         device=device,
         vocab_size=vocab_size,
@@ -194,11 +204,6 @@ def infer(args: dict,
         pos_learnable=pos_learnable,
         seg_learnable=seg_learnable,
         use_flash_attention=use_flash_attention)
-    target_encoder = copy.deepcopy(encoder)
-
-    encoder = DistributedDataParallel(encoder, static_graph=True)
-    predictor = DistributedDataParallel(predictor, static_graph=True)
-    target_encoder = DistributedDataParallel(target_encoder)
 
     # Initialize mask collator
     if block_masking:
@@ -239,8 +244,8 @@ def infer(args: dict,
         cell_dataset=cell_dataset,
         batch_size=batch_size,
         distributed=False,
-        world_size=world_size,
-        rank=rank,
+        world_size=1,
+        rank=0,
         collate_fn=mask_collator,
         pin_memory=pin_memory,
         num_workers=num_workers,
@@ -250,15 +255,15 @@ def infer(args: dict,
     _, _, target_encoder, _, _, start_epoch = load_checkpoint(
             device=device,
             r_path=load_path,
-            encoder=encoder,
-            predictor=predictor,
+            encoder=None,
+            predictor=None,
             target_encoder=target_encoder,
             opt=None,
-            scaler=None)
-   
-    # Retrieve embeddings
+            scaler=None,
+            is_training=False)
     target_encoder.eval()
 
+    # Retrieve embeddings
     all_cell_ids = []
     all_cell_emb_list = []
     all_neighborhood_emb_list = []
@@ -278,75 +283,79 @@ def infer(args: dict,
         # Collect cell IDs to join metadata
         all_cell_ids.extend(udata[-1])
 
+        # Aggregate gene embeddings into cell and neighborhood embeddings
+        ns_tokens = tokens[:, n_special_tokens:]
+
+        # Exclude masked tokens from aggregation
+        if masked_tokens is not None:
+            mask_indices = torch.isin(
+                tokens,
+                torch.tensor(masked_tokens, device=tokens.device)
+                ).unsqueeze(1).unsqueeze(1).expand(
+                    -1,-1, tokens.shape[-1], -1)
+            masks_attention[mask_indices] = 0
+
         # Retrieve gene embeddings from different layers
         with torch.cuda.amp.autocast(dtype=torch.bfloat16,
                                      enabled=args['meta']['use_bfloat16']):
 
-            if masked_tokens is not None:
-                mask_indices = torch.isin(
-                    tokens,
-                    torch.tensor(masked_tokens, device=tokens.device)
-                    ).unsqueeze(1).unsqueeze(1).expand(
-                        -1,-1, tokens.shape[-1], -1)
-                masks_attention[mask_indices] = 0
-
-            if gt_type == 'rank':
-                emb_list = target_encoder.module.return_multi_layer_emb(
-                    positions=positions,
-                    segments=segments,
-                    tokens=tokens,
-                    masks_attention=masks_attention)
-            elif gt_type == 'counts':
-                emb_list = target_encoder.module.return_multi_layer_emb(
-                    tokens=tokens,
-                    segments=segments,
-                    counts=counts,
-                    masks_attention=masks_attention)
+            emb_list = []
+            for emb_layer in emb_layers:
+                if gt_type == 'rank':
+                    emb_list.append(target_encoder.return_layer_emb(
+                        layer=emb_layer,
+                        positions=positions,
+                        segments=segments,
+                        tokens=tokens,
+                        masks_attention=masks_attention).cpu())
+                elif gt_type == 'counts':
+                    emb_list.append(target_encoder.return_layer_emb(
+                        layer=emb_layer,
+                        tokens=tokens,
+                        segments=segments,
+                        counts=counts,
+                        masks_attention=masks_attention).cpu())
         
-            if feature_norm:
+            if feature_norm and (emb_layers[-1] == enc_depth):
                 # Normalize last layer like in training
                 emb_list[-1] = F.layer_norm(emb_list[-1],
                                             (emb_list[-1].size(-1),))
 
         # Aggregate gene embeddings into cell and neighborhood embeddings
-        ns_tokens = tokens[:, n_special_tokens:]
-
-        for i, emb in enumerate(emb_list):
-            # Keep only <cls> token; at the moment there is only 1 <cls> token
-            cell_mask = create_binary_selection_mask(
+        cell_mask = create_binary_selection_mask(
+            ns_tokens,
+            selection_type="agg_cell",
+            excluded_tokens=agg_excluded_tokens,
+            seq_len_cell=seq_len_cell,
+            n_special_tokens=n_special_tokens,
+            max_cls_tokens=max_cls_tokens,
+            top_k=top_k).cpu()
+        if tokenizer_type == 'cell_neighborhood':
+            neighborhood_mask = create_binary_selection_mask(
                 ns_tokens,
-                selection_type="agg_cell",
+                selection_type="agg_neighborhood",
                 excluded_tokens=agg_excluded_tokens,
                 seq_len_cell=seq_len_cell,
                 n_special_tokens=n_special_tokens,
                 max_cls_tokens=max_cls_tokens,
-                top_k=top_k)
-            if tokenizer_type == 'cell_neighborhood':
-                neighborhood_mask = create_binary_selection_mask(
-                    ns_tokens,
-                    selection_type="agg_neighborhood",
-                    excluded_tokens=agg_excluded_tokens,
-                    seq_len_cell=seq_len_cell,
-                    n_special_tokens=n_special_tokens,
-                    max_cls_tokens=max_cls_tokens,
-                    top_k=top_k)
-            elif tokenizer_type == 'cell_graph':
-                neighborhood_mask = create_binary_selection_mask(
-                    ns_tokens,
-                    selection_type="agg_graph",
-                    excluded_tokens=agg_excluded_tokens,
-                    seq_len_cell=seq_len_cell,
-                    n_special_tokens=n_special_tokens,
-                    max_cls_tokens=max_cls_tokens,
-                    top_k=top_k,
-                    n_segments=n_segments)                    
+                top_k=top_k).cpu()
+        elif tokenizer_type == 'cell_graph':
+            neighborhood_mask = create_binary_selection_mask(
+                ns_tokens,
+                selection_type="agg_graph",
+                excluded_tokens=agg_excluded_tokens,
+                seq_len_cell=seq_len_cell,
+                n_special_tokens=n_special_tokens,
+                max_cls_tokens=max_cls_tokens,
+                top_k=top_k,
+                n_segments=n_segments).cpu()
 
+        for i, emb in enumerate(emb_list):
+            # Average gene embeddings into cell and neighborhood embedding 
             if agg_type == 'avg':
-                cell_emb = compute_mean_unmasked_emb(emb,
-                                                     cell_mask)
-                neighborhood_emb = compute_mean_unmasked_emb(
-                    emb,
-                    neighborhood_mask)
+                cell_emb = compute_mean_unmasked_emb(emb, cell_mask)
+                neighborhood_emb = compute_mean_unmasked_emb(emb, 
+                                                             neighborhood_mask)
             elif agg_type == "weighted_avg":
                 cell_weights = compute_unmasked_rank_based_weights(
                     tokens, cell_mask)
@@ -394,31 +403,33 @@ def infer(args: dict,
                     else:
                         all_neighborhood_gene_emb_dict[gene_id].append(gene_emb)                
 
+    # Add metadata
     adata = ad.AnnData(
         obs=pd.DataFrame({'cell_id': all_cell_ids},
         index=range(len(all_cell_ids))))
-
-    # Add metadata
-    adata_metadata = collect_adata_from_folder(raw_data_folder_path)
-    adata_metadata_subset = adata_metadata[
-        adata_metadata.obs['cell_id'].isin(adata.obs['cell_id'])]
-
+    print("Loading metadata AnnDatas...")
+    adata_metadata = collect_adata_from_folder(
+        raw_data_folder_path,
+        all_cell_ids,
+        dataset_ids,
+        obs_cols,
+        uns_cols)
     merged_obs = pd.merge(adata.obs,
-                          adata_metadata_subset.obs,
+                          adata_metadata.obs,
                           on='cell_id')
     adata.obs = merged_obs.set_index('cell_id')
-    adata_metadata_subset.obs = adata_metadata_subset.obs.set_index('cell_id')
-    adata_metadata_subset = adata_metadata_subset[adata.obs.index, :].copy()
-    adata.obsm['spatial'] = adata_metadata_subset.obsm['spatial']
+    adata_metadata.obs = adata_metadata.obs.set_index('cell_id')
+    adata_metadata = adata_metadata[adata.obs.index, :].copy()
+    adata.obsm['spatial'] = adata_metadata.obsm['spatial']
    
     # Store cell and neighborhood embeddings of all observations across layers  
-    for i in range(len(all_cell_emb_list)):
-        adata.obsm[f"cell_emb_layer_{i}"] = np.array(torch.cat(
+    for i, emb_layer in enumerate(emb_layers):
+        adata.obsm[f"cell_emb_layer_{emb_layer}"] = np.array(torch.cat(
             all_cell_emb_list[i],
-            dim=0).cpu())
-        adata.obsm[f"neighborhood_emb_layer_{i}"] = np.array(torch.cat(
+            dim=0))
+        adata.obsm[f"neighborhood_emb_layer_{emb_layer}"] = np.array(torch.cat(
             all_neighborhood_emb_list[i],
-            dim=0).cpu())
+            dim=0))
 
     # Store cell and neighborhood gene embeddings of all observations in the
     # last layer
@@ -430,5 +441,556 @@ def infer(args: dict,
         adata.obsm[f"neighborhood_emb_gene{gene_id}"] = np.array(torch.cat(
             all_neighborhood_gene_emb_dict[gene_id],
             dim=0).cpu())
+
+    return adata
+
+
+def harmonize_adata(adata: ad.AnnData) -> ad.AnnData:
+    """
+    Harmonize an AnnData object prior to tokenization.
+
+    Parameters
+    -----------
+    adata:
+        An unharmonized AnnData object.
+
+    Returns:
+    -----------
+    adata:
+        A harmonized AnnData object.
+    """
+    print('==================================================')
+    print('STEP 1: ADDING ENSEMBL IDS...')
+    print('==================================================')
+    print('Adding ensembl IDs from release 111...')
+    # Extract ensembl IDs of protein coding and miRNA mouse genes
+    ensembl = EnsemblRelease(release=111, species='human')
+    ensembl.download()
+    ensembl.index()
+    all_genes = ensembl.genes()
+    protein_coding_genes = [
+        gene for gene in all_genes if gene.biotype == "protein_coding"]
+    mirna_genes = [
+        gene for gene in all_genes if gene.biotype == "miRNA"]
+    all_relevant_genes = protein_coding_genes + mirna_genes
+    gene_ensembl_map_dict = {
+        gene.gene_name: gene.gene_id for gene in all_relevant_genes}
+
+    adata_gene_names = [gene_name for gene_name in adata.var_names.tolist()]
+    adata.var.index = adata_gene_names
+    
+    harmonized_gene_names = []
+    matching_ensembl_ids = []
+    for gene_name in adata_gene_names:
+        if gene_name in gene_ensembl_map_dict.keys():
+            harmonized_gene_names.append(gene_name)
+            matching_ensembl_ids.append(gene_ensembl_map_dict[gene_name])
+    print(f'Number of genes with matching ensembl IDs: \
+          {len(harmonized_gene_names)}.')
+    print(f'Number of genes skipped: \
+          {len(adata_gene_names) - len(harmonized_gene_names)}.')
+
+    adata = adata[:, adata.var.index.isin(harmonized_gene_names)].copy()
+    adata.var = pd.DataFrame(
+        index=pd.Index(harmonized_gene_names, name="gene_name"),
+        data={"ensembl_id": matching_ensembl_ids})
+
+    # Add dummy values as special values
+    print('==================================================')
+    print('STEP 2: ADDING SPECIAL VALUES...')
+    print('==================================================')
+    if 'cell_id' not in adata.obs.keys():
+        adata.obs['cell_id'] = adata.obs_names
+    if 'dataset_id' not in adata.uns.keys():
+        adata.uns['dataset_id'] = 14  # just dummy values
+    if 'batch' not in adata.uns.keys():
+        adata.uns['batch'] = 'batch0' # just dummy values
+    if 'assay' not in adata.uns.keys():
+        adata.uns['assay'] = 'xenium' # just dummy values
+    if 'species' not in adata.uns.keys():
+        adata.uns['species'] = 'homo_sapiens' # just dummy values
+    if 'tissue' not in adata.uns.keys():
+        adata.uns['tissue'] = 'lung' # just dummy values
+
+    return adata
+
+
+def tokenize_adata(adata: ad.AnnData,
+                   model_folder_path: str,
+                   perturb_df: Optional[pd.DataFrame]=None,                   
+                   nproc: int=4,
+                   processing_mode: Literal['sequential',
+                                            'parallel']='parallel'
+                   ) -> Dataset:
+    """
+    Harmonize and tokenize an AnnData object based on the parameters in the
+    model config and return the tokenized huggingface dataset and harmonized
+    AnnData object.
+
+    Parameters
+    -----------
+    adata:
+        AnnData object to be tokenized.
+    model_folder_path:
+        Path to the folder containing the model config, token dictionary, and
+        normalization factors.
+    perturb_df:
+        DataFrame with perturbation data, e.g.
+        ```
+        perturb_df =  pd.DataFrame({
+            'ensembl_id': ['ENSG00000169194', 'ENSG00000131724'],
+            'target': ['neighborhood', 'cell'],
+            'perturbation_type': ['foldchange', 'knockout'],
+            'foldchange': [0.5, np.nan]
+        })
+        ```.
+    n_proc:
+        Number of processes used.
+    processing_mode:
+        Mode of processing.
+
+    Returns
+    -----------
+    dataset:
+        The tokenized data stored in a huggingface dataset.
+    """
+    print('==================================================')
+    print('STEP 1: LOADING CONFIG...')
+    print('==================================================')
+    model_config_file_path = Path(model_folder_path) / 'model_config.yaml'
+    token_dictionary_file_path = Path(model_folder_path) / 'token_dictionary.pkl'
+    norm_factor_file_path = Path(model_folder_path) / 'norm_factors.csv'
+
+    # Load model config
+    with open(model_config_file_path, 'r') as file:
+        model_config = yaml.safe_load(file)
+
+    print('==================================================')
+    if not isinstance(perturb_df, pd.DataFrame):
+        if perturb_df is None:
+            print('STEP 2: TOKENIZING ANNDATA OBJECT...')
+        else:
+            raise ValueError('`perturb_df` must be a pd.DataFrame.')
+    else:
+        print('STEP 2: TOKENIZING ANNDATA OBJECT AND APPLYING PERTURBATIONS...')
+    print('==================================================')
+    # Tokenize adata
+    if model_config['data']['tokenizer_type'] == 'cell_neighborhood':
+        Tokenizer = cell_tokenizers.CellNeighborhoodTokenizer
+    elif model_config['data']['tokenizer_type'] == 'cell_graph':
+        Tokenizer = cell_tokenizers.CellGraphTokenizer
+    tk = Tokenizer(
+        nproc=nproc,
+        processing_mode=processing_mode,
+        model_input_size=model_config['data']['model_input_size'],
+        n_neighs=model_config['data']['n_neighs'],
+        radius=None,
+        delaunay=False,
+        rank_cell_norm_method=model_config['data']['rank_cell_norm_method'],
+        rank_gene_norm_method=model_config['data']['rank_gene_norm_method'],
+        rank_count_norm_method=model_config['data']['rank_count_norm_method'],
+        count_cell_norm_method=model_config['data']['count_cell_norm_method'],
+        count_gene_norm_method=model_config['data']['count_gene_norm_method'],
+        count_count_norm_method=model_config['data']['count_count_norm_method'],
+        norm_factor_file_path=norm_factor_file_path,
+        token_dictionary_file_path=token_dictionary_file_path)
+    dataset_dict = tk._tokenize_adata(adata=adata,
+                                      perturb_df=perturb_df)
+    dataset = tk._create_dataset(
+        dataset_dict=dataset_dict,
+        use_generator=False,
+        cache_directory_path=None,
+        keep_in_memory=False)
+    
+    return dataset
+
+
+@torch.no_grad()
+def embed_dataset(dataset: Dataset,
+                  model_folder_path: str,
+                  emb_layer: Optional[int]=None,
+                  cell_gene_ids: list=[],
+                  neighborhood_gene_ids: list=[],
+                  agg_excluded_tokens: Optional[list[int]]=None,
+                  top_k: Optional[int]=None,
+                  batch_size: int=128,
+                  pin_memory: bool=False,
+                  num_workers: int=12) -> dict:
+    """
+    Parameters
+    -----------
+    dataset:
+        Tokenized huggingface dataset.
+    model_folder_path:
+        Path to the folder containing the model config, token dictionary, and
+        normalization factors.
+    emb_layer:
+        Layer for which to retrieve the embedding.
+    cell_gene_ids:
+        List with gene IDs for which cell gene embeddings will be retrieved.
+    neighborhood_gene_ids:
+        List with gene IDs for which neighborhood gene embeddings will be
+        retrived.
+    agg_excluded_tokens:
+        List of tokens to be excluded from the aggregation.
+    top_k:
+        Include only top_k genes in aggregation.
+    batch_size:
+        Dataloader param.
+    pin_memory:
+        Dataloader param.
+    num_workers:
+        Number of workers used.
+
+    Returns:
+    -----------
+    output_embed:
+        Dictionary with the cell, cell gene, neighborhood, and neighborhood gene
+        embeddings.
+    """
+    print('==================================================')
+    print('STEP 1: LOADING CONFIG...')
+    print('==================================================')
+    model_config_file_path = Path(model_folder_path) / 'model_config.yaml'
+    token_dictionary_file_path = Path(model_folder_path) / 'token_dictionary.pkl'
+    norm_factor_file_path = Path(model_folder_path) / 'norm_factors.csv'
+    model_checkpoint_path = Path(model_folder_path) / 'model_checkpoint.pt'
+
+    # Load model config
+    with open(model_config_file_path, 'r') as file:
+        model_config = yaml.safe_load(file)
+
+    # Get token sequence length and number of special tokens
+    n_special_tokens = len(model_config['meta']['special_tokens'])
+    seq_len = (
+        model_config['data']['seq_len_cell'] +
+        model_config['data']['seq_len_neighborhood'] +
+        n_special_tokens)
+
+    # Specify last emb layer if not defined
+    if emb_layer is None:
+        emb_layer = model_config['meta']['enc_depth'] 
+
+    # Load token dict and get token dict-specfic params
+    with open(token_dictionary_file_path, 'rb') as file:
+        token_dict = pickle.load(file)
+    vocab_size = len(token_dict)
+    n_special_values = sum(1 for key in token_dict if "spv" in key)
+    max_special_tokens = sum(1 for key in token_dict if "cls" in key) + sum(
+        1 for key in token_dict if "spt" in key)
+    max_cls_tokens = sum(
+        'cls' in token for token in model_config['meta']['special_tokens'])
+
+    print('==================================================')
+    print('STEP 2: GENERATING EMBEDDINGS...')
+    print('==================================================')
+    # Set device
+    if not torch.cuda.is_available():
+        device = torch.device('cpu')
+    else:
+        device = torch.device('cuda:0')
+        torch.cuda.set_device(device)
+
+    # Initialize encoder, predictor, and target encoder
+    target_encoder, _ = init_model(
+        gt_type=model_config['meta']['gt_type'],
+        device=device,
+        vocab_size=vocab_size,
+        seq_len=seq_len,
+        max_cls_tokens=max_cls_tokens,
+        max_special_tokens=max_special_tokens,
+        n_special_tokens=n_special_tokens,
+        n_segments=model_config['data']['n_segments'],
+        n_special_values=n_special_values,
+        enc_emb_dim=model_config['meta']['enc_emb_dim'],
+        enc_depth=model_config['meta']['enc_depth'],
+        pred_emb_dim=model_config['meta']['pred_emb_dim'],
+        pred_depth=model_config['meta']['pred_depth'],
+        pos_learnable=model_config['meta']['pos_learnable'],
+        seg_learnable=model_config['meta']['seg_learnable'],
+        use_flash_attention=model_config['meta']['use_flash_attention'])
+
+    # Create mask collator
+    mask_collator = BlockMaskCollator(
+        n_targets=model_config['mask']['n_targets'],
+        n_contexts=model_config['mask']['n_contexts'],
+        n_segments=model_config['data']['n_segments'],
+        seq_len_cell=model_config['data']['seq_len_cell'],
+        seq_len_neighborhood=model_config['data']['seq_len_neighborhood'],
+        max_special_tokens=max_special_tokens,
+        n_special_tokens=n_special_tokens,
+        max_cls_tokens=max_cls_tokens,
+        per_block_mask_ratio=model_config['mask']['per_block_mask_ratio'])
+        
+    # Create torch dataset
+    cell_dataset = make_cell_dataset(
+        dataset=dataset,
+        vocab_size=vocab_size,
+        seq_len_cell=model_config['data']['seq_len_cell'],
+        seq_len_neighborhood=model_config['data']['seq_len_neighborhood'],
+        max_special_tokens=max_special_tokens,
+        tokenizer_type=model_config['data']['tokenizer_type'],
+        gt_type=model_config['meta']['gt_type'],
+        special_tokens=model_config['meta']['special_tokens'],
+        sampling_strategy=None,
+        n_nonzero_tokens_list=None)
+
+    # Initialize dataloader
+    loader = init_dataloader_and_sampler(
+        cell_dataset=cell_dataset,
+        batch_size=batch_size,
+        distributed=False,
+        world_size=1,
+        rank=0,
+        collate_fn=mask_collator,
+        pin_memory=pin_memory,
+        num_workers=num_workers,
+        drop_last=False,
+        persistent_workers=False)
+
+    # Load model checkpoint
+    _, _, target_encoder, _, _, start_epoch = load_checkpoint(
+            device=device,
+            r_path=model_checkpoint_path,
+            encoder=None,
+            predictor=None,
+            target_encoder=target_encoder,
+            opt=None,
+            scaler=None)
+    target_encoder.eval()
+
+    # Retrieve embeddings
+    all_cell_emb_list = []
+    all_neighborhood_emb_list = []
+    all_cell_gene_emb_dict = {}
+    all_neighborhood_gene_emb_dict = {}
+
+    for itr, (udata, _, _, masks_attention) in tqdm(enumerate(loader)):
+        # Load gene tokens and segmentation label to the specified device
+        tokens = udata[0].to(device, non_blocking=True)
+        segments = udata[1].to(device, non_blocking=True)
+        if model_config['meta']['gt_type'] == 'rank':
+            positions = udata[2].to(device, non_blocking=True)
+        elif model_config['meta']['gt_type'] == 'counts':
+            counts = udata[2].to(device, non_blocking=True)
+        masks_attention = masks_attention.to(device, non_blocking=True)
+
+        # Aggregate gene embeddings into cell and neighborhood embeddings
+        ns_tokens = tokens[:, n_special_tokens:]
+
+        # Retrieve gene embeddings from different layers
+        with torch.cuda.amp.autocast(
+            dtype=torch.bfloat16,
+            enabled=model_config['meta']['use_bfloat16']):
+
+            if model_config['meta']['gt_type'] == 'rank':
+                emb = target_encoder.return_layer_emb(
+                    layer=emb_layer,
+                    positions=positions,
+                    segments=segments,
+                    tokens=tokens,
+                    masks_attention=masks_attention).cpu()
+            elif model_config['meta']['gt_type'] == 'counts':
+                emb = target_encoder.return_layer_emb(
+                    layer=emb_layer,
+                    tokens=tokens,
+                    segments=segments,
+                    counts=counts,
+                    masks_attention=masks_attention).cpu()
+        
+        # Create mask for index cell genes
+        cell_mask = create_binary_selection_mask(
+            ns_tokens,
+            selection_type="agg_cell",
+            excluded_tokens=agg_excluded_tokens,
+            seq_len_cell=model_config['data']['seq_len_cell'],
+            n_special_tokens=n_special_tokens,
+            max_cls_tokens=max_cls_tokens,
+            top_k=top_k).cpu()
+
+        # Create mask for neighbor cell genes
+        if model_config['data']['tokenizer_type'] == 'cell_neighborhood':
+            neighborhood_mask = create_binary_selection_mask(
+                ns_tokens,
+                selection_type="agg_neighborhood",
+                excluded_tokens=agg_excluded_tokens,
+                seq_len_cell=model_config['data']['seq_len_cell'],
+                n_special_tokens=n_special_tokens,
+                max_cls_tokens=max_cls_tokens,
+                top_k=top_k).cpu()
+        elif model_config['data']['tokenizer_type'] == 'cell_graph':
+            neighborhood_mask = create_binary_selection_mask(
+                ns_tokens,
+                selection_type="agg_graph",
+                excluded_tokens=agg_excluded_tokens,
+                seq_len_cell=model_config['data']['seq_len_cell'],
+                n_special_tokens=n_special_tokens,
+                max_cls_tokens=max_cls_tokens,
+                top_k=top_k,
+                n_segments=model_config['data']['n_segments']).cpu()
+
+        # Average gene embeddings into cell and neighborhood embedding                    
+        cell_emb = compute_mean_unmasked_emb(emb, cell_mask)
+        neighborhood_emb = compute_mean_unmasked_emb(emb, neighborhood_mask)
+
+        all_cell_emb_list.append(cell_emb)
+        all_neighborhood_emb_list.append(neighborhood_emb)
+
+        # Store cell and neighborhood gene embeddings
+        for gene_id in cell_gene_ids:
+            gene_emb = retrieve_gene_emb(
+                tokens=tokens,
+                emb=emb,
+                gene_id=gene_id,
+                gene_type="cell",
+                seq_len_cell=seq_len_cell,
+                n_special_tokens=n_special_tokens)
+            if itr == 0:
+                all_cell_gene_emb_dict[gene_id] = [gene_emb]
+            else:
+                all_cell_gene_emb_dict[gene_id].append(gene_emb)
+        for gene_id in neighborhood_gene_ids:
+            gene_emb = retrieve_gene_emb(
+                tokens=tokens,
+                emb=emb,
+                gene_id=gene_id,
+                gene_type="neighborhood",
+                seq_len_cell=seq_len_cell,
+                n_special_tokens=n_special_tokens)
+            if itr == 0:
+                all_neighborhood_gene_emb_dict[gene_id] = [gene_emb]
+            else:
+                all_neighborhood_gene_emb_dict[gene_id].append(gene_emb)
+
+    output_embed = {}        
+
+    # Store cell and neighborhood embeddings of all observations
+    output_embed["cell_emb"] = np.array(torch.cat(
+        all_cell_emb_list,
+        dim=0))
+    output_embed["neighborhood_emb"] = np.array(torch.cat(
+        all_neighborhood_emb_list,
+        dim=0))
+
+    # Store cell and neighborhood gene embeddings of all observations
+    for gene_id in cell_gene_ids:
+        output_embed[f"cell_emb_gene{gene_id}"] = np.array(torch.cat(
+            all_cell_gene_emb_dict[gene_id],
+            dim=0).cpu())
+    for gene_id in neighborhood_gene_ids:
+        output_embed[f"neighborhood_emb_gene{gene_id}"] = np.array(torch.cat(
+            all_neighborhood_gene_emb_dict[gene_id],
+            dim=0).cpu())
+
+    return output_embed
+
+
+@torch.no_grad()
+def harmonize_tokenize_embed_pipeline(
+        adata: ad.AnnData,
+        model_folder_path: str,
+        perturb_df: Optional[pd.DataFrame]=None,               
+        nproc: int=4,
+        processing_mode: Literal['sequential',
+                                 'parallel']='parallel',
+        save_dataset_path: Optional[Path | str]=None,
+        num_shards: int=32,
+        emb_layer: Optional[int]=None,
+        cell_gene_ids: list=[],
+        neighborhood_gene_ids: list=[],
+        agg_excluded_tokens: Optional[list[int]]=None,
+        top_k: Optional[int]=None,
+        batch_size: int=128,
+        pin_memory: bool=False,
+        num_workers: int=12) -> ad.AnnData:
+    """
+    Harmonize, tokenize and embed an AnnData object.
+
+    Parameters
+    -----------
+    adata:
+        An unharmonized AnnData object to be tokenized.
+    model_folder_path:
+        Path to the folder containing the model config, token dictionary, and
+        normalization factors.
+    perturb_df:
+        DataFrame with perturbation data, e.g.
+        ```
+        perturb_df =  pd.DataFrame({
+            'ensembl_id': ['ENSG00000169194', 'ENSG00000131724'],
+            'target': ['neighborhood', 'cell'],
+            'perturbation_type': ['foldchange', 'knockout'],
+            'foldchange': [0.5, np.nan]
+        })
+        ```.
+    n_proc:
+        Number of processes used for tokenization.
+    processing_mode:
+        Mode of processing used for tokenization.
+    save_dataset_path:
+        If specified, huggingface dataset is written to disk at this path.
+    num_shards:
+        Number of shards with which huggingface dataset is saved.
+    emb_layer:
+        Layer for which to retrieve the embedding.
+    cell_gene_ids:
+        List with gene IDs for which cell gene embeddings will be retrieved.
+    neighborhood_gene_ids:
+        List with gene IDs for which neighborhood gene embeddings will be
+        retrived.
+    agg_excluded_tokens:
+        List of tokens to be excluded from the aggregation.
+    top_k:
+        Include only top_k genes in aggregation.
+    batch_size:
+        Dataloader param.
+    pin_memory:
+        Dataloader param.
+    num_workers:
+        Number of workers used for model inference.
+
+    Returns:
+    -----------
+    adata:
+        A harmonized AnnData object with embeddings stored in `adata.obsm`.
+    """
+    print('====================================================================================================')
+    print('                                         HARMONIZE DATA                                             ')
+    print('====================================================================================================')    
+    adata = harmonize_adata(adata)
+
+    print('====================================================================================================')
+    print('                                          TOKENIZE DATA                                             ')
+    print('====================================================================================================')  
+    dataset = tokenize_adata(
+        adata=adata,
+        model_folder_path=model_folder_path,
+        perturb_df=perturb_df,                   
+        nproc=nproc,
+        processing_mode=processing_mode)
+
+    if save_dataset_path:
+        dataset.save_to_disk(
+            save_dataset_path,
+            num_shards=num_shards)
+
+    print('====================================================================================================')
+    print('                                            EMBED DATA                                              ')
+    print('====================================================================================================')  
+    output_embed = embed_dataset(
+        dataset=dataset,
+        model_folder_path=model_folder_path,
+        emb_layer=emb_layer,
+        cell_gene_ids=cell_gene_ids,
+        neighborhood_gene_ids=neighborhood_gene_ids,
+        agg_excluded_tokens=agg_excluded_tokens,
+        top_k=top_k,
+        batch_size=batch_size,
+        pin_memory=pin_memory,
+        num_workers=num_workers)
+
+    # Add embeddings to adata
+    for key, values in output_embed.items():
+        adata.obsm[key] = values
 
     return adata

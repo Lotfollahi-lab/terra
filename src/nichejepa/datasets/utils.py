@@ -53,7 +53,6 @@ def get_ensembl_ids(gene_names: List,
 
 
 def prepare_dataset(args: dict,
-                    split_dataset: bool=True
                     ) -> Union[Tuple[datasets.Dataset, datasets.Dataset],
                                datasets.Dataset]:
     """
@@ -71,88 +70,65 @@ def prepare_dataset(args: dict,
             - stratify: Whether to stratify the dataset based on cell types
                         during the split.
             - random_state: The random seed for reproducibility.
-    split_dataset:
-        If 'True', split the dataset into train and test datasets.
 
     Returns
     -----------
-    if `split_dataset` is True:
+    Either:
+        dataset:
+            The precomputed split of the dataset.
+    or:
         train_dataset:
             The training portion of the dataset.
         test_dataset:
             The test portion of the dataset.
-    else:
-        dataset:
-            The combined training and test portion of the dataset with a `split`
-            label.
+        val_dataset:
+            The validation portion of the dataset.
     """
     # Load dataset from the specified path
     data_path = args['data']['tokenized_data_folder_path']
     dataset = load_from_disk(data_path)
 
-    # Load precomputed data split if specified
     if args['data']['precomputed_split']:
-        with open(args['data']['precomputed_split'] + "_train.pkl", "rb") as f: 
-            train_indices= pickle.load(f)
-        with open(args['data']['precomputed_split'] + "_test.pkl", "rb") as f: 
-            test_indices= pickle.load(f)
-        with open(args['data']['precomputed_split'] + "_validation.pkl", "rb") as f: 
-            val_indices= pickle.load(f)
-        val_dataset = dataset.select(val_indices)
-        test_dataset = dataset.select(test_indices)
-        train_dataset = dataset.select(train_indices)
-        return train_dataset, val_dataset, test_dataset
-
-    # Sample subset if specified
-    if args['data']['sample_subset']:
-        total_size = len(dataset)
-        sample_size = min(args['data']['sample_size'], total_size)
-        rng = random.Random(args['data']['random_state'])
-        sampled_indices = rng.sample(range(total_size), sample_size)
-        dataset = dataset.select(sampled_indices)
-
-    # Prepare for dataset split
-    indices = list(range(len(dataset)))
-
-    # Prepare train-test split parameters
-    split_params = {'test_size': args['data']['split'],
-                    'random_state': args['data']['random_state']}
-    if args['data']['stratify']:
-        split_params['stratify'] = dataset['cell_types']
-
-    # Perform train test split
-    if args['data']['split'] > 0:
-        train_indices, test_indices = train_test_split(indices, **split_params)
-    elif args['data']['test_batch_ids']:
-        cell_ids = dataset['cell_id']
-        test_batch_mask = [
-            any(batch_id == f"{cell_id.split('_')[0]}_{cell_id.split('_')[1]}"
-                for batch_id in args['data']['test_batch_ids'])
-            for cell_id in cell_ids]
-        train_indices = [
-            index for index, value in enumerate(test_batch_mask) if not value]
-        if args['data']['split_val'] > 0:
-            split_params = {
-                'test_size': args['data']['split_val'],
-                'random_state': args['data']['random_state']}
-            train_indices, val_indices = train_test_split(train_indices, **split_params)
-        test_indices = [
-            index for index, value in enumerate(test_batch_mask) if value]
-
-    if split_dataset:
-        train_dataset = dataset.select(train_indices)
-        if args['data']['split_val'] > 0:
-            val_dataset = dataset.select(val_indices)
-        else:
-            val_dataset = dataset.select([])
-        test_dataset = dataset.select(test_indices)
-
-        return train_dataset, val_dataset, test_dataset
+        # Load precomputed data split if specified
+        with open(args['data']['precomputed_split'], "rb") as f: 
+            indices = pickle.load(f)
+        dataset = dataset.select(indices)
+        return dataset, None, None
     else:
-        split_labels = {i: 'train' for i in train_indices}
-        split_labels.update({i: 'test' for i in test_indices})
-        def add_split_label(example, idx):
-            return {'split': split_labels[idx]}
-        dataset = dataset.map(add_split_label, with_indices=True)
+        # Prepare for dataset split
+        indices = list(range(len(dataset)))
+        cell_ids = dataset['cell_id']
 
-        return dataset
+        if args['data']['test_batch_ids']:
+            test_batch_mask = [
+                any(batch_id == f"{cell_id.split('_')[0]}_{cell_id.split('_')[1]}"
+                    for batch_id in args['data']['test_batch_ids'])
+                for cell_id in cell_ids]
+            test_indices = [
+                index for index, value in enumerate(test_batch_mask) if value]
+            train_indices = [
+                index for index, value in enumerate(test_batch_mask) if not value]
+        else:
+            test_indices = []
+            train_indices = indices
+
+        if args['data']['val_batch_ids']:
+            val_batch_mask = [
+                any(batch_id == f"{cell_id.split('_')[0]}_{cell_id.split('_')[1]}"
+                    for batch_id in args['data']['val_batch_ids'])
+                for cell_id in cell_ids]
+            val_indices = [
+                index for index, value in enumerate(val_batch_mask) if value]
+            train_indices = [
+                index_1 and index_2 for index_1, index_2 in zip(
+                    train_indices,
+                    [index for index, value in enumerate(val_batch_mask) if not value]
+                    )]
+        else:
+            val_indices = []
+
+    train_dataset = dataset.select(train_indices)
+    val_dataset = dataset.select(val_indices)
+    test_dataset = dataset.select(test_indices)
+
+    return train_dataset, val_dataset, test_dataset

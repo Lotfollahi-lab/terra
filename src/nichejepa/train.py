@@ -46,7 +46,8 @@ from .masks.block_masking  import BlockMaskCollator
 from .masks.utils import apply_masks
 from .models.utils import repeat_interleave_batch
 from .utils.distributed import (AllReduce,
-                                init_distributed)
+                                init_distributed,
+                                AllReduceSum)
 from .utils.logging import (AverageMeter,
                             CSVLogger,
                             gpu_timer,
@@ -61,7 +62,6 @@ logger = logging.getLogger()
 
 def train(args: dict,
           train_dataset: datasets.Dataset,
-          test_dataset: datasets.Dataset,
           resume_preempt: bool=False,
           save_folder_path: Optional[str]=None,
           ):
@@ -74,8 +74,6 @@ def train(args: dict,
         Dictionary containing the hyperparams from the config file.
     train_dataset:
         Train split of huggingface dataset.
-    test_dataset:
-        Test split of huggingface dataset.
     resume_preempt:
     save_folder_path:
         Path for saving model artifacts.
@@ -147,9 +145,12 @@ def train(args: dict,
     load_model = args['state']['load_checkpoint'] or resume_preempt
     r_file = args['state']['read_checkpoint']
 
+    # Initialize center for target centering
+    center = None
+
     if args['data']['precomputed_n_nonzero_tokens']:
-        with open(args['data']['precomputed_n_nonzero_tokens'] + "_train.pkl", "rb") as f: 
-            n_nonzero_tokens= pickle.load(f)
+        with open(args['data']['precomputed_n_nonzero_tokens'], "rb") as f:
+            n_nonzero_tokens = pickle.load(f)
     else:
         n_nonzero_tokens = None
         print(n_nonzero_tokens)
@@ -246,9 +247,6 @@ def train(args: dict,
         use_flash_attention=use_flash_attention)
     target_encoder = copy.deepcopy(encoder)
 
-    # Initialize center for target centering
-    center = None
-
     # Initialize mask collator
     if block_masking:
        mask_collator = BlockMaskCollator(
@@ -271,7 +269,7 @@ def train(args: dict,
             target_mask_size=target_mask_size,
             context_mask_size=context_mask_size,)
     
-    # Initialize train and test datasets, dataloaders and samplers
+    # Initialize train datasets, dataloaders and samplers
     train_cell_dataset = make_cell_dataset(
         dataset=train_dataset,
         vocab_size=vocab_size,
@@ -284,31 +282,8 @@ def train(args: dict,
         sampling_strategy=sampling_strategy,
         n_nonzero_tokens_list=n_nonzero_tokens)
 
-    test_cell_dataset = make_cell_dataset(
-        dataset=test_dataset,
-        vocab_size=vocab_size,
-        seq_len_cell=seq_len_cell,
-        seq_len_neighborhood=seq_len_neighborhood,
-        max_special_tokens=max_special_tokens,
-        tokenizer_type=tokenizer_type,
-        gt_type=gt_type,
-        special_tokens=special_tokens,
-        sampling_strategy=sampling_strategy)
-
     train_loader, train_sampler = init_dataloader_and_sampler(
         cell_dataset=train_cell_dataset,
-        batch_size=batch_size,
-        distributed=True,
-        world_size=world_size,
-        rank=rank,
-        collate_fn=mask_collator,
-        pin_memory=pin_memory,
-        num_workers=num_workers,
-        drop_last=False,
-        persistent_workers=False)
-
-    test_loader, test_sampler = init_dataloader_and_sampler(
-        cell_dataset=test_cell_dataset,
         batch_size=batch_size,
         distributed=True,
         world_size=world_size,
@@ -426,12 +401,16 @@ def train(args: dict,
 
                         if centering:
                             # Update center over batch for centering like in DINO
+                            # Create batch_center across GPUs using AllReduceSum
+                            # to synchronize the sum between different hosts
+                            batch_center = torch.sum(h, dim=0, keepdim=True)
+                            batch_center = AllReduceSum.apply(batch_center)
+                            batch_centers = batch_center / (len(h) * world_size)
                             if center is not None:
                                 center = center_momentum * center + (
-                                    1-center_momentum) * h.mean(
-                                        dim=0, keepdim=True)
+                                    1-center_momentum) * batch_centers
                             else:
-                                center = h.mean(dim=0, keepdim=True)
+                                center = batch_centers
                             
                             # Center over batch
                             h = h - center
@@ -564,7 +543,7 @@ def train(args: dict,
                             grad_stats.last_layer,
                             grad_stats.min,
                             grad_stats.max))
-            log_stats()
+            #log_stats()
             wandb.log({"loss": loss, 'lr':_new_lr, "epoch": epoch})
             assert not np.isnan(loss), 'loss is nan'
 
