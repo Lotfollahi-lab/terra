@@ -18,7 +18,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from .modules import Attention, Block, ValueEmbWeightsProjection, DropPath, MLP
+from .modules import Attention, Block, ValueEmbWeightsProjection, MLP
 from .utils import (get_1d_sincos_pos_embed,
                     repeat_interleave_batch,
                     trunc_normal_)
@@ -131,9 +131,6 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                 n_sincos_pos=n_segments + self.max_special_tokens)
             self.seg_embed.weight[1:].copy_(torch.from_numpy(seg_embed).float())
 
-        # Define decaying drop path rate (higher drop rate in deeper blocks)
-        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]
-
         # Initialize encoder blocks and norm layer
         self.blocks = nn.ModuleList([
             Block(dim=embed_dim,
@@ -142,8 +139,8 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                   qkv_bias=qkv_bias,
                   qk_scale=qk_scale,
                   drop=drop_rate,
+                  act_layer=nn.GELU,
                   attn_drop=attn_drop_rate,
-                  drop_path=dpr[i],
                   norm_layer=norm_layer,
                   use_flash_attention=use_flash_attention)
             for i in range(depth)])
@@ -151,9 +148,9 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
 
         # Initialize weights of layers
         self.apply(self._init_weights)
-        self.fix_init_weight()
+        self._rescale_blocks()
 
-    def fix_init_weight(self):
+    def _rescale_blocks(self):
         """
         Helper function to scale initialized layer weights.
         """
@@ -175,10 +172,6 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         elif isinstance(m, nn.LayerNorm):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
-        elif isinstance(m, nn.Conv2d):
-            trunc_normal_(m.weight, std=self.init_std)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
 
     @torch.no_grad()
     def return_token_emb(self,
@@ -334,9 +327,6 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
         # Initialize mask token embedding for prediction
         self.mask_token = nn.Parameter(torch.zeros(predictor_embed_dim))
 
-        # Define decaying drop path rate (higher drop rate in deeper blocks)
-        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]
-
         # Initialize predictor blocks, norm layer, and predictor projection
         # layer to project back to encoder embedding size
         self.predictor_blocks = nn.ModuleList([
@@ -347,7 +337,6 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
                   qk_scale=qk_scale,
                   drop=drop_rate,
                   attn_drop=attn_drop_rate,
-                  drop_path=dpr[i],
                   norm_layer=norm_layer,
                   use_flash_attention=use_flash_attention)
             for i in range(depth)])
@@ -361,9 +350,9 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
         
         # Initialize layer weights
         self.apply(self._init_weights)
-        self.fix_init_weight()
+        self._rescale_blocks()
 
-    def fix_init_weight(self):
+    def _rescale_blocks(self):
         """
         Helper function to scale initialized layer weights.
         """
@@ -385,10 +374,6 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
         elif isinstance(m, nn.LayerNorm):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
-        elif isinstance(m, nn.Conv2d):
-            trunc_normal_(m.weight, std=self.init_std)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
 
     @abstractmethod
     def forward(self) -> torch.Tensor:
@@ -640,7 +625,7 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
     """
     def __init__(self,
                  n_special_values: int,
-                 n_value_bins: int=100,
+                 n_value_bins: int=10,
                  **base_encoder_kwargs,
                  ):
         super().__init__(**base_encoder_kwargs)
@@ -649,14 +634,20 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
 
         # Initialize value embeddings and value embedding weight projection
         # layer
-        self.value_embed = nn.Embedding(self.n_value_bins,
-                                        self.embed_dim)
+        #self.value_embed = nn.Embedding(self.n_value_bins,
+        #                                self.embed_dim)
         self.special_value_embed = nn.Embedding(
-            2 + self.n_special_values + self.max_special_tokens, # include <pad> and zero expression
+            2 + self.n_special_values + self.n_special_tokens, # include <pad> and zero expression
             self.embed_dim,
             padding_idx=0)
-        self.value_emb_weights_projection = ValueEmbWeightsProjection(
-            dim=self.n_value_bins)
+        #self.value_emb_weights_projection = ValueEmbWeightsProjection(
+        #    dim=self.n_value_bins)
+        self.value_embed = MLP(
+            in_features=1, 
+            hidden_features=512,
+            out_features=1024,
+            act_layer=nn.GELU,
+        )
 
     def forward(self,
                 tokens: torch.Tensor,
@@ -704,17 +695,18 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
             seg_emb = self.seg_embed(segments)
 
             # Get value embeddings
-            value_emb_weights = self.value_emb_weights_projection(
-                counts.unsqueeze(dim=-1))
-            value_emb = torch.matmul(value_emb_weights, self.value_embed.weight)
+            #value_emb_weights = self.value_emb_weights_projection(
+            #    counts.unsqueeze(dim=-1))
+            #value_emb = torch.matmul(value_emb_weights, self.value_embed.weight)
+            value_emb = self.value_embed(counts.unsqueeze(dim=-1))
 
             # Assign padding value embedding to 0 counts 
-            zero_counts_mask = counts == 0.0
-            zero_value_embed = self.special_value_embed(
-                torch.tensor(0, device=tokens.device)).to(value_emb.dtype)
-            value_emb[zero_counts_mask] = zero_value_embed
+            #zero_counts_mask = counts == 0.0
+            #zero_value_embed = self.special_value_embed(
+            #    torch.tensor(0, device=tokens.device)).to(value_emb.dtype)
+            #value_emb[zero_counts_mask] = zero_value_embed
             
-            # Assign special value embeddings to <cls> and other special tokens
+            # Assign special value embeddings to special tokens
             sp_value_embed = self.special_value_embed(
                 counts[:, :self.n_special_tokens].int()).to(
                     value_emb.dtype)
@@ -787,24 +779,22 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
         seg_emb = self.seg_embed(segments)
 
         # Get value embeddings
-        value_emb_weights = self.value_emb_weights_projection(
-            counts.unsqueeze(dim=-1))
-        value_emb = torch.matmul(value_emb_weights, self.value_embed.weight)
+        #value_emb_weights = self.value_emb_weights_projection(
+        #    counts.unsqueeze(dim=-1))
+        #value_emb = torch.matmul(value_emb_weights, self.value_embed.weight)
+        value_emb = self.value_embed(counts.unsqueeze(dim=-1))
 
         # Assign padding value embedding to 0 counts 
-        zero_counts_mask = counts == 0.0
-        zero_value_embed = self.special_value_embed(
-            torch.tensor(0, device=tokens.device)).to(value_emb.dtype)
-        value_emb[zero_counts_mask] = zero_value_embed
+        #zero_counts_mask = counts == 0.0
+        #zero_value_embed = self.special_value_embed(
+        #    torch.tensor(0, device=tokens.device)).to(value_emb.dtype)
+        #value_emb[zero_counts_mask] = zero_value_embed
         
-        # Assign special value embeddings to <cls> tokens
-        cls_value_embed = self.special_value_embed(
-            counts[:, :self.max_cls_tokens].int()).to(value_emb.dtype)
-        value_emb[:, :self.max_cls_tokens, :] = cls_value_embed
-
-        # Assign zero value embeddings to other special tokens
-        value_emb[
-            :, self.max_cls_tokens:self.n_special_tokens, :] = zero_value_embed
+        # Assign special value embeddings to special tokens
+        sp_value_embed = self.special_value_embed(
+            counts[:, :self.n_special_tokens].int()).to(
+                value_emb.dtype)
+        value_emb[:, :self.n_special_tokens, :] = sp_value_embed
 
         # Add token and segment embeddings to value embeddings
         x = token_emb + seg_emb + value_emb
