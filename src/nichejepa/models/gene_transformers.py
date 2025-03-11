@@ -116,21 +116,10 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                                         padding_idx=0)
 
         # Initialize segment embeddings (include <pad> and special segments)
-        self.seg_embed = nn.Embedding(
-            n_segments + 1 + self.max_special_tokens,
-            embed_dim,
-            padding_idx=0)
-
-        if not seg_learnable:
-            # Prevent gradient updates and initialize with sincos embedding,
-            # including special segments
-            self.seg_embed.weight.requires_grad = False
-            seg_embed = get_1d_sincos_pos_embed(
-                embed_dim=embed_dim,
-                n_zero_pos=0,
-                n_sincos_pos=n_segments + self.max_special_tokens)
-            self.seg_embed.weight[1:].copy_(torch.from_numpy(seg_embed).float())
-
+        self.seg_embed = nn.Parameter(
+            torch.zeros(1, n_segments + self.max_special_tokens, embed_dim),
+            requires_grad=False)
+            
         # Initialize encoder blocks and norm layer
         self.blocks = nn.ModuleList([
             Block(
@@ -148,16 +137,19 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         self.norm = norm_layer(embed_dim)
 
         # Initialize weights
-        if self.pos_embed is not None:
-            self._init_pos_embed(self.pos_embed.data) # sincos pos-embed
+        if self.seg_embed is not None:
+            self._init_seg_embed(self.seg_embed.data) # sincos pos-embed
         self.init_std = init_std
         self.apply(self._init_weights)
         self._rescale_blocks()
 
-    def _init_pos_embed(self, pos_embed):
-            embed_dim = pos_embed.size(-1)
-            sincos = get_2d_sincos_pos_embed(embed_dim, grid_size, cls_token=False)
-            pos_embed.copy_(torch.from_numpy(sincos).float().unsqueeze(0))
+    def _init_seg_embed(self, seg_embed):
+        embed_dim = seg_embed.size(-1)
+        sincos = get_1d_sincos_pos_embed(
+            embed_dim=embed_dim,
+            n_zero_pos=0,
+            n_sincos_pos=n_segments + self.max_special_tokens)
+        seg_embed.copy_(torch.from_numpy(sincos).float().unsqueeze(0))
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
