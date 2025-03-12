@@ -294,10 +294,28 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
         self.num_heads = num_heads
         self.init_std = init_std
 
+        # Initialize segment embeddings
+        self.seg_embed = nn.Embedding(
+            1 + n_segments, # include <pad>
+            predictor_embed_dim,
+            padding_idx=0)
+        
+        # Prevent gradient updates and initialize with sincos embedding,
+        # including special segments
+        self.seg_embed.weight.requires_grad = False
+        seg_embed = get_1d_sincos_pos_embed(
+            embed_dim=embed_dim,
+            n_zero_pos=0,
+            n_sincos_pos=n_segments)
+        self.seg_embed.weight[1:].copy_(torch.from_numpy(seg_embed).float())
+
         # Initialize layer to project from encoder to predictor embed dim
         self.predictor_embed = nn.Linear(embed_dim,
                                          predictor_embed_dim,
                                          bias=True)
+        self.token_embed_projection = nn.Linear(embed_dim,
+                                                predictor_embed_dim,
+                                                bias=True)
 
         # Initialize mask token embedding for prediction
         self.mask_token = nn.Parameter(torch.zeros(predictor_embed_dim))
@@ -599,24 +617,11 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
     expression counts.
     """
     def __init__(self,
-                 n_special_values: int,
-                 n_value_bins: int=10,
                  **base_encoder_kwargs,
                  ):
         super().__init__(**base_encoder_kwargs)
-        self.n_special_values = n_special_values
-        self.n_value_bins = n_value_bins
 
-        # Initialize value embeddings and value embedding weight projection
-        # layer
-        #self.value_embed = nn.Embedding(self.n_value_bins,
-        #                                self.embed_dim)
-        self.special_value_embed = nn.Embedding(
-            2 + self.n_special_values + self.n_special_tokens, # include <pad> and zero expression # TODO: why is n_special_tokens needed? it is needed
-            self.embed_dim,
-            padding_idx=0)
-        #self.value_emb_weights_projection = ValueEmbWeightsProjection(
-        #    dim=self.n_value_bins)
+        # Initialize value embeddings
         self.value_embed = MLP(
             in_features=1, 
             hidden_features=512,
@@ -682,10 +687,10 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
             #value_emb[zero_counts_mask] = zero_value_embed
             
             # Assign special value embeddings to special tokens
-            sp_value_embed = self.special_value_embed(
-                counts[:, :self.n_special_tokens].int()).to(
-                    value_emb.dtype)
-            value_emb[:, :self.n_special_tokens, :] = sp_value_embed
+            #sp_value_embed = self.special_value_embed(
+            #    counts[:, :self.n_special_tokens].int()).to(
+            #        value_emb.dtype)
+            #value_emb[:, :self.n_special_tokens, :] = sp_value_embed
 
             # Add token and segment embeddings to value embeddings
             x = token_emb + seg_emb + value_emb
@@ -1018,15 +1023,23 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
     GeneTransformerCountPredictor class.
     """
     def __init__(self,
+                 n_special_values: int,
                  **base_predictor_kwargs
                  ):
         super().__init__(**base_predictor_kwargs)
 
+        self.n_special_values = n_special_values
+
+        self.special_value_embed = nn.Embedding(
+                    2 + self.n_special_values + self.n_special_tokens, # include <pad> and zero expression # TODO: why is n_special_tokens needed? it is needed
+                    self.predictor_embed_dim,
+                    padding_idx=0)
+
     def forward(self,
                 z: torch.Tensor,
                 token_embed: torch.Tensor,
-                seg_embed: torch.Tensor,
-                value_embed: torch.Tensor,
+                segments: torch.Tensor,
+                counts: torch.Tensor,
                 masks_enc: Union[List[torch.Tensor], torch.Tensor],
                 masks_pred: Union[List[torch.Tensor], torch.Tensor],
                 masks_attention: torch.Tensor=None,
@@ -1081,12 +1094,16 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
 
             # MLP projection layer
             z = self.predictor_embed(z)
+            token_emb = self.token_embed_projection(token_emb)
+            seg_emb = self.seg_embed(segments)
+            sp_value_embed = self.special_value_embed(
+                counts[:, :self.n_special_tokens].int())
 
             # Retrieve special token embedding
             x_special = (
                 token_embed[:, :self.n_special_tokens] +
                 seg_embed[:, :self.n_special_tokens] +
-                value_embed[:, :self.n_special_tokens])
+                sp_value_embed)
 
             # Remove special tokens
             token_embed = token_embed[:, self.n_special_tokens:]
@@ -1152,8 +1169,6 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
 
 
 def init_gt_encoder(encoder_type: Literal['rank', 'counts'],
-                    n_special_values: Optional[int]=None,
-                    n_value_bins: int=100,
                     **encoder_kwargs
                     ) -> Union[GeneTransformerRankEncoder,
                                 GeneTransformerCountEncoder]:
@@ -1166,8 +1181,6 @@ def init_gt_encoder(encoder_type: Literal['rank', 'counts'],
             **encoder_kwargs)
     elif encoder_type == 'counts':
         model = GeneTransformerCountEncoder(
-            n_special_values=n_special_values,
-            n_value_bins=n_value_bins,
             num_heads=8,
             mlp_ratio=4,
             qkv_bias=True,
@@ -1178,6 +1191,7 @@ def init_gt_encoder(encoder_type: Literal['rank', 'counts'],
 
 
 def init_gt_predictor(predictor_type: Literal['rank', 'counts'],
+                      n_special_values: Optional[int]=None,
                       **predictor_kwargs
                  ) -> Union[GeneTransformerRankPredictor,
                             GeneTransformerCountPredictor]:
@@ -1190,6 +1204,7 @@ def init_gt_predictor(predictor_type: Literal['rank', 'counts'],
             **predictor_kwargs)
     elif predictor_type == 'counts':
         model = GeneTransformerCountPredictor(
+            n_special_values=n_special_values,
             num_heads=8,
             mlp_ratio=4,
             qkv_bias=True,
