@@ -106,7 +106,6 @@ def compute_mean_unmasked_emb(emb: torch.Tensor,
 def create_binary_selection_mask(ns_tokens: torch.Tensor,
                                  seq_len_cell: int,
                                  n_special_tokens: int,
-                                 max_cls_tokens: int,
                                  selection_type: Literal['cls_cell',
                                                          'cls_neighborhood',
                                                          'agg_cell',
@@ -129,8 +128,6 @@ def create_binary_selection_mask(ns_tokens: torch.Tensor,
     seq_len_cell:
         The length of cell tokens in the sequence.
     n_special_tokens:
-    max_cls_tokens:
-        Number of <cls> tokens.
     selection_type:
         Defines the type of embedding, which is relevant for the mask creation.
     excluded_tokens:

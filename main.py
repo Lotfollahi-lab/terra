@@ -35,6 +35,8 @@ def parse_arguments():
                         help='Name of the config file to load.')
     parser.add_argument('--devices', type=str, nargs='+', default=['cuda:0'],
                         help='Devices to use on the local machine.')
+    parser.add_argument('--run_id', type=str, default='goodsalad-1',
+                        help='Run ID for wandb.')
     parser.add_argument('--do_sweep', action='store_true', default=False,
                         help='Enable or disable parameter sweeping.')
     parser.add_argument('--test', action='store_true', default=False,
@@ -96,7 +98,7 @@ def sweep_func(args):
     num_gpus = len(args.devices)
     processes = []
     
-    wandb.init(project='nichejepa-sweep', mode='offline')
+    wandb.init(project='nichejepa-sweep', id=args.run_id, resume="allow", group="multi_node_training", mode='online')
 
     if len(wandb.config.keys()) != 0:
       update_from_sweep = True

@@ -35,16 +35,10 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         Size of the token vocabulary. Includes <pad> token.
     seq_len:
         Length of the token sequences.
-    max_cls_tokens:
-        Number of <cls> tokens.
-    max_special_tokens:
-        Maximum number of special tokens.
     n_special_tokens:
         Number of special tokens included in a token sequence.
     n_segments:
         Number of token segments within a token sequence.
-    seg_learnable:
-        If 'True', segment embeddings are learnable, otherwise fixed.
     embed_dim:
         Dimension of the encoder embedding.
     depth:
@@ -68,8 +62,6 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         MLP modules.
     attn_drop_rate:
         Dropout ratio in attention layer of Attention modules.
-    drop_path_rate:
-        Probability for dropping paths in DropPath modules.
     norm_layer:
         Normalization layer.
     init_std:
@@ -80,11 +72,8 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
     def __init__(self,
                  vocab_size: int,
                  seq_len: int,
-                 max_cls_tokens: int,
-                 max_special_tokens: int,
                  n_special_tokens: int,
                  n_segments: int,
-                 seg_learnable: bool=False,
                  embed_dim: int=768,
                  depth: int=12,
                  predictor_embed_dim: int=384,
@@ -95,7 +84,6 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                  qk_scale: Optional[float]=None,
                  drop_rate: float=0.0,
                  attn_drop_rate: float=0.0,
-                 drop_path_rate: float=0.0,
                  norm_layer: nn.modules.normalization=nn.LayerNorm,
                  init_std: float=0.02,
                  use_flash_attention: bool=True,
@@ -103,8 +91,6 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                  ):
         super().__init__()
         self.seq_len = seq_len
-        self.max_cls_tokens = max_cls_tokens
-        self.max_special_tokens = max_special_tokens
         self.n_special_tokens = n_special_tokens
         self.embed_dim = embed_dim
         self.num_heads = num_heads
@@ -115,21 +101,20 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                                         embed_dim,
                                         padding_idx=0)
 
-        # Initialize segment embeddings (include <pad> and special segments)
+        # Initialize segment embeddings
         self.seg_embed = nn.Embedding(
-            n_segments + 1 + self.max_special_tokens,
+            1 + n_segments, # include <pad>
             embed_dim,
             padding_idx=0)
-
-        if not seg_learnable:
-            # Prevent gradient updates and initialize with sincos embedding,
-            # including special segments
-            self.seg_embed.weight.requires_grad = False
-            seg_embed = get_1d_sincos_pos_embed(
-                embed_dim=embed_dim,
-                n_zero_pos=0,
-                n_sincos_pos=n_segments + self.max_special_tokens)
-            self.seg_embed.weight[1:].copy_(torch.from_numpy(seg_embed).float())
+        
+        # Prevent gradient updates and initialize with sincos embedding,
+        # including special segments
+        self.seg_embed.weight.requires_grad = False
+        seg_embed = get_1d_sincos_pos_embed(
+            embed_dim=embed_dim,
+            n_zero_pos=0,
+            n_sincos_pos=n_segments)
+        self.seg_embed.weight[1:].copy_(torch.from_numpy(seg_embed).float())
 
         # Initialize encoder blocks and norm layer
         self.blocks = nn.ModuleList([
@@ -254,14 +239,10 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
         Dimension of the predictor embedding.
     seq_len:
         Length of the token sequences.
-    max_cls_tokens:
-        Number of <cls> tokens.
     n_special_tokens:
         Number of special tokens included in a token sequence.
     n_segments:
         Number of token segments within a token sequence.
-    seg_learnable:
-        If 'True', segment embeddings are learnable, otherwise fixed.
     predictor_embed_dim:
         Dimension of the embedding of the predictor.
     depth:
@@ -281,8 +262,6 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
         MLP modules.
     attn_drop_rate:
         Dropout ratio in attention layer of Attention modules.
-    drop_path_rate:
-        Probability for dropping paths in DropPath modules.
     norm_layer:
         Normalization layer.
     init_std:
@@ -293,19 +272,16 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
     def __init__(self,
                  embed_dim: int,
                  seq_len: int,
-                 max_cls_tokens: int,
                  n_special_tokens: int,
                  n_segments: int,
-                 seg_learnable: bool=False,
-                 predictor_embed_dim: int=384,
+                 predictor_embed_dim: int=768,
                  depth: int=6,
-                 num_heads: int=8,
+                 num_heads: int=12,
                  mlp_ratio: float=4.0,
                  qkv_bias: bool=True,
                  qk_scale: Optional[float]=None,
                  drop_rate: float=0.0,
                  attn_drop_rate: float=0.0,
-                 drop_path_rate: float=0.0,
                  norm_layer: torch.nn.modules.normalization=nn.LayerNorm,
                  init_std: float=0.02,
                  use_flash_attention: bool=True,
@@ -313,7 +289,6 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
                  ):
         super().__init__()
         self.seq_len = seq_len
-        self.max_cls_tokens = max_cls_tokens
         self.n_special_tokens = n_special_tokens
         self.predictor_embed_dim = predictor_embed_dim
         self.num_heads = num_heads
@@ -637,7 +612,7 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
         #self.value_embed = nn.Embedding(self.n_value_bins,
         #                                self.embed_dim)
         self.special_value_embed = nn.Embedding(
-            2 + self.n_special_values + self.n_special_tokens, # include <pad> and zero expression
+            2 + self.n_special_values + self.n_special_tokens, # include <pad> and zero expression # TODO: why is n_special_tokens needed? it is needed
             self.embed_dim,
             padding_idx=0)
         #self.value_emb_weights_projection = ValueEmbWeightsProjection(
@@ -785,16 +760,14 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
         value_emb = self.value_embed(counts.unsqueeze(dim=-1))
 
         # Assign padding value embedding to 0 counts 
-        #zero_counts_mask = counts == 0.0
-        #zero_value_embed = self.special_value_embed(
-        #    torch.tensor(0, device=tokens.device)).to(value_emb.dtype)
-        #value_emb[zero_counts_mask] = zero_value_embed
-        
-        # Assign special value embeddings to special tokens
-        sp_value_embed = self.special_value_embed(
-            counts[:, :self.n_special_tokens].int()).to(
-                value_emb.dtype)
-        value_emb[:, :self.n_special_tokens, :] = sp_value_embed
+        zero_counts_mask = counts == 0.0
+        zero_value_embed = self.special_value_embed(
+            torch.tensor(0, device=tokens.device)).to(value_emb.dtype)
+        value_emb[zero_counts_mask] = zero_value_embed
+
+        # Assign zero value embeddings special tokens (not needed)
+        #value_emb[
+        #    :, self.n_special_tokens, :] = zero_value_embed
 
         # Add token and segment embeddings to value embeddings
         x = token_emb + seg_emb + value_emb
@@ -875,14 +848,9 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
             torch.tensor(0, device=tokens.device)).to(value_emb.dtype)
         value_emb[zero_counts_mask] = zero_value_embed
         
-        # Assign special value embeddings to <cls> tokens
-        cls_value_embed = self.special_value_embed(
-            counts[:, :self.max_cls_tokens].int()).to(value_emb.dtype)
-        value_emb[:, :self.max_cls_tokens, :] = cls_value_embed
-
-        # Assign zero value embeddings to other special tokens
-        value_emb[
-            :, self.max_cls_tokens:self.n_special_tokens, :] = zero_value_embed
+        # Assign zero value embeddings to special tokens (not needed)
+        #value_emb[
+        #    :, :self.n_special_tokens, :] = zero_value_embed
 
         # Add token and segment embeddings to value embeddings
         x = token_emb + seg_emb + value_emb
@@ -974,7 +942,7 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
             B = len(z) // len(masks_enc)
 
             # MLP projection layer
-            #z = self.predictor_embed(z)
+            z = self.predictor_embed(z)
 
             # Retrieve special token embedding
             x_special = (
@@ -1040,7 +1008,7 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
             z = z[:, :pred_tokens.size(1), :]
 
             # MLP projection layer
-            #z = self.predictor_proj(z)
+            z = self.predictor_proj(z)
 
             return z
 
@@ -1112,7 +1080,7 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
             B = len(z) // len(masks_enc)
 
             # MLP projection layer
-            #z = self.predictor_embed(z)
+            z = self.predictor_embed(z)
 
             # Retrieve special token embedding
             x_special = (
@@ -1178,13 +1146,14 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
             z = z[:, :pred_tokens.size(1), :]
 
             # MLP projection layer
-            #z = self.predictor_proj(z)
+            z = self.predictor_proj(z)
 
             return z
 
 
 def init_gt_encoder(encoder_type: Literal['rank', 'counts'],
                     n_special_values: Optional[int]=None,
+                    n_value_bins: int=100,
                     **encoder_kwargs
                     ) -> Union[GeneTransformerRankEncoder,
                                 GeneTransformerCountEncoder]:
@@ -1198,6 +1167,7 @@ def init_gt_encoder(encoder_type: Literal['rank', 'counts'],
     elif encoder_type == 'counts':
         model = GeneTransformerCountEncoder(
             n_special_values=n_special_values,
+            n_value_bins=n_value_bins,
             num_heads=8,
             mlp_ratio=4,
             qkv_bias=True,
@@ -1208,7 +1178,7 @@ def init_gt_encoder(encoder_type: Literal['rank', 'counts'],
 
 
 def init_gt_predictor(predictor_type: Literal['rank', 'counts'],
-                 **predictor_kwargs
+                      **predictor_kwargs
                  ) -> Union[GeneTransformerRankPredictor,
                             GeneTransformerCountPredictor]:
     if predictor_type == 'rank':

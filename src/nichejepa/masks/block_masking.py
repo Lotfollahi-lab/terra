@@ -33,13 +33,8 @@ class BlockMaskCollator:
         The length of the token sequence representing the cell segment.
     seq_len_neighborhood:
         The length of the token sequence representing the neighborhood segments.
-    max_special_tokens:
-        Maximum number of special tokens to determine first segment
-        corresponding to a cell.
     n_special_tokens:
         Number of special tokens in each token sequence, including <cls> tokens.
-    max_cls_tokens:
-        Number of <cls> tokens in each token sequence.
     per_block_mask_ratio:
         Ratio of elements to be masked in each block. A list with min and
         max ratio can be provided, in which case a value between the min and
@@ -56,9 +51,7 @@ class BlockMaskCollator:
                  n_segments: int,
                  seq_len_cell: int,
                  seq_len_neighborhood: int,
-                 max_special_tokens: int,
                  n_special_tokens: int,
-                 max_cls_tokens: int,
                  per_block_mask_ratio: float=0.5):
         self.n_targets = n_targets
         self.n_contexts = n_contexts
@@ -67,8 +60,6 @@ class BlockMaskCollator:
         self.seq_len_neighborhood = seq_len_neighborhood
         self.seq_len_genes = self.seq_len_cell + self.seq_len_neighborhood
         self.n_special_tokens = n_special_tokens
-        self.max_special_tokens = max_special_tokens
-        self.max_cls_tokens = max_cls_tokens
         self.per_block_mask_ratio = per_block_mask_ratio
 
     def _sample_gene_mask(self,
@@ -131,14 +122,6 @@ class BlockMaskCollator:
             # context initially
             block_nz_ns_indices = nz_ns_indices[start_idx:end_idx]
             context_mask[block_nz_ns_indices] = 1
-
-            # Extract segments for the current block to determine which <cls>
-            # are to be included
-            #block_segments = nz_ns_segments[start_idx: end_idx]
-            #block_unique_segments = torch.unique(block_segments)
-            #cls_tokens = [
-            #    seg - self.max_special_tokens for seg in
-            #    block_unique_segments.tolist()]
             
             # Determine number of elements to mask
             block_size = len(block_nz_ns_indices)

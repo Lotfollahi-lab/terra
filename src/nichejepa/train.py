@@ -64,6 +64,7 @@ def train(args: dict,
           train_dataset: datasets.Dataset,
           resume_preempt: bool=False,
           save_folder_path: Optional[str]=None,
+          LOCAL_RANK: Optional[int]=None,
           ):
     """
     Train model.
@@ -77,6 +78,8 @@ def train(args: dict,
     resume_preempt:
     save_folder_path:
         Path for saving model artifacts.
+    LOCAL_RANK:
+        Rank of the process.
     """
     # Set random seeds
     np.random.seed(_GLOBAL_SEED)
@@ -85,11 +88,12 @@ def train(args: dict,
         torch.cuda.manual_seed_all(_GLOBAL_SEED)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-
     # Set device
     if not torch.cuda.is_available():
         device = torch.device('cpu')
-    else:
+    elif LOCAL_RANK is not None:
+        device = torch.device(f"cuda:{LOCAL_RANK}")
+    elif LOCAL_RANK is  None:
         device = torch.device('cuda:0')
         torch.cuda.set_device(device)
 
@@ -107,17 +111,14 @@ def train(args: dict,
 
     add_cls = args['meta']['add_cls']
     gt_type = args['meta']['gt_type']
+    n_value_bins = args['meta']['n_value_bins']
     enc_depth = args['meta']['enc_depth'] 
     enc_emb_dim = args['meta']['enc_emb_dim']    
     pred_depth = args['meta']['pred_depth']
     pred_emb_dim = args['meta']['pred_emb_dim']
     special_tokens = args['meta']['special_tokens']
-    pos_learnable = args['meta']['pos_learnable']
-    seg_learnable = args['meta']['seg_learnable']
     use_bfloat16 = args['meta']['use_bfloat16']
     use_flash_attention = args['meta']['use_flash_attention']
-    centering = args['meta']['centering']
-    center_momentum = args['meta']['center_momentum']
 
     n_contexts = args['mask']['n_contexts']
     n_targets = args['mask']['n_targets']
@@ -146,13 +147,11 @@ def train(args: dict,
     write_tag = args['state']['write_tag']
     load_model = args['state']['load_checkpoint'] or resume_preempt
     r_file = args['state']['read_checkpoint']
-
-    # Initialize center for target centering
-    center = None
+    load_folder_path = args['state']['folder_path']
 
     if args['data']['precomputed_n_nonzero_tokens']:
-        with open(args['data']['precomputed_n_nonzero_tokens'], "rb") as f:
-            n_nonzero_tokens = pickle.load(f)
+        with open(args['data']['precomputed_n_nonzero_tokens'], "rb") as f: 
+            n_nonzero_tokens= pickle.load(f)
     else:
         n_nonzero_tokens = None
         print(n_nonzero_tokens)
@@ -163,7 +162,7 @@ def train(args: dict,
     vocab_size = len(token_dict)
     n_special_values = sum(1 for key in token_dict if "spv" in key)
     max_special_tokens = sum(1 for key in token_dict if "cls" in key) + sum(
-        1 for key in token_dict if "spt" in key)
+            1 for key in token_dict if "spt" in key)
 
     # Define tokenizer-specific params
     if tokenizer_type == 'cell_neighborhood':
@@ -173,12 +172,16 @@ def train(args: dict,
         if add_cls:
             special_tokens = [
                 f'cls_{i}' for i in range(n_segments)] + special_tokens
-    
-    max_cls_tokens = sum('cls' in token for token in special_tokens)
 
     # Get token sequence length and number of special tokens
     n_special_tokens = len(special_tokens)
     seq_len = seq_len_cell + seq_len_neighborhood + n_special_tokens
+    
+    # Initialize torch distributed backend
+    world_size, rank = init_distributed()
+    logger.info(f'Initialized (rank/world-size) {rank}/{world_size}.')
+    if rank > 0:
+        logger.setLevel(logging.ERROR)
 
     # Create folder to store artifacts
     if not save_folder_path:
@@ -191,24 +194,20 @@ def train(args: dict,
         save_folder_path = os.path.join(artifact_folder_path,
                                         dataset_name,
                                         current_timestamp)
-    os.makedirs(save_folder_path, exist_ok=True)
+    if rank==0:
+        os.makedirs(save_folder_path, exist_ok=True)
 
     # Store config file with model
-    dump = os.path.join(save_folder_path, 'params.yaml')
-    with open(dump, 'w') as f:
-        yaml.dump(args, f)
+    if rank==0:
+        dump = os.path.join(save_folder_path, 'params.yaml')
+        with open(dump, 'w') as f:
+            yaml.dump(args, f)
     
     # Start multiprocessing
     try:
         mp.set_start_method('spawn')
     except Exception:
         pass
-    
-    # Initialize torch distributed backend
-    world_size, rank = init_distributed()
-    logger.info(f'Initialized (rank/world-size) {rank}/{world_size}.')
-    if rank > 0:
-        logger.setLevel(logging.ERROR)
 
     # Define log/checkpointing paths
     log_file = os.path.join(save_folder_path, f'{write_tag}_r{rank}.csv')
@@ -218,10 +217,11 @@ def train(args: dict,
     load_path = None
     if load_model:
         load_path = os.path.join(
-            save_folder_path, r_file) if r_file is not None else latest_path
+            load_folder_path, r_file) if r_file is not None else latest_path
 
     # Initialize csv logger
-    csv_logger = CSVLogger(log_file,
+    if rank==0:
+        csv_logger = CSVLogger(log_file,
                            ('%d', 'epoch'),
                            ('%d', 'itr'),
                            ('%.5f', 'loss'),
@@ -232,11 +232,10 @@ def train(args: dict,
     # Initialize encoder, predictor and target encoder
     encoder, predictor = init_model(
         gt_type=gt_type,
+        n_value_bins=n_value_bins,
         device=device,
         vocab_size=vocab_size,
         seq_len=seq_len,
-        max_cls_tokens=max_cls_tokens,
-        max_special_tokens=max_special_tokens,
         n_special_tokens=n_special_tokens,
         n_segments=n_segments,
         n_special_values=n_special_values,
@@ -244,8 +243,6 @@ def train(args: dict,
         enc_depth=enc_depth,
         pred_emb_dim=pred_emb_dim,
         pred_depth=pred_depth,
-        pos_learnable=pos_learnable,
-        seg_learnable=seg_learnable,
         use_flash_attention=use_flash_attention)
     target_encoder = copy.deepcopy(encoder)
 
@@ -257,9 +254,7 @@ def train(args: dict,
             n_segments=n_segments,
             seq_len_cell=seq_len_cell,
             seq_len_neighborhood=seq_len_neighborhood,
-            max_special_tokens=max_special_tokens,
             n_special_tokens=n_special_tokens,
-            max_cls_tokens=max_cls_tokens,
             per_block_mask_ratio=per_block_mask_ratio)
     else:
         mask_collator = RandomMaskCollator(
@@ -271,13 +266,12 @@ def train(args: dict,
             target_mask_size=target_mask_size,
             context_mask_size=context_mask_size,)
     
-    # Initialize train datasets, dataloaders and samplers
+    # Initialize train and test datasets, dataloaders and samplers
     train_cell_dataset = make_cell_dataset(
         dataset=train_dataset,
         vocab_size=vocab_size,
         seq_len_cell=seq_len_cell,
         seq_len_neighborhood=seq_len_neighborhood,
-        max_special_tokens=max_special_tokens,
         tokenizer_type=tokenizer_type,
         gt_type=gt_type,
         special_tokens=special_tokens,
@@ -358,6 +352,7 @@ def train(args: dict,
                     torch.save(save_dict, save_path.format(epoch=f'{epoch + 1}'))
                 else:
                     torch.save(save_dict, save_path.format(epoch=f'{epoch + 1}_{iter_number}'))
+
     # Run training loop
     for epoch in range(start_epoch, num_epochs):
         logger.info(f"Epoch {epoch + 1}")
@@ -385,19 +380,21 @@ def train(args: dict,
             maskA_meter.update(len(masks_enc[0][0]))
             maskB_meter.update(len(masks_pred[0][0]))
 
-            def train_step(center):
+            def train_step():
                 _new_lr = scheduler.step()
                 _new_wd = wd_scheduler.step()
 
-                def forward_target(center):
-                    with torch.no_grad(): # no backward pass for target encoder
+                def forward_target():
+                    with torch.no_grad(): 
+                        # no backward pass for target encoder
                         # Target encorder forward pass with output dim 
                         # (BATCH_SIZE, SEQ_LEN, EMBED_DIM)
                         if gt_type == 'rank':
-                            h, _, _, _ = target_encoder(tokens=tokens,
-                                               segments=segments,
-                                               positions=positions,
-                                               masks_attention=masks_attention)
+                            h, _, _, _ = target_encoder(
+                                tokens=tokens,
+                                segments=segments,
+                                positions=positions,
+                                masks_attention=masks_attention)
                         elif gt_type == 'counts':
                             h, _, _, _ = target_encoder(
                                 tokens=tokens,
@@ -405,24 +402,8 @@ def train(args: dict,
                                 counts=counts,
                                 masks_attention=masks_attention)
 
-                        if centering:
-                            # Update center over batch for centering like in DINO
-                            # Create batch_center across GPUs using AllReduceSum
-                            # to synchronize the sum between different hosts
-                            batch_center = torch.sum(h, dim=0, keepdim=True)
-                            batch_center = AllReduceSum.apply(batch_center)
-                            batch_centers = batch_center / (len(h) * world_size)
-                            if center is not None:
-                                center = center_momentum * center + (
-                                    1-center_momentum) * batch_centers
-                            else:
-                                center = batch_centers
-                            
-                            # Center over batch
-                            h = h - center
-                        else:
-                            # Normalize over feature dim
-                            h = F.layer_norm(h, (h.size(-1),))
+                        # Normalize over feature dim
+                        h = F.layer_norm(h, (h.size(-1),))
 
                         # Only keep encoded targets (masked genes of h); output
                         # dim (BATCH_SIZE * N_TARGETS, TARGET_MASK_SIZE, 
@@ -440,7 +421,7 @@ def train(args: dict,
                             B,
                             repeat=len(masks_enc))
 
-                        return h, center
+                        return h
 
                 def forward_context():
                     # Context encoder forward pass with output dim (BATCH_SIZE,
@@ -490,7 +471,7 @@ def train(args: dict,
                 # Step 1: forward pass
                 with torch.cuda.amp.autocast(dtype=torch.bfloat16,
                                              enabled=use_bfloat16):
-                    h, center = forward_target(center)
+                    h = forward_target()
                     z = forward_context()
                     loss = loss_fn(z, h)
 
@@ -524,9 +505,9 @@ def train(args: dict,
                                                 target_encoder.parameters()):
                         param_k.data.mul_(m).add_((1.-m) * param_q.detach().data)
 
-                return (float(loss), _new_lr, _new_wd, grad_stats, grad_stats_pred, center)
-            (loss, _new_lr, _new_wd, grad_stats, grad_stats_pred, center), etime = gpu_timer(
-                train_step, center)
+                return (float(loss), _new_lr, _new_wd, grad_stats, grad_stats_pred)
+            (loss, _new_lr, _new_wd, grad_stats, grad_stats_pred), etime = gpu_timer(
+                train_step)
             loss_meter.update(loss)
             time_meter.update(etime)
 
@@ -563,6 +544,7 @@ def train(args: dict,
                             grad_stats.last_layer,
                             grad_stats.min,
                             grad_stats.max))
+
             #log_stats()
             wandb.log(
                 {"loss": loss,
@@ -575,6 +557,7 @@ def train(args: dict,
             if itr % checkpoint_freq_iter == 0:
                 logger.info(f'Saving checkpoint at epoch {epoch} iteration {itr}')
                 save_checkpoint(epoch + 1, itr // checkpoint_freq_iter)
+
         # -- Save Checkpoint after every epoch
         logger.info('avg. loss %.3f' % loss_meter.avg)
         save_checkpoint(epoch+1)

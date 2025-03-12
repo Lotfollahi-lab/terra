@@ -128,11 +128,10 @@ def load_checkpoint(device: str,
 
 
 def init_model(gt_type: Literal['rank', 'count'],
+               n_value_bins: int,
                device: str,
                vocab_size: int,
                seq_len: int,
-               max_cls_tokens: int,
-               max_special_tokens: int,
                n_special_tokens: int,
                n_segments: int,
                n_special_values: Optional[int]=None,
@@ -140,8 +139,6 @@ def init_model(gt_type: Literal['rank', 'count'],
                enc_depth: int=12,
                pred_emb_dim: int=384,
                pred_depth: int=6,
-               pos_learnable: bool=False,
-               seg_learnable: bool=False,
                use_flash_attention: bool=True,
                ) -> Tuple[gt.GeneTransformerBaseEncoder,
                           gt.GeneTransformerBasePredictor]:
@@ -152,13 +149,14 @@ def init_model(gt_type: Literal['rank', 'count'],
     -----------
     gt_type:
         Gene transformer type.
+    n_value_bins:
+        Number of value bins for count tokenization.s
     device:
         Device on which the model will be initialized.
     vocab_size:
         Size of the token vocabulary. Includes <pad> token.
     seq_len:
         Length of the token sequences (w/o <cls> token).
-    max_special_tokens:
     n_special_tokens:
     n_segments:
     n_special_values:
@@ -171,12 +169,6 @@ def init_model(gt_type: Literal['rank', 'count'],
         Dimension of the predictor embedding.        
     pred_depth:
         Number of transformer blocks in the predictor.
-    pos_learnable:
-        If 'True', positional embeddings are learnable, otherwise use sin cos
-        positional embeddings.
-    seg_learnable:
-        If 'True', segment embeddings are learnable, otherwise use fixed
-        segment embeddings.
     use_flash_attention:
         If use flash_attention or not
     Returns
@@ -188,15 +180,12 @@ def init_model(gt_type: Literal['rank', 'count'],
     """
     encoder = gt.__dict__["init_gt_encoder"](
         encoder_type=gt_type,
+        n_value_bins=n_value_bins,
         n_special_values=n_special_values,
         vocab_size=vocab_size,
         seq_len=seq_len,
-        max_cls_tokens=max_cls_tokens,
-        max_special_tokens=max_special_tokens,
         n_special_tokens=n_special_tokens,
         n_segments=n_segments,
-        pos_learnable=pos_learnable,
-        seg_learnable=seg_learnable,
         embed_dim=enc_emb_dim,
         depth=enc_depth,
         use_flash_attention=use_flash_attention)
@@ -204,11 +193,8 @@ def init_model(gt_type: Literal['rank', 'count'],
         predictor_type=gt_type,
         embed_dim=enc_emb_dim,
         seq_len=seq_len,
-        max_cls_tokens=max_cls_tokens,
         n_special_tokens=n_special_tokens,
         n_segments=n_segments,
-        pos_learnable=pos_learnable,
-        seg_learnable=seg_learnable,
         predictor_embed_dim=pred_emb_dim,
         depth=pred_depth,
         use_flash_attention=use_flash_attention)

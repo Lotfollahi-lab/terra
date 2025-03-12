@@ -107,13 +107,12 @@ def infer(args: dict,
     # Load params from config file
     add_cls = args['meta']['add_cls']
     gt_type = args['meta']['gt_type']
+    n_value_bins = args['meta']['n_value_bins']
     enc_depth = args['meta']['enc_depth']
     enc_emb_dim = args['meta']['enc_emb_dim']
     pred_depth = args['meta']['pred_depth']
     pred_emb_dim = args['meta']['pred_emb_dim']
     special_tokens = args['meta']['special_tokens']
-    pos_learnable = args['meta']['pos_learnable']
-    seg_learnable = args['meta']['seg_learnable']
     use_bfloat16 = args['meta']['use_bfloat16']
     use_flash_attention = args['meta']['use_flash_attention']
 
@@ -162,8 +161,6 @@ def infer(args: dict,
             special_tokens = [
                 f'cls_{i}' for i in range(n_segments)] + special_tokens
 
-    max_cls_tokens = sum('cls' in token for token in special_tokens)
-
     # Get token sequence length and number of special tokens
     n_special_tokens = len(special_tokens)
     seq_len = seq_len_cell + seq_len_neighborhood + n_special_tokens
@@ -189,11 +186,10 @@ def infer(args: dict,
     # Initialize encoder, predictor, and target encoder
     target_encoder, _ = init_model(
         gt_type=gt_type,
+        n_value_bins=n_value_bins,
         device=device,
         vocab_size=vocab_size,
         seq_len=seq_len,
-        max_cls_tokens=max_cls_tokens,
-        max_special_tokens=max_special_tokens,
         n_special_tokens=n_special_tokens,
         n_segments=n_segments,
         n_special_values=n_special_values,
@@ -201,8 +197,6 @@ def infer(args: dict,
         enc_depth=enc_depth,
         pred_emb_dim=pred_emb_dim,
         pred_depth=pred_depth,
-        pos_learnable=pos_learnable,
-        seg_learnable=seg_learnable,
         use_flash_attention=use_flash_attention)
 
     # Initialize mask collator
@@ -213,9 +207,7 @@ def infer(args: dict,
             n_segments=n_segments,
             seq_len_cell=seq_len_cell,
             seq_len_neighborhood=seq_len_neighborhood,
-            max_special_tokens=max_special_tokens,
             n_special_tokens=n_special_tokens,
-            max_cls_tokens=max_cls_tokens,
             per_block_mask_ratio=per_block_mask_ratio)
     else:
         mask_collator = RandomMaskCollator(
@@ -233,7 +225,6 @@ def infer(args: dict,
         vocab_size=vocab_size,
         seq_len_cell=seq_len_cell,
         seq_len_neighborhood=seq_len_neighborhood,
-        max_special_tokens=max_special_tokens,
         tokenizer_type=tokenizer_type,
         gt_type=gt_type,
         special_tokens=special_tokens,
@@ -328,7 +319,6 @@ def infer(args: dict,
             excluded_tokens=agg_excluded_tokens,
             seq_len_cell=seq_len_cell,
             n_special_tokens=n_special_tokens,
-            max_cls_tokens=max_cls_tokens,
             top_k=top_k).cpu()
         if tokenizer_type == 'cell_neighborhood':
             neighborhood_mask = create_binary_selection_mask(
@@ -337,7 +327,6 @@ def infer(args: dict,
                 excluded_tokens=agg_excluded_tokens,
                 seq_len_cell=seq_len_cell,
                 n_special_tokens=n_special_tokens,
-                max_cls_tokens=max_cls_tokens,
                 top_k=top_k).cpu()
         elif tokenizer_type == 'cell_graph':
             neighborhood_mask = create_binary_selection_mask(
@@ -346,7 +335,6 @@ def infer(args: dict,
                 excluded_tokens=agg_excluded_tokens,
                 seq_len_cell=seq_len_cell,
                 n_special_tokens=n_special_tokens,
-                max_cls_tokens=max_cls_tokens,
                 top_k=top_k,
                 n_segments=n_segments).cpu()
 
@@ -676,10 +664,6 @@ def embed_dataset(dataset: Dataset,
         token_dict = pickle.load(file)
     vocab_size = len(token_dict)
     n_special_values = sum(1 for key in token_dict if "spv" in key)
-    max_special_tokens = sum(1 for key in token_dict if "cls" in key) + sum(
-        1 for key in token_dict if "spt" in key)
-    max_cls_tokens = sum(
-        'cls' in token for token in model_config['meta']['special_tokens'])
 
     print('==================================================')
     print('STEP 2: GENERATING EMBEDDINGS...')
@@ -697,8 +681,6 @@ def embed_dataset(dataset: Dataset,
         device=device,
         vocab_size=vocab_size,
         seq_len=seq_len,
-        max_cls_tokens=max_cls_tokens,
-        max_special_tokens=max_special_tokens,
         n_special_tokens=n_special_tokens,
         n_segments=model_config['data']['n_segments'],
         n_special_values=n_special_values,
@@ -706,8 +688,6 @@ def embed_dataset(dataset: Dataset,
         enc_depth=model_config['meta']['enc_depth'],
         pred_emb_dim=model_config['meta']['pred_emb_dim'],
         pred_depth=model_config['meta']['pred_depth'],
-        pos_learnable=model_config['meta']['pos_learnable'],
-        seg_learnable=model_config['meta']['seg_learnable'],
         use_flash_attention=model_config['meta']['use_flash_attention'])
 
     # Create mask collator
@@ -717,9 +697,7 @@ def embed_dataset(dataset: Dataset,
         n_segments=model_config['data']['n_segments'],
         seq_len_cell=model_config['data']['seq_len_cell'],
         seq_len_neighborhood=model_config['data']['seq_len_neighborhood'],
-        max_special_tokens=max_special_tokens,
         n_special_tokens=n_special_tokens,
-        max_cls_tokens=max_cls_tokens,
         per_block_mask_ratio=model_config['mask']['per_block_mask_ratio'])
         
     # Create torch dataset
@@ -805,7 +783,6 @@ def embed_dataset(dataset: Dataset,
             excluded_tokens=agg_excluded_tokens,
             seq_len_cell=model_config['data']['seq_len_cell'],
             n_special_tokens=n_special_tokens,
-            max_cls_tokens=max_cls_tokens,
             top_k=top_k).cpu()
 
         # Create mask for neighbor cell genes
@@ -816,7 +793,6 @@ def embed_dataset(dataset: Dataset,
                 excluded_tokens=agg_excluded_tokens,
                 seq_len_cell=model_config['data']['seq_len_cell'],
                 n_special_tokens=n_special_tokens,
-                max_cls_tokens=max_cls_tokens,
                 top_k=top_k).cpu()
         elif model_config['data']['tokenizer_type'] == 'cell_graph':
             neighborhood_mask = create_binary_selection_mask(
@@ -825,7 +801,6 @@ def embed_dataset(dataset: Dataset,
                 excluded_tokens=agg_excluded_tokens,
                 seq_len_cell=model_config['data']['seq_len_cell'],
                 n_special_tokens=n_special_tokens,
-                max_cls_tokens=max_cls_tokens,
                 top_k=top_k,
                 n_segments=model_config['data']['n_segments']).cpu()
 
