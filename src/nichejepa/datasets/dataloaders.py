@@ -116,7 +116,7 @@ class CustomDistributedLengthGroupedSampler(DistributedSampler):
             # Default for mega_batch_mult: 1000 or the number to get 4
             # mega batches, whichever is smaller.
             mega_batch_mult = min(
-                len(self.lengths) // (self.batch_size * 4), 1000)
+                len(self.lengths) // (self.batch_size * 4), 50)
             # Just in case, for tiny datasets
             if mega_batch_mult == 0:
                 mega_batch_mult = 1
