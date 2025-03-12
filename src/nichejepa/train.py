@@ -365,7 +365,7 @@ def train(args: dict,
         maskB_meter = AverageMeter()
         time_meter = AverageMeter()
 
-        for itr, (udata, masks_enc, masks_pred, masks_attention) in enumerate(
+        for itr, (udata, masks_ctxt, masks_tgt, masks_attention) in enumerate(
         train_loader):
             tokens = udata[0].to(device, non_blocking=True)
             segments = udata[1].to(device, non_blocking=True)
@@ -373,12 +373,12 @@ def train(args: dict,
                 positions = udata[2].to(device, non_blocking=True)
             elif gt_type == 'counts':
                 counts = udata[2].to(device, non_blocking=True)
-            masks_enc = [u.to(device, non_blocking=True) for u in masks_enc]
-            masks_pred = [u.to(device, non_blocking=True) for u in masks_pred]
+            masks_ctxt = [u.to(device, non_blocking=True) for u in masks_ctxt]
+            masks_tgt = [u.to(device, non_blocking=True) for u in masks_tgt]
             masks_attention = masks_attention.to(device, non_blocking=True)
 
-            maskA_meter.update(len(masks_enc[0][0]))
-            maskB_meter.update(len(masks_pred[0][0]))
+            maskA_meter.update(len(masks_ctxt[0][0]))
+            maskB_meter.update(len(masks_tgt[0][0]))
 
             def train_step():
                 _new_lr = scheduler.step()
@@ -410,7 +410,7 @@ def train(args: dict,
                         # EMB_SIZE)
                         h = apply_masks(
                             h,
-                            masks_pred)
+                            masks_tgt)
                         B = len(h)
 
                         # Repeat targets if multiple contexts; output dim 
@@ -419,7 +419,7 @@ def train(args: dict,
                         h = repeat_interleave_batch(
                             h,
                             B,
-                            repeat=len(masks_enc))
+                            repeat=len(masks_ctxt))
 
                         return h
 
@@ -433,14 +433,14 @@ def train(args: dict,
                             positions=positions,
                             segments=segments,
                             tokens=tokens,
-                            masks=masks_enc,
+                            masks=masks_ctxt,
                             masks_attention=None)                       
                     elif gt_type == 'counts':
                         z, token_emb, seg_emb, value_emb = encoder(
                             tokens=tokens,
                             segments=segments,
                             counts=counts,
-                            masks=masks_enc,
+                            masks=masks_ctxt,
                             masks_attention=None)
 
                     # Predictor forward pass with output dim (BATCH_SIZE *
@@ -450,16 +450,16 @@ def train(args: dict,
                                       pos_embed=pos_emb,
                                       seg_embed=seg_emb,
                                       token_embed=token_emb,
-                                      masks_enc=masks_enc,
-                                      masks_pred=masks_pred,
+                                      masks_ctxt=masks_ctxt,
+                                      masks_tgt=masks_tgt,
                                       masks_attention=None)
                     elif gt_type == 'counts':
                         z = predictor(z=z,
                                       token_embed=token_emb,
                                       seg_embed=seg_emb,
                                       value_embed=value_emb,
-                                      masks_enc=masks_enc,
-                                      masks_pred=masks_pred,
+                                      masks_ctxt=masks_ctxt,
+                                      masks_tgt=masks_tgt,
                                       masks_attention=None)
                     return z
 
