@@ -121,8 +121,6 @@ def train(args: dict,
     seg_learnable = args['meta']['seg_learnable']
     use_bfloat16 = args['meta']['use_bfloat16']
     use_flash_attention = args['meta']['use_flash_attention']
-    centering = args['meta']['centering']
-    center_momentum = args['meta']['center_momentum']
 
     n_contexts = args['mask']['n_contexts']
     n_targets = args['mask']['n_targets']
@@ -149,9 +147,6 @@ def train(args: dict,
     write_tag = args['state']['write_tag']
     load_model = args['state']['load_checkpoint'] or resume_preempt
     r_file = args['state']['read_checkpoint']
-
-    # Initialize center for target centering
-    center = None
 
     if args['data']['precomputed_n_nonzero_tokens']:
         with open(args['data']['precomputed_n_nonzero_tokens'], "rb") as f:
@@ -385,11 +380,11 @@ def train(args: dict,
             maskA_meter.update(len(masks_enc[0][0]))
             maskB_meter.update(len(masks_pred[0][0]))
 
-            def train_step(center):
+            def train_step():
                 _new_lr = scheduler.step()
                 _new_wd = wd_scheduler.step()
 
-                def forward_target(center):
+                def forward_target():
                     with torch.no_grad(): # no backward pass for target encoder
                         # Target encorder forward pass with output dim 
                         # (BATCH_SIZE, SEQ_LEN, EMBED_DIM)
@@ -404,24 +399,8 @@ def train(args: dict,
                                                counts=counts,
                                                masks_attention=masks_attention)
 
-                        if centering:
-                            # Update center over batch for centering like in DINO
-                            # Create batch_center across GPUs using AllReduceSum
-                            # to synchronize the sum between different hosts
-                            batch_center = torch.sum(h, dim=0, keepdim=True)
-                            batch_center = AllReduceSum.apply(batch_center)
-                            batch_centers = batch_center / (len(h) * world_size)
-                            if center is not None:
-                                center = center_momentum * center + (
-                                    1-center_momentum) * batch_centers
-                            else:
-                                center = batch_centers
-                            
-                            # Center over batch
-                            h = h - center
-                        else:
-                            # Normalize over feature dim
-                            h = F.layer_norm(h, (h.size(-1),))
+                        # Normalize over feature dim
+                        h = F.layer_norm(h, (h.size(-1),))
 
                         # Only keep encoded targets (masked genes of h); output
                         # dim (BATCH_SIZE * N_TARGETS, TARGET_MASK_SIZE, 
@@ -439,7 +418,7 @@ def train(args: dict,
                             B,
                             repeat=len(masks_enc))
 
-                        return h, center
+                        return h
 
                 def forward_context():
                     # Context encoder forward pass with output dim (BATCH_SIZE,
@@ -489,7 +468,7 @@ def train(args: dict,
                 # Step 1: forward pass
                 with torch.cuda.amp.autocast(dtype=torch.bfloat16,
                                              enabled=use_bfloat16):
-                    h, center = forward_target(center)
+                    h = forward_target()
                     z = forward_context()
                     loss = loss_fn(z, h)
 
@@ -511,9 +490,9 @@ def train(args: dict,
                                                 target_encoder.parameters()):
                         param_k.data.mul_(m).add_((1.-m) * param_q.detach().data)
 
-                return (float(loss), _new_lr, _new_wd, grad_stats, center)
-            (loss, _new_lr, _new_wd, grad_stats, center), etime = gpu_timer(
-                train_step, center)
+                return (float(loss), _new_lr, _new_wd, grad_stats)
+            (loss, _new_lr, _new_wd, grad_stats), etime = gpu_timer(
+                train_step)
             loss_meter.update(loss)
             time_meter.update(etime)
 
