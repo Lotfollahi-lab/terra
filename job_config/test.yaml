@@ -18,7 +18,7 @@ environment:
 #artifact:
   ARTIFACT_LOCATION: "/lustre/scratch126/cellgen/team361/sb75/nichejepa-reproducibility/artifacts/hst_corpus_70m"  # Path to store the artifacts.
   EXPERIMENT_NAME: "nemo"  # Name of the experiment.
-  RUN_NAME: "main_4"  # Name of the run.
+  RUN_NAME: "main_5"  # Name of the run.
 
 runner_script:
   RUNNER_SCRIPT: "job_config/runner.sh"  # Path to the runner script.

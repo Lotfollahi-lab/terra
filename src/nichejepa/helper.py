@@ -132,7 +132,6 @@ def init_model(gt_type: Literal['rank', 'count'],
                vocab_size: int,
                seq_len: int,
                max_cls_tokens: int,
-               max_special_tokens: int,
                n_special_tokens: int,
                n_segments: int,
                n_special_values: Optional[int]=None,
@@ -158,7 +157,6 @@ def init_model(gt_type: Literal['rank', 'count'],
         Size of the token vocabulary. Includes <pad> token.
     seq_len:
         Length of the token sequences (w/o <cls> token).
-    max_special_tokens:
     n_special_tokens:
     n_segments:
     n_special_values:
@@ -192,7 +190,6 @@ def init_model(gt_type: Literal['rank', 'count'],
         vocab_size=vocab_size,
         seq_len=seq_len,
         max_cls_tokens=max_cls_tokens,
-        max_special_tokens=max_special_tokens,
         n_special_tokens=n_special_tokens,
         n_segments=n_segments,
         pos_learnable=pos_learnable,

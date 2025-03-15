@@ -160,17 +160,6 @@ def train(args: dict,
         token_dict = pickle.load(file)
     vocab_size = len(token_dict)
     n_special_values = sum(1 for key in token_dict if "spv" in key)
-    max_special_tokens = sum(1 for key in token_dict if "cls" in key) + sum(
-        1 for key in token_dict if "spt" in key)
-
-    # Define tokenizer-specific params
-    if tokenizer_type == 'cell_neighborhood':
-        if add_cls:
-            special_tokens = ['cls_0', 'cls_1'] + special_tokens            
-    elif tokenizer_type == 'cell_graph':
-        if add_cls:
-            special_tokens = [
-                f'cls_{i}' for i in range(n_segments)] + special_tokens
     
     max_cls_tokens = sum('cls' in token for token in special_tokens)
 
@@ -234,7 +223,6 @@ def train(args: dict,
         vocab_size=vocab_size,
         seq_len=seq_len,
         max_cls_tokens=max_cls_tokens,
-        max_special_tokens=max_special_tokens,
         n_special_tokens=n_special_tokens,
         n_segments=n_segments,
         n_special_values=n_special_values,
@@ -255,7 +243,6 @@ def train(args: dict,
             n_segments=n_segments,
             seq_len_cell=seq_len_cell,
             seq_len_neighborhood=seq_len_neighborhood,
-            max_special_tokens=max_special_tokens,
             n_special_tokens=n_special_tokens,
             max_cls_tokens=max_cls_tokens,
             per_block_mask_ratio=per_block_mask_ratio)

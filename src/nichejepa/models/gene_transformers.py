@@ -37,8 +37,6 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         Length of the token sequences.
     max_cls_tokens:
         Number of <cls> tokens.
-    max_special_tokens:
-        Maximum number of special tokens.
     n_special_tokens:
         Number of special tokens included in a token sequence.
     n_segments:
@@ -81,7 +79,6 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                  vocab_size: int,
                  seq_len: int,
                  max_cls_tokens: int,
-                 max_special_tokens: int,
                  n_special_tokens: int,
                  n_segments: int,
                  seg_learnable: bool=False,
@@ -104,7 +101,6 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         super().__init__()
         self.seq_len = seq_len
         self.max_cls_tokens = max_cls_tokens
-        self.max_special_tokens = max_special_tokens
         self.n_special_tokens = n_special_tokens
         self.embed_dim = embed_dim
         self.num_heads = num_heads
@@ -667,7 +663,7 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
         self.value_embed = nn.Embedding(self.n_value_bins,
                                         self.embed_dim)
         self.special_value_embed = nn.Embedding(
-            2 + self.n_special_values + self.max_special_tokens, # include <pad> and zero expression
+            2 + self.n_special_values + self.n_special_tokens, # include <pad> and zero expression
             self.embed_dim,
             padding_idx=0)
         self.value_emb_weights_projection = ValueEmbWeightsProjection(
