@@ -35,8 +35,6 @@ class BlockMaskCollator:
         The length of the token sequence representing the neighborhood segments.
     n_special_tokens:
         Number of special tokens in each token sequence, including <cls> tokens.
-    max_cls_tokens:
-        Number of <cls> tokens in each token sequence.
     per_block_mask_ratio:
         Ratio of elements to be masked in each block. A list with min and
         max ratio can be provided, in which case a value between the min and
@@ -54,7 +52,6 @@ class BlockMaskCollator:
                  seq_len_cell: int,
                  seq_len_neighborhood: int,
                  n_special_tokens: int,
-                 max_cls_tokens: int,
                  per_block_mask_ratio: float=0.5):
         self.n_targets = n_targets
         self.n_contexts = n_contexts
@@ -63,7 +60,6 @@ class BlockMaskCollator:
         self.seq_len_neighborhood = seq_len_neighborhood
         self.seq_len_genes = self.seq_len_cell + self.seq_len_neighborhood
         self.n_special_tokens = n_special_tokens
-        self.max_cls_tokens = max_cls_tokens
         self.per_block_mask_ratio = per_block_mask_ratio
 
     def _sample_gene_mask(self,
