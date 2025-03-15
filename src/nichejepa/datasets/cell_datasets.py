@@ -13,7 +13,6 @@ class CellBaseDataset(Dataset):
                  vocab_size: int,
                  seq_len_cell: int,
                  seq_len_neighborhood: int,
-                 max_special_tokens: int,
                  special_tokens: list=[
                     'species',
                     'tissue',
@@ -42,9 +41,6 @@ class CellBaseDataset(Dataset):
             Sequence length of the (index) cell tokens.
         seq_len_neighborhood:
             Sequence length of the neighborhood tokens.
-        max_special_tokens:
-            Maximum number of special tokens (if all special tokens are
-            included; used to determine the first cell segment).
         special_tokens:
             Special tokens to be included in the token sequences.
         sampling_strategy:
@@ -61,7 +57,6 @@ class CellBaseDataset(Dataset):
         self.vocab_size = vocab_size
         self.seq_len_cell = seq_len_cell
         self.seq_len_neighborhood = seq_len_neighborhood
-        self.max_special_tokens = max_special_tokens
         self.special_tokens = special_tokens
         self.n_special_tokens = len(special_tokens)
         self.seq_len = (seq_len_cell +

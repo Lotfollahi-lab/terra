@@ -326,6 +326,21 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
         self.num_heads = num_heads
         self.init_std = init_std
 
+        # Initialize segment embeddings
+        self.seg_embed = nn.Embedding(
+            1 + n_segments, # include <pad>
+            predictor_embed_dim,
+            padding_idx=0)
+        
+        # Prevent gradient updates and initialize with sincos embedding,
+        # including special segments
+        self.seg_embed.weight.requires_grad = False
+        seg_embed = get_1d_sincos_pos_embed(
+            embed_dim=predictor_embed_dim,
+            n_zero_pos=0,
+            n_sincos_pos=n_segments)
+        self.seg_embed.weight[1:].copy_(torch.from_numpy(seg_embed).float())
+
         # Initialize layer to project from encoder to predictor embed dim
         self.predictor_embed = nn.Linear(embed_dim,
                                          predictor_embed_dim,
@@ -1067,7 +1082,7 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
     def forward(self,
                 z: torch.Tensor,
                 token_embed: torch.Tensor,
-                seg_embed: torch.Tensor,
+                segments: torch.Tensor,
                 value_embed: torch.Tensor,
                 masks_enc: Union[List[torch.Tensor], torch.Tensor],
                 masks_pred: Union[List[torch.Tensor], torch.Tensor],
@@ -1122,7 +1137,10 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
             B = len(z) // len(masks_enc)
 
             # MLP projection layer
-            #z = self.predictor_embed(z)
+            z = self.predictor_embed(z)
+
+            # Get segment embeddings
+            seg_embed = self.seg_embed(segments)
 
             # Retrieve special token embedding
             x_special = (
@@ -1188,7 +1206,7 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
             z = z[:, :pred_tokens.size(1), :]
 
             # MLP projection layer
-            #z = self.predictor_proj(z)
+            z = self.predictor_proj(z)
 
             return z
 
