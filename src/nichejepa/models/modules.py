@@ -3,7 +3,6 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 
-from .utils import drop_path
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
 class Attention(nn.Module):
@@ -125,8 +124,6 @@ class Block(nn.Module):
         Dropout ratio in projection layer of Attention module and in MLP module.
     attn_drop:
         Dropout ratio in attention layer of Attention module.
-    drop_path:
-        Probability for dropping paths in Drop Path module.
     act_layer:
         Activation layer used in MLP module.
     norm_layer:
@@ -142,7 +139,6 @@ class Block(nn.Module):
                  qk_scale: Optional[float]=None,
                  drop: float=0.0,
                  attn_drop: float=0.0,
-                 drop_path: float=0.0,
                  act_layer: nn.modules.activation=nn.GELU,
                  norm_layer: nn.modules.normalization=nn.LayerNorm,
                  use_flash_attention: bool=True,
@@ -156,8 +152,6 @@ class Block(nn.Module):
                               attn_drop=attn_drop,
                               proj_drop=drop,
                               use_flash_attention=use_flash_attention)
-        self.drop_path = DropPath(
-            drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = MLP(in_features=dim,
@@ -192,8 +186,8 @@ class Block(nn.Module):
                             masks=masks)
         if return_attention:
             return attn
-        x = x + self.drop_path(y)
-        x = x + self.drop_path(self.mlp(self.norm2(x)))
+        x = x + y
+        x = x + self.mlp(self.norm2(x))
 
         return x
 
@@ -223,29 +217,6 @@ class ValueEmbWeightsProjection(nn.Module):
         out = self.softmax(out)
         
         return out
-
-
-class DropPath(nn.Module):
-    """
-    DropPath module to drop paths per observation, applied in main path of
-    residual blocks of transformer blocks, with stochastically increasing drop
-    path rate per depth.
-
-    Parameters
-    -----------
-    drop_prob:
-        Probability for dropping paths.    
-    """
-    def __init__(self,
-                 drop_prob: float=0.0,
-                 ):
-        super().__init__()
-        self.drop_prob = drop_prob
-
-    def forward(self,
-                x: torch.Tensor
-                ) -> torch.Tensor:
-        return drop_path(x, self.drop_prob, self.training)
 
 
 class MLP(nn.Module):
