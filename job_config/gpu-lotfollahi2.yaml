@@ -1,0 +1,27 @@
+# All keys in this YAML file must be in capital letters since
+# they will be treated as environmental variables.
+
+job_requirement:
+  LSB_DEFAULT_USERGROUP: team361  # The user group to be used for scheduling the job.
+  QUEUE: "gpu-lotfollahi"  # The job queue to be used for scheduling the job.
+  NUM_NODES: 1  # Number of compute nodes required for the job.
+  NUM_GPUS_NODE: 4  # Number of GPUs per node.
+  NUM_PROCESSES_NODE: 32  # Number of processes per node.
+  MEM_NODE: 448  # Memory allocated per node (in GB).
+
+infiniband:
+  NCCL_IB_DISABLE: 1  # 1: Disable InfiniBand, 0: Enable InfiniBand
+
+environment:
+  ENV_PATH: "/nfs/users/nfs_s/sb75/.venvs/nemo"  # Path to the environment to be activated.
+
+#artifact:
+  ARTIFACT_LOCATION: "/lustre/scratch126/cellgen/team361/sb75/nichejepa-reproducibility/artifacts/hst_corpus_70m"  # Path to store the artifacts.
+  EXPERIMENT_NAME: "nemo"  # Name of the experiment.
+  RUN_NAME: "mlp_1"  # Name of the run.
+
+runner_script:
+  RUNNER_SCRIPT: "job_config/runner.sh"  # Path to the runner script.
+  TRAINING_SCRIPT_PATH: "main_dist.py"  # Path to the training script.
+  BACKEND: "nccl"  # Backend for distributed training.
+  CONFIG_FILE: "/lustre/scratch126/cellgen/team361/sb75/nichejepa-reproducibility/config/model/hst_corpus_70m_cell_graph_counts3.yaml"
