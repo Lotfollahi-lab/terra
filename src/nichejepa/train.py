@@ -64,6 +64,7 @@ def train(args: dict,
           train_dataset: datasets.Dataset,
           resume_preempt: bool=False,
           save_folder_path: Optional[str]=None,
+          LOCAL_RANK: Optional[int]=None,
           ):
     """
     Train model.
@@ -77,6 +78,8 @@ def train(args: dict,
     resume_preempt:
     save_folder_path:
         Path for saving model artifacts.
+    LOCAL_RANK:
+        Rank of the process.
     """
     # Set random seeds
     np.random.seed(_GLOBAL_SEED)
@@ -89,7 +92,9 @@ def train(args: dict,
     # Set device
     if not torch.cuda.is_available():
         device = torch.device('cpu')
-    else:
+    elif LOCAL_RANK is not None:
+        device = torch.device(f"cuda:{LOCAL_RANK}")
+    elif LOCAL_RANK is  None:
         device = torch.device('cuda:0')
         torch.cuda.set_device(device)
 
