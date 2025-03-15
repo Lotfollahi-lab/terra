@@ -148,39 +148,11 @@ class CellBaseDataset(Dataset):
                 tokens = item["assay_token"] + tokens
                 values = item["assay_value"] + values
             
-        if any('cls' in token for token in self.special_tokens):
-            n_cls_tokens = sum('cls' in token for token in self.special_tokens)
-            cls_tokens = item["cls_tokens"][:n_cls_tokens]
-            n_nz_cls_tokens = sum(1 for token in cls_tokens if token != 0)
-            n_zero_cls_tokens = n_cls_tokens - n_nz_cls_tokens
-            tokens = cls_tokens + tokens
-            
-            # Add <cls> and special token segments
-            segments = list(range(1, 1 + n_nz_cls_tokens)) \
-                + [0] * n_zero_cls_tokens \
-                + list(range(1 + n_nz_cls_tokens, 1 + n_nz_cls_tokens + (
-                    self.n_special_tokens - n_cls_tokens))) \
-                + segments
-            if self.gt_type == 'counts':
-                # Add <cls> values
-                values = list(range(2, 2 + n_nz_cls_tokens)) \
-                    + [0] * n_zero_cls_tokens \
-                    + values
-            elif self.gt_type == 'rank':
-                # Add <cls> and special token positions
-                positions = list(range(1, 1 + n_nz_cls_tokens)) \
-                    + [0] * n_zero_cls_tokens \
-                    + list(range(1 + n_nz_cls_tokens, 1 + n_nz_cls_tokens + (
-                        self.n_special_tokens - n_cls_tokens))) \
-                    + positions
-
-        else:
-            # Add special token segments
-            segments = list(range(1, 1 + self.n_special_tokens)) + segments
-            if self.gt_type == 'rank':
-                # Add special token positions
-                positions = list(
-                    range(1, 1 + self.n_special_tokens)) + positions
+        # Add special token segments
+        segments = [0] * self.n_special_tokens + segments
+        if self.gt_type == 'rank':
+            # Add special token positions
+            positions = [0] * self.n_special_tokens + positions
 
         if self.gt_type == 'rank':
             return tokens, segments, positions
@@ -280,12 +252,14 @@ class CellBaseDataset(Dataset):
             segment_values:
                 List of values for a given segment.
             """
+            seg_tokens = [(seg_token - 104) if seg_token != 0 else seg_token for seg_token in item['seg_tokens']] # TODO: Fix tokenization after removal of 100 <cls> toke
+
             # Only keep gene tokens and values in specified segment
-            segment_start_idx = item['seg_tokens'].index(segment)
-            if segment + 1 in item['seg_tokens']:
-                segment_end_idx = item['seg_tokens'].index(segment+1)
+            segment_start_idx = seg_tokens.index(segment)
+            if segment + 1 in seg_tokens:
+                segment_end_idx = seg_tokens.index(segment+1)
             else:
-                segment_end_idx = len(item['seg_tokens'])
+                segment_end_idx = len(seg_tokens)
             
             segment_tokens = item['gene_tokens'][
                 segment_start_idx: segment_end_idx]
@@ -361,12 +335,13 @@ class CellGraphDataset(CellBaseDataset):
             positions = None
 
         # Get non-padded segments for index cell segment
-        segments = [
-            self.max_special_tokens if token != 0 else 0 for token in tokens]
+        segments = [1 if token != 0 else 0 for token in tokens]
 
         # Get (sampled) gene tokens, values/positions and non-padded segments
         # for neighbor cell segments
-        for segment in np.unique(item["seg_tokens"]):
+        seg_tokens = [(seg_token - 104) if seg_token != 0 else seg_token for seg_token in item['seg_tokens']] # TODO: Fix tokenization after removal of 100 <cls> tokens
+
+        for segment in np.unique(seg_tokens):
             if segment > self.max_special_tokens: # neighbor cell segments
                 segment_tokens, segment_values = self._get_segment_seq(
                     item=item,

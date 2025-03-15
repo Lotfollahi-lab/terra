@@ -117,7 +117,7 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
 
         # Initialize segment embeddings (include <pad> and special segments)
         self.seg_embed = nn.Embedding(
-            n_segments + 1 + self.max_special_tokens,
+            n_segments + 1,
             embed_dim,
             padding_idx=0)
 
@@ -128,7 +128,7 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
             seg_embed = get_1d_sincos_pos_embed(
                 embed_dim=embed_dim,
                 n_zero_pos=0,
-                n_sincos_pos=n_segments + self.max_special_tokens)
+                n_sincos_pos=n_segments)
             self.seg_embed.weight[1:].copy_(torch.from_numpy(seg_embed).float())
 
         # Define decaying drop path rate (higher drop rate in deeper blocks)
