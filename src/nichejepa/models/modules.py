@@ -5,6 +5,7 @@ import torch.nn as nn
 
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
+
 class Attention(nn.Module):
     """
     Attention module used in transformer block, containing attention and
@@ -76,26 +77,22 @@ class Attention(nn.Module):
             B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
 
-        # Compute and mask attention
         if self.use_flash_attention:
-           with torch.backends.cuda.sdp_kernel(enable_flash=True):
-               if masks is not None:
-                 attn = nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=masks!= 0, scale=self.scale)
-               else:
-                 attn = nn.functional.scaled_dot_product_attention(q, k, v, scale=self.scale)
+            with torch.backends.cuda.sdp_kernel(enable_flash=True):
+                if masks is not None:
+                    x = nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=masks!= 0, scale=self.scale)
+                    attn=None
+                else:
+                    x = nn.functional.scaled_dot_product_attention(q, k, v, scale=self.scale)
+                    attn=None
         else:
-           attn = (q @ k.transpose(-2, -1)) * self.scale
-        
-        if (masks is not None) and (self.use_flash_attention is False):
-            attn = attn.masked_fill(masks == 0, float('-inf'))
-        if self.use_flash_attention is False:
-           attn = attn.softmax(dim=-1)
-           attn = self.attn_drop(attn)
-           # Compute dot product of attention and value vectors and apply
-           # projection
-           x = (attn @ v).transpose(1, 2).reshape(B, N, C)
-        else:
-           x = attn.transpose(1, 2).reshape(B, N, C)
+            attn = (q @ k.transpose(-2, -1)) * self.scale
+            if (masks is not None):
+                attn = attn.masked_fill(masks == 0, float('-inf'))
+            attn = attn.softmax(dim=-1)
+            attn = self.attn_drop(attn)
+            x = (attn @ v)
+        x = x.transpose(1, 2).reshape(B, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
 
@@ -126,6 +123,8 @@ class Block(nn.Module):
         Dropout ratio in attention layer of Attention module.
     act_layer:
         Activation layer used in MLP module.
+    use_layer_norm:
+        If `True`, use LayerNorm, else use dynamic tanh
     norm_layer:
         Normalization layer.
     use_flash_attention:
@@ -140,11 +139,15 @@ class Block(nn.Module):
                  drop: float=0.0,
                  attn_drop: float=0.0,
                  act_layer: nn.modules.activation=nn.GELU,
+                 use_layer_norm: bool=True,
                  norm_layer: nn.modules.normalization=nn.LayerNorm,
                  use_flash_attention: bool=True,
                  ):
         super().__init__()
-        self.norm1 = norm_layer(dim)
+        if use_layer_norm:
+            self.norm1 = norm_layer(dim)
+        else:
+            self.norm1 = DyT(dim)
         self.attn = Attention(dim,
                               num_heads=num_heads,
                               qkv_bias=qkv_bias,
@@ -152,7 +155,10 @@ class Block(nn.Module):
                               attn_drop=attn_drop,
                               proj_drop=drop,
                               use_flash_attention=use_flash_attention)
-        self.norm2 = norm_layer(dim)
+        if use_layer_norm:
+            self.norm2 = norm_layer(dim)
+        else:
+            self.norm2 = DyT(dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = MLP(in_features=dim,
                        hidden_features=mlp_hidden_dim,
@@ -192,31 +198,16 @@ class Block(nn.Module):
         return x
 
 
-class ValueEmbWeightsProjection(nn.Module):
-    def __init__(self,
-                 dim=100):
-        """
-        Project counts to value embedding weights.
-
-        Parameters
-        -----------
-        dim:
-            Dimensionality of the value embedding.        
-        """
+class DyT(nn.Module):
+    def __init__(self, num_features, alpha_init_value=0.5):
         super().__init__()
-        self.linear1 = nn.Linear(1, dim)
-        self.leaky_relu = nn.LeakyReLU(negative_slope=0.1)
-        self.linear2 = nn.Linear(dim, dim)
-        self.softmax = nn.Softmax(dim=-1)
+        self.alpha = nn.Parameter(torch.ones(1) * alpha_init_value)
+        self.weight = nn.Parameter(torch.ones(num_features))
+        self.bias = nn.Parameter(torch.zeros(num_features))
     
     def forward(self, x):
-        x = self.linear1(x)
-        x = self.leaky_relu(x)
-        out = self.linear2(x)
-        out = x + out # residual connection
-        out = self.softmax(out)
-        
-        return out
+        x = torch.tanh(self.alpha * x)
+        return x * self.weight + self.bias
 
 
 class MLP(nn.Module):
@@ -276,3 +267,30 @@ class MLP(nn.Module):
         x = self.drop(x)
 
         return x
+
+
+class ValueEmbWeightsProjection(nn.Module):
+    def __init__(self,
+                 dim=100):
+        """
+        Project counts to value embedding weights.
+
+        Parameters
+        -----------
+        dim:
+            Dimensionality of the value embedding.        
+        """
+        super().__init__()
+        self.linear1 = nn.Linear(1, dim)
+        self.leaky_relu = nn.LeakyReLU(negative_slope=0.1)
+        self.linear2 = nn.Linear(dim, dim)
+        self.softmax = nn.Softmax(dim=-1)
+    
+    def forward(self, x):
+        x = self.linear1(x)
+        x = self.leaky_relu(x)
+        out = self.linear2(x)
+        out = x + out # residual connection
+        out = self.softmax(out)
+        
+        return out

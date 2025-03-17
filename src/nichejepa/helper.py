@@ -141,6 +141,7 @@ def init_model(gt_type: Literal['rank', 'count'],
                pred_emb_dim: int=384,
                pred_depth: int=6,
                use_flash_attention: bool=True,
+               use_layer_norm: bool=True,
                ) -> Tuple[gt.GeneTransformerBaseEncoder,
                           gt.GeneTransformerBasePredictor]:
     """
@@ -169,7 +170,10 @@ def init_model(gt_type: Literal['rank', 'count'],
     pred_depth:
         Number of transformer blocks in the predictor.
     use_flash_attention:
-        If use flash_attention or not
+        If `True` use flash_attention.
+    use_layer_norm:
+        If `True` use layer norm, else Dynamic Tanh.
+
     Returns
     -----------
     encoder:
@@ -187,7 +191,8 @@ def init_model(gt_type: Literal['rank', 'count'],
         n_segments=n_segments,
         embed_dim=enc_emb_dim,
         depth=enc_depth,
-        use_flash_attention=use_flash_attention)
+        use_flash_attention=use_flash_attention,
+        use_layer_norm=use_layer_norm)
     predictor = gt.__dict__["init_gt_predictor"](
         predictor_type=gt_type,
         n_special_values=n_special_values,
@@ -197,7 +202,8 @@ def init_model(gt_type: Literal['rank', 'count'],
         n_segments=n_segments,
         predictor_embed_dim=pred_emb_dim,
         depth=pred_depth,
-        use_flash_attention=use_flash_attention)
+        use_flash_attention=use_flash_attention,
+        use_layer_norm=use_layer_norm)
 
     def init_weights(m):
         if isinstance(m, torch.nn.Linear):

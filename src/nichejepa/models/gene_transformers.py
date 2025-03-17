@@ -87,6 +87,7 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                  norm_layer: nn.modules.normalization=nn.LayerNorm,
                  init_std: float=0.02,
                  use_flash_attention: bool=True,
+                 use_layer_norm: bool=True,
                  **kwargs
                  ):
         super().__init__()
@@ -127,7 +128,8 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                   act_layer=nn.GELU,
                   attn_drop=attn_drop_rate,
                   norm_layer=norm_layer,
-                  use_flash_attention=use_flash_attention)
+                  use_flash_attention=use_flash_attention,
+                  use_layer_norm=use_layer_norm)
             for i in range(depth)])
         self.norm = norm_layer(embed_dim)
 
@@ -277,6 +279,7 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
                  norm_layer: torch.nn.modules.normalization=nn.LayerNorm,
                  init_std: float=0.02,
                  use_flash_attention: bool=True,
+                 use_layer_norm: bool=True,
                  **kwargs
                  ):
         super().__init__()
@@ -323,7 +326,8 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
                   drop=drop_rate,
                   attn_drop=attn_drop_rate,
                   norm_layer=norm_layer,
-                  use_flash_attention=use_flash_attention)
+                  use_flash_attention=use_flash_attention,
+                  use_layer_norm=use_layer_norm)
             for i in range(depth)])
         self.predictor_norm = norm_layer(predictor_embed_dim)
         self.predictor_proj = nn.Linear(predictor_embed_dim,
