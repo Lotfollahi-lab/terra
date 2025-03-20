@@ -23,6 +23,7 @@ from .datasets.dataloaders import init_dataloader_and_sampler
 from .helper import init_model, load_checkpoint
 from .masks.block_masking  import BlockMaskCollator
 from .masks.random_masking import RandomMaskCollator
+from .masks.cell_masking import CelllMaskCollator
 from .tokenizers import cell_tokenizers
 from .utils.embedding import (create_binary_selection_mask,
                               compute_mean_unmasked_emb,
@@ -131,9 +132,11 @@ def infer(args: dict,
     n_contexts = args['mask']['n_contexts']
     n_targets = args['mask']['n_targets']
     block_masking = args['mask']['block_masking']
+    cell_masking = args['mask']['cell_masking']
     context_mask_size = args['mask']['context_mask_size']
     target_mask_size = args['mask']['target_mask_size']
     per_block_mask_ratio = args['mask']['per_block_mask_ratio']
+    targets_list = args['mask']['targets_list']
 
     r_file = args['state']['read_checkpoint']
     tag = args['state']['write_tag']
@@ -211,6 +214,16 @@ def infer(args: dict,
             seq_len_neighborhood=seq_len_neighborhood,
             n_special_tokens=n_special_tokens,
             per_block_mask_ratio=per_block_mask_ratio)
+    elif cell_masking:
+       mask_collator = CelllMaskCollator(
+            n_targets=n_targets,
+            n_contexts=n_contexts,
+            n_segments=n_segments,
+            seq_len_cell=seq_len_cell,
+            seq_len_neighborhood=seq_len_neighborhood,
+            n_special_tokens=n_special_tokens,
+            per_block_mask_ratio=per_block_mask_ratio,
+            targets_list=targets_list)
     else:
         mask_collator = RandomMaskCollator(
             n_targets=n_targets,
