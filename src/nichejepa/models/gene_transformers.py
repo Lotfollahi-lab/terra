@@ -1017,7 +1017,7 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
 
         # Repeat context embeddings for all target masks
         z = z.repeat(len(masks_pred), 1, 1)
-        x_special = x_special.repeat(len(masks_pred), 1, 1)
+        # x_special = x_special.repeat(len(masks_pred), 1, 1) # NO SPT
 
         # Concatenate mask tokens and context embeddings of gene tokens
         z = torch.cat([
