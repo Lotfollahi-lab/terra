@@ -29,9 +29,12 @@ meta:
   use_bfloat16: True
   use_flash_attention: True
 mask:
+mask:
   n_contexts: 1
   n_targets: 5 # this is the number of blocks in block masking
-  block_masking: True # this doesn't have meaning in block masking.
+  block_masking: False # this doesn't have meaning in block masking.
+  cell_masking: True # enable cell_masking
+  targets_list: null # Here, one can define a list of targets.
   context_mask_size: 200 # this doesn't have meaning in block masking.
   target_mask_size: 50 # this doesn't have meaning in block masking.
   per_block_mask_ratio: 0.5 # [0.5, 0.8]

@@ -43,6 +43,7 @@ from .helper import (init_model,
                      load_checkpoint)
 from .masks.random_masking import RandomMaskCollator
 from .masks.block_masking  import BlockMaskCollator
+from .masks.cell_masking import CelllMaskCollator
 from .masks.utils import apply_masks
 from .models.utils import repeat_interleave_batch
 from .utils.distributed import (AllReduce,
@@ -125,9 +126,11 @@ def train(args: dict,
     n_contexts = args['mask']['n_contexts']
     n_targets = args['mask']['n_targets']
     block_masking = args['mask']['block_masking']
+    cell_masking = args['mask']['cell_masking']
     context_mask_size = args['mask']['context_mask_size']
     target_mask_size = args['mask']['target_mask_size']
     per_block_mask_ratio = args['mask']['per_block_mask_ratio']
+    targets_list = args['mask']['targets_list']
 
     warmup = args['optimization']['warmup']
     num_epochs = args['optimization']['epochs']
@@ -260,6 +263,16 @@ def train(args: dict,
             seq_len_neighborhood=seq_len_neighborhood,
             n_special_tokens=n_special_tokens,
             per_block_mask_ratio=per_block_mask_ratio)
+    elif cell_masking:
+       mask_collator = CelllMaskCollator(
+            n_targets=n_targets,
+            n_contexts=n_contexts,
+            n_segments=n_segments,
+            seq_len_cell=seq_len_cell,
+            seq_len_neighborhood=seq_len_neighborhood,
+            n_special_tokens=n_special_tokens,
+            per_block_mask_ratio=per_block_mask_ratio,
+            targets_list=targets_list)
     else:
         mask_collator = RandomMaskCollator(
             n_targets=n_targets,
