@@ -103,7 +103,9 @@ class BlockMaskCollator:
 
         # Get non-zero indices and segments excluding special tokens
         ns_tokens = tokens[self.n_special_tokens:]
-        nz_ns_indices = torch.nonzero(ns_tokens).squeeze()
+        #nz_ns_indices = torch.nonzero(ns_tokens).squeeze() # NOSPT
+        nz_ns_indices = torch.nonzero(ns_tokens).add_(
+            self.n_special_tokens).squeeze()
         total_nz_ns = len(nz_ns_indices)
     
         # Initialize masks
@@ -136,7 +138,11 @@ class BlockMaskCollator:
                 # Set masked indices to 0 in the context mask
                 context_mask[target_mask] = 0
 
-                target_mask = torch.tensor(target_mask)
+                #target_mask = torch.tensor(target_mask) # NOSPT
+                # Add special tokens to mask indices
+                target_mask = torch.cat((
+                    torch.arange(self.n_special_tokens),
+                    torch.tensor(target_mask)))
 
                 # Append masked indices
                 target_masks.append(target_mask)
@@ -162,6 +168,11 @@ class BlockMaskCollator:
             context_block_mask = context_mask[start:end]
             context_block_mask = context_block_mask[
                 torch.randperm(len(context_block_mask))]
+
+            # NOSPT
+            context_block_mask = torch.cat((
+                            torch.arange(self.n_special_tokens),
+                            context_block_mask))
 
             context_masks.append(context_block_mask)
 
@@ -230,8 +241,9 @@ class BlockMaskCollator:
             collated_target_masks.append(target_masks)
             collated_context_masks.append(context_masks)
 
-            collated_masks_attention.append(
-                (batch[i][0][self.n_special_tokens:] != 0).int())
+            #collated_masks_attention.append( # NOSPT
+            #    (batch[i][0][self.n_special_tokens:] != 0).int())
+            collated_masks_attention.append((batch[i][0] != 0).int())
 
         # Trim masks to the minimum size across the batch and collate them
         collated_target_masks = [

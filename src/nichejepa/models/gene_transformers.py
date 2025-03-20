@@ -104,7 +104,7 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
 
         # Initialize segment embeddings
         self.seg_embed = nn.Embedding(
-            1 + n_segments, # include <pad>
+            1 + n_segments + self.n_special_tokens, # include <pad> and special tokens
             embed_dim,
             padding_idx=0)
         
@@ -114,7 +114,7 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         seg_embed = get_1d_sincos_pos_embed(
             embed_dim=embed_dim,
             n_zero_pos=0,
-            n_sincos_pos=n_segments)
+            n_sincos_pos=n_segments + self.n_special_tokens)
         self.seg_embed.weight[1:].copy_(torch.from_numpy(seg_embed).float())
 
         # Initialize encoder blocks and norm layer
@@ -291,7 +291,7 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
 
         # Initialize segment embeddings
         self.seg_embed = nn.Embedding(
-            1 + n_segments, # include <pad>
+            1 + n_segments + self.n_special_tokens, # include <pad> and special tokens
             predictor_embed_dim,
             padding_idx=0)
         
@@ -301,7 +301,7 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
         seg_embed = get_1d_sincos_pos_embed(
             embed_dim=predictor_embed_dim,
             n_zero_pos=0,
-            n_sincos_pos=n_segments)
+            n_sincos_pos=n_segments + self.n_special_tokens)
         self.seg_embed.weight[1:].copy_(torch.from_numpy(seg_embed).float())
 
         # Initialize layer to project from encoder to predictor embed dim
@@ -453,8 +453,8 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
             x = pos_emb + seg_emb + token_emb
             # B, N, D = x.shape # B: BATCH_SIZE, N: SEQ_LEN, D: EMBED_DIM
                 
-            # Remove special tokens before encoding
-            x = x[:, self.n_special_tokens:]
+            # Remove special tokens before encoding # NOSPT
+            # x = x[:, self.n_special_tokens:]
 
             # Mask token embeddings if masks are provided
             if masks is not None:
@@ -567,7 +567,7 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
                 self.n_value_bins,
                 self.embed_dim)
             self.special_value_embed = nn.Embedding(
-                1, # include only <pad>
+                1 + self.n_special_tokens, # include <pad> and special tokens
                 self.embed_dim,
                 padding_idx=0)
             self.value_emb_weights_projection = ValueEmbWeightsProjection(
@@ -631,6 +631,8 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
             zero_value_embed = self.special_value_embed(
                 torch.tensor(0, device=tokens.device)).to(value_emb.dtype)
             value_emb[zero_counts_mask] = zero_value_embed
+            value_emb[:self.n_special_tokens] = self.special_value_embed( # NOSPT
+                counts[:, :self.n_special_tokens].int())
         elif self.count_encoding == 'mlp':
             value_emb = self.value_embed(counts.unsqueeze(dim=-1))           
 
@@ -639,7 +641,7 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
         # B, N, D = x.shape # B: BATCH_SIZE, N: SEQ_LEN, D: EMBED_DIM
             
         # Remove special tokens before encoding
-        x = x[:, self.n_special_tokens:]
+        #x = x[:, self.n_special_tokens:] # NOSPT
 
         # Mask token embeddings if masks are provided
         if masks is not None:
@@ -967,18 +969,18 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
 
         # Get segment and special value embeddings
         seg_embed = self.seg_embed(segments)
-        sp_value_embed = self.special_value_embed(
-            counts[:, :self.n_special_tokens].int())
+        #sp_value_embed = self.special_value_embed( # NOSPT
+        #    counts[:, :self.n_special_tokens].int())
 
-        # Retrieve special token embedding
-        x_special = (
-            token_embed[:, :self.n_special_tokens] +
-            seg_embed[:, :self.n_special_tokens] +
-            sp_value_embed)
+        # Retrieve special token embedding # NOSPT
+        #x_special = (
+        #    token_embed[:, :self.n_special_tokens] +
+        #    seg_embed[:, :self.n_special_tokens] +
+        #    sp_value_embed)
 
-        # Remove special tokens
-        token_embed = token_embed[:, self.n_special_tokens:]
-        seg_embed = seg_embed[:, self.n_special_tokens:]
+        # Remove special tokens # NOSPT
+        #token_embed = token_embed[:, self.n_special_tokens:]
+        #seg_embed = seg_embed[:, self.n_special_tokens:]
 
         # Add positional embeddings to tokens from context masks (only
         # keep context mask indices and sum positional and segment
@@ -1019,9 +1021,8 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
 
         # Concatenate mask tokens and context embeddings of gene tokens
         z = torch.cat([
-            pred_tokens, # target gene tokens (excl. special tokens)
-            x_special, # special_tokens,
-            z # context gene tokens (excl. special tokens)
+            pred_tokens, # target gene tokens (incl. special tokens)
+            z # context gene tokens (incl. special tokens)
             ], dim=1)
 
         # Run forward prop
