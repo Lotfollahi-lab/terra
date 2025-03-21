@@ -700,6 +700,8 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
 
         #torch.set_printoptions(threshold=float('inf'))
         #print(segments)
+        tokens[:, :self.n_special_tokens] = 0
+        segments[:, :self.n_special_tokens] = 0
 
         # Get embeddings for sequence of gene tokens and segments
         token_emb = self.token_embed(tokens)
@@ -714,15 +716,16 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
             zero_value_embed = self.special_value_embed(
                 torch.tensor(0, device=tokens.device)).to(value_emb.dtype)
             value_emb[zero_counts_mask] = zero_value_embed
+            value_emb[:self.n_special_tokens] = zero_value_embed
         elif self.count_encoding == 'mlp':
-            value_emb = self.value_embed(counts.unsqueeze(dim=-1))  
+            value_emb = self.value_embed(counts.unsqueeze(dim=-1))      
 
         # Add gene token and segment embeddings to value embeddings
         x = token_emb + seg_emb + value_emb
         # B, N, D = x.shape # B: BATCH_SIZE, N: SEQ_LEN, D: EMBED_DIM
 
         # Remove special tokens before encoding
-        x = x[:, self.n_special_tokens:]
+        # x = x[:, self.n_special_tokens:] # NO SPT
 
         # Mask token embeddings if masks are provided
         if masks is not None:
