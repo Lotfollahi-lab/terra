@@ -110,7 +110,7 @@ class BlockMaskCollator:
     
         # Initialize masks
         target_masks = []
-        context_mask = torch.zeros(len(ns_tokens), dtype=torch.int32)
+        context_mask = torch.zeros(len(tokens), dtype=torch.int32)
 
         # Compute block length based on number of blocks; avoid zero division
         block_length = max(1, total_nz_ns // self.n_targets)
