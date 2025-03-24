@@ -18,10 +18,10 @@ environment:
 #artifact:
   ARTIFACT_LOCATION: "/lustre/scratch126/cellgen/team361/sb75/nichejepa-reproducibility/artifacts/hst_corpus_70m"  # Path to store the artifacts.
   EXPERIMENT_NAME: "nemo"  # Name of the experiment.
-  RUN_NAME: "gtbase-42"  # Name of the run.
+  RUN_NAME: "gtbasecellmaskingnospecial-2"  # Name of the run.
 
 runner_script:
   RUNNER_SCRIPT: "job_config/runner.sh"  # Path to the runner script.
   TRAINING_SCRIPT_PATH: "main_dist.py"  # Path to the training script.
   BACKEND: "nccl"  # Backend for distributed training.
-  CONFIG_FILE: "/lustre/scratch126/cellgen/team361/sb75/nichejepa-reproducibility/config/model/hst_corpus_70m_cell_graph_counts.yaml"
+  CONFIG_FILE: "/lustre/scratch126/cellgen/team361/sb75/nichejepa-reproducibility/config/model/hst_corpus_70m_cell_graph_counts3.yaml"
