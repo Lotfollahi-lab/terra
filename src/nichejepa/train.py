@@ -425,13 +425,13 @@ def train(args: dict,
                         # Target encorder forward pass with output dim 
                         # (BATCH_SIZE, SEQ_LEN, EMBED_DIM)
                         if gt_type == 'rank':
-                            h, _, _, _ = target_encoder(
+                            h, _ = target_encoder(
                                 tokens=tokens,
                                 segments=segments,
                                 positions=positions,
                                 masks_attention=masks_attention)
                         elif gt_type == 'counts':
-                            h, _, _, _ = target_encoder(
+                            h, _ = target_encoder(
                                 tokens=tokens,
                                 segments=segments,
                                 counts=counts,
@@ -492,13 +492,10 @@ def train(args: dict,
                     return z
 
                 def loss_fn(z, h, loss_exp=1.0):
-                    print("AQUI")
-                    print(z.shape)
-                    print(h.shape)
                     loss = 0.
                     # Compute loss and accumulate for each mask-enc/mask-pred pair
-                    for zi, hi in zip(z, h):
-                        loss += torch.mean(torch.abs(zi - hi)**loss_exp) / loss_exp
+                    for hi in h:
+                        loss += torch.mean(torch.abs(z[0] - hi)**loss_exp) / loss_exp
                     loss /= len(masks_pred)
                     return loss
 

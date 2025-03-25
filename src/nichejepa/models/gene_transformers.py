@@ -998,12 +998,6 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
         token_embs = apply_masks(token_embed, masks_pred)
         seg_embs = apply_masks(seg_embed, masks_pred)
 
-        print("OOOOK")
-        print(len(masks_pred))
-        print(len(masks_enc))
-        print(masks_pred)
-        print(masks_enc)
-
         # Repeat mask token for all batches, masks and "positions" from
         # predictor masks
         pred_tokens = self.mask_token.repeat(

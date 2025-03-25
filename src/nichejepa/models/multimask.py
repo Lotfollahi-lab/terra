@@ -49,13 +49,13 @@ class PredictorMultiMaskWrapper(nn.Module):
             masks_pred = [masks_pred]
 
         outs = []
-        for i, (zi, mc, mt) in enumerate(zip(z, masks_enc, masks_pred)):
+        for i, (zi, me, mp) in enumerate(zip(z, masks_enc, masks_pred)):
             outs += [
-                self.backbone(z=z,
+                self.backbone(z=zi,
                               token_embed=token_embed,
                               segments=segments,
                               counts=counts,
-                              masks_enc=mc,
-                              masks_pred=mt,
+                              masks_enc=me,
+                              masks_pred=mp,
                               masks_attention=masks_attention)]
         return outs
