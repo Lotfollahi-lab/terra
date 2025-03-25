@@ -54,6 +54,8 @@ from .utils.logging import (AverageMeter,
                             gpu_timer,
                             grad_logger)
 
+os.environ["NCCL_ASYNC_ERROR_HANDLING"] = "1" # Better error propagation
+
 _GLOBAL_SEED = 0
 
 
@@ -232,14 +234,14 @@ def train(args: dict,
             load_folder_path, r_file) if r_file is not None else latest_path
 
     # Initialize csv logger
-    if rank==0:
-        csv_logger = CSVLogger(log_file,
-                           ('%d', 'epoch'),
-                           ('%d', 'itr'),
-                           ('%.5f', 'loss'),
-                           ('%.5f', 'mask-A'),
-                           ('%.5f', 'mask-B'),
-                           ('%d', 'time (ms)'))
+    #if rank==0:
+    #    csv_logger = CSVLogger(log_file,
+    #                       ('%d', 'epoch'),
+    #                       ('%d', 'itr'),
+    #                       ('%.5f', 'loss'),
+    #                       ('%.5f', 'mask-A'),
+    #                       ('%.5f', 'mask-B'),
+    #                       ('%d', 'time (ms)'))
 
     # Initialize encoder, predictor and target encoder
     encoder, predictor = init_model(
@@ -332,9 +334,20 @@ def train(args: dict,
         ipe_scale=ipe_scale,
         use_bfloat16=use_bfloat16)
 
-    encoder = DistributedDataParallel(encoder, static_graph=True)
-    predictor = DistributedDataParallel(predictor, static_graph=True)
-    target_encoder = DistributedDataParallel(target_encoder)
+    encoder = DistributedDataParallel(
+        encoder,
+        static_graph=True,
+        device_ids=[LOCAL_RANK],
+        output_device=LOCAL_RANK)
+    predictor = DistributedDataParallel(
+        predictor,
+        static_graph=True,
+        device_ids=[LOCAL_RANK],
+        output_device=LOCAL_RANK)
+    target_encoder = DistributedDataParallel(
+        target_encoder,
+        device_ids=[LOCAL_RANK],
+        output_device=LOCAL_RANK)
     for p in target_encoder.parameters():
         p.requires_grad = False
 
@@ -537,47 +550,48 @@ def train(args: dict,
             time_meter.update(etime)
 
             # Logging
-            def log_stats():
-                csv_logger.log(epoch + 1,
-                               itr,
-                               loss,
-                               grad_stats.global_norm,
-                               grad_stats_pred.global_norm,
-                               maskA_meter.val,
-                               maskB_meter.val,
-                               etime)
-                if (itr % log_freq == 0) or np.isnan(loss) or np.isinf(loss):
-                    logger.info('[%d, %5d] loss: %.3f '
-                                'masks: %.1f %.1f '
-                                '[wd: %.2e] [lr: %.2e] '
-                                '[mem: %.2e] '
-                                '(%.1f ms)'
-                                % (epoch + 1, itr,
-                                   loss_meter.avg,
-                                   maskA_meter.avg,
-                                   maskB_meter.avg,
-                                   _new_wd,
-                                   _new_lr,
-                                   torch.cuda.max_memory_allocated() / 1024.**2,
-                                   time_meter.avg))
-
-                    if grad_stats is not None:
-                        logger.info(
-                            '[%d, %5d] grad_stats: [%.2e %.2e] (%.2e, %.2e)'
-                            % (epoch + 1, itr,
-                            grad_stats.first_layer,
-                            grad_stats.last_layer,
-                            grad_stats.min,
-                            grad_stats.max))
+            #def log_stats():
+            #    csv_logger.log(epoch + 1,
+            #                   itr,
+            #                   loss,
+            #                   grad_stats.global_norm,
+            #                   grad_stats_pred.global_norm,
+            #                   maskA_meter.val,
+            #                   maskB_meter.val,
+            #                   etime)
+            #    if (itr % log_freq == 0) or np.isnan(loss) or np.isinf(loss):
+            #        logger.info('[%d, %5d] loss: %.3f '
+            #                    'masks: %.1f %.1f '
+            #                    '[wd: %.2e] [lr: %.2e] '
+            #                    '[mem: %.2e] '
+            #                    '(%.1f ms)'
+            #                    % (epoch + 1, itr,
+            #                       loss_meter.avg,
+            #                       maskA_meter.avg,
+            #                       maskB_meter.avg,
+            #                       _new_wd,
+            #                       _new_lr,
+            #                       torch.cuda.max_memory_allocated() / 1024.**2,
+            #                       time_meter.avg))
+            #
+            #        if grad_stats is not None:
+            #            logger.info(
+            #                '[%d, %5d] grad_stats: [%.2e %.2e] (%.2e, %.2e)'
+            #                % (epoch + 1, itr,
+            #                grad_stats.first_layer,
+            #                grad_stats.last_layer,
+            #                grad_stats.min,
+            #                grad_stats.max))
 
             #log_stats()
-            wandb.log(
-                {"loss": loss,
-                'lr':_new_lr,
-                'epoch': epoch,
-                'global_norm_enc': grad_stats.global_norm,
-                'global_norm_pred': grad_stats_pred.global_norm,
-                })
+            if LOCAL_RANK == 0:
+                wandb.log(
+                    {"loss": loss,
+                    'lr':_new_lr,
+                    'epoch': epoch,
+                    'global_norm_enc': grad_stats.global_norm,
+                    'global_norm_pred': grad_stats_pred.global_norm,
+                    })
             assert not np.isnan(loss), 'loss is nan'
             if itr % checkpoint_freq_iter == 0:
                 logger.info(f'Saving checkpoint at epoch {epoch} iteration {itr}')

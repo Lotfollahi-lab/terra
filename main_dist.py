@@ -79,26 +79,19 @@ def main():
     experiment_name = os.environ.get('EXPERIMENT_NAME')
     run_name = os.environ.get('RUN_NAME')
     run_id = f"{experiment_name}_{run_name}"
-    wandb.init(project='nichejepa-sweep', id=run_id, resume="allow", group="multi_node_training", mode='online')
 
-    if len(wandb.config.keys()) != 0:
-      update_from_sweep = True
-    else:      
-      update_from_sweep = False
     params = create_params_from_YAML_wandb_config(
         args.fname,
-        logger,
-        sweep_config=wandb.config,
-        update_from_sweep=update_from_sweep)
-    logger.info(f'Called with params from {args.fname} and wandb.')
+        logger)
+    logger.info(f'Called with params from {args.fname}.')
+    logger.info(f'Params: {params}.')
     if WORLD_RANK==0:
+        wandb.init(project='nichejepa-sweep', id=run_id, resume="allow", group="multi_node_training", mode='online')
         artifact_folder_path = '../nichejepa-reproducibility/artifacts'
         current_timestamp = (
             datetime.now().strftime("%d%m%Y_%H%M%S") +
             f"_{datetime.now().microsecond // 1000:03d}")
         print(f'Run timestamp: {current_timestamp}.')
-        if not wandb.run.resumed:
-            wandb.config.run_timestamp = current_timestamp
         print(params)
         if params['state']['folder_path'] is None:
             folder_path = os.path.join(artifact_folder_path,
