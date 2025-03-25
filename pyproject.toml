@@ -1,62 +1,58 @@
-[build-system]
-build-backend = "hatchling.build"
-requires = ["hatchling"]
-
-[project]
+[tool.poetry]
 name = "nichejepa"
 version = "0.0.0"
 description = "Spatial transcriptomics foundation model"
 readme = "README.md"
-requires-python = ">=3.10"
-license = {file = "LICENSE"}
+license = "LICENSE"
 authors = [
-    {name = "Sebastian Birk"},
-    {name = "Mohammad Vali Sanian"},
+    "Sebastian Birk",
+    "Mohammad Vali Sanian <mohammad.sanian@helsinki.fi>"
 ]
 maintainers = [
-    {name = "Sebastian Birk", email = "sebastian.birk@helmholtz-munich.de"},
-    {name = "Mohammad Vali Sanian", email = "mohammad.sanian@helsinki.fi"},
+    "Sebastian Birk <sebastian.birk@helmholtz-munich.de>",
+    "Mohammad Vali Sanian <mohammad.sanian@helsinki.fi>"
+]
+documentation = "https://niche-jepa.readthedocs.io/"
+repository = "https://github.com/Lotfollahi-lab/niche-jepa"
+homepage = "https://github.com/Lotfollahi-lab/niche-jepa"
 
-]
-urls.Documentation = "https://niche-jepa.readthedocs.io/"
-urls.Source = "https://github.com/Lotfollahi-lab/niche-jepa"
-urls.Home-page = "https://github.com/Lotfollahi-lab/niche-jepa"
-dependencies = [
-    "anndata",
-    "squidpy",
-    "scib-metrics",
-    "scikit-misc",
-    "transformers",
-    "torch",
-    "datasets",
-    # for debug logging (referenced from the issue template)
-    "session-info",
-    "wandb"
-]
+[tool.poetry.dependencies]
+python = ">=3.11"
+anndata = "*"
+squidpy = "*"
+scib-metrics = "*"
+scikit-misc = "*"
+transformers = "*"
+torch = { version = "^2.0", source = "custom-pytorch" }
+datasets = "*"
+session-info = "*"
+wandb = "*"
 
-[project.optional-dependencies]
-dev = [
-    "pre-commit",
-    "twine>=4.0.2",
-]
-doc = [
-    "docutils>=0.8,!=0.18.*,!=0.19.*",
-    "sphinx>=4",
-    "sphinx-book-theme>=1.0.0",
-    "myst-nb",
-    "sphinxcontrib-bibtex>=1.0.0",
-    "sphinx-autodoc-typehints",
-    "sphinxext-opengraph",
-    # For notebooks
-    "ipykernel",
-    "ipython",
-    "sphinx-copybutton",
-    "pandas",
-]
-test = [
-    "pytest",
-    "coverage",
-]
+[[tool.poetry.source]]
+name = "custom-pytorch"
+url = "https://download.pytorch.org/whl/cu121"
+priority = "explicit"
+
+[tool.poetry.group.dev.dependencies]
+pre-commit = "*"
+twine = ">=4.0.2"
+
+[tool.poetry.group.doc.dependencies]
+docutils = ">=0.8,!=0.18.*,!=0.19.*"
+sphinx = ">=4"
+sphinx-book-theme = ">=1.0.0"
+myst-nb = "*"
+sphinxcontrib-bibtex = ">=1.0.0"
+sphinx-autodoc-typehints = "*"
+sphinxext-opengraph = "*"
+ipykernel = "*"
+ipython = "*"
+sphinx-copybutton = "*"
+pandas = "*"
+
+[tool.poetry.group.test.dependencies]
+pytest = "*"
+coverage = "*"
 
 [tool.coverage.run]
 source = ["niche-jepa"]
@@ -94,30 +90,17 @@ select = [
     "RUF100",  # Report unused noqa directives
 ]
 ignore = [
-    # line too long -> we accept long comment lines; formatter gets rid of long code lines
     "E501",
-    # Do not assign a lambda expression, use a def -> lambda expression assignments are convenient
     "E731",
-    # allow I, O, l as variable names -> I is the identity matrix
     "E741",
-    # Missing docstring in public package
     "D104",
-    # Missing docstring in public module
     "D100",
-    # Missing docstring in __init__
     "D107",
-    # Errors from function calls in argument defaults. These are fine when the result is immutable.
     "B008",
-    # __magic__ methods are are often self-explanatory, allow missing docstrings
     "D105",
-    # first line should end with a period [Bug: doesn't work with single-line docstrings]
     "D400",
-    # First line should be in imperative mood; try rephrasing
     "D401",
-    ## Disable one in each pair of mutually incompatible rules
-    # We don’t want a blank line before a class docstring
     "D203",
-    # We want docstrings to start immediately after the opening triple quote
     "D213",
 ]
 
