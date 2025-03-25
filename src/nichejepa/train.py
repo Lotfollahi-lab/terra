@@ -1,11 +1,44 @@
 """
-Adapted from Assran, M. et al. Self-supervised learning from images with a 
+Adapted from Assran, M. et al. Self-supervised learning from images with a
 Joint-Embedding Predictive Architecture. Proc. IEEE Comput. Soc. Conf. Comput.
 Vis. Pattern Recognit. 15619–15629 (2023);
 https://github.com/facebookresearch/ijepa/blob/main/src/train.py (05.06.2024).
 """
 
+# Standard library imports
+import copy
+import logging
 import os
+import pickle
+import sys
+from datetime import datetime
+from typing import Optional
+
+# Third-party imports
+import datasets
+import numpy as np
+import pandas as pd
+import torch
+import torch.multiprocessing as mp
+import torch.nn.functional as F
+import wandb
+import yaml
+from datasets import load_from_disk
+from torch.nn.parallel import DistributedDataParallel
+from tqdm import tqdm
+import torch.distributed as dist
+
+# Local imports
+from .datasets.cell_datasets import make_cell_dataset
+from .datasets.dataloaders import init_dataloader_and_sampler
+from .helper import init_model, init_opt, load_checkpoint
+from .masks.block_masking import BlockMaskCollator
+from .masks.cell_masking import CelllMaskCollator
+from .masks.random_masking import RandomMaskCollator
+from .masks.utils import apply_masks
+from .models.utils import repeat_interleave_batch
+from .utils.distributed import AllReduce
+from .utils.logging import AverageMeter, CSVLogger, gpu_timer, grad_logger
 
 # -- FOR DISTRIBUTED TRAINING ENSURE ONLY 1 DEVICE VISIBLE PER PROCESS
 try:
@@ -17,47 +50,9 @@ try:
 except Exception:
     pass
 
-import copy
-import logging
-import sys
-import yaml
-from datetime import datetime
-from typing import Optional
-
-import datasets
-import numpy as np
-import pandas as pd
-import pickle
-import torch
-import torch.multiprocessing as mp
-import torch.nn.functional as F
-import wandb
-from datasets import load_from_disk
-from torch.nn.parallel import DistributedDataParallel
-from tqdm import tqdm
-
-from .datasets.cell_datasets import make_cell_dataset
-from .datasets.dataloaders import init_dataloader_and_sampler
-from .helper import (init_model,
-                     init_opt,
-                     load_checkpoint)
-from .masks.random_masking import RandomMaskCollator
-from .masks.block_masking  import BlockMaskCollator
-from .masks.cell_masking import CelllMaskCollator
-from .masks.utils import apply_masks
-from .models.utils import repeat_interleave_batch
-from .utils.distributed import (AllReduce,
-                                init_distributed,
-                                AllReduceSum)
-from .utils.logging import (AverageMeter,
-                            CSVLogger,
-                            gpu_timer,
-                            grad_logger)
-
-os.environ["NCCL_ASYNC_ERROR_HANDLING"] = "1" # Better error propagation
+os.environ["TORCH_NCCL_ASYNC_ERROR_HANDLING"] = "1"  # Better error propagation
 
 _GLOBAL_SEED = 0
-
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logger = logging.getLogger()
@@ -68,6 +63,8 @@ def train(args: dict,
           resume_preempt: bool=False,
           save_folder_path: Optional[str]=None,
           LOCAL_RANK: Optional[int]=None,
+          WORLD_SIZE: Optional[int]=None,
+          RANK: Optional[int]=None,
           ):
     """
     Train model.
@@ -116,8 +113,8 @@ def train(args: dict,
     gt_type = args['meta']['gt_type']
     count_encoding = args['meta']['count_encoding']
     n_value_bins = args['meta']['n_value_bins']
-    enc_depth = args['meta']['enc_depth'] 
-    enc_emb_dim = args['meta']['enc_emb_dim']    
+    enc_depth = args['meta']['enc_depth']
+    enc_emb_dim = args['meta']['enc_emb_dim']
     pred_depth = args['meta']['pred_depth']
     pred_emb_dim = args['meta']['pred_emb_dim']
     if 'num_heads' in args['meta'].keys():
@@ -161,7 +158,7 @@ def train(args: dict,
     load_folder_path = args['state']['folder_path']
 
     if args['data']['precomputed_n_nonzero_tokens']:
-        with open(args['data']['precomputed_n_nonzero_tokens'], "rb") as f: 
+        with open(args['data']['precomputed_n_nonzero_tokens'], "rb") as f:
             n_nonzero_tokens= pickle.load(f)
     else:
         n_nonzero_tokens = None
@@ -178,7 +175,7 @@ def train(args: dict,
     # Define tokenizer-specific params
     if tokenizer_type == 'cell_neighborhood':
         if add_cls:
-            special_tokens = ['cls_0', 'cls_1'] + special_tokens            
+            special_tokens = ['cls_0', 'cls_1'] + special_tokens
     elif tokenizer_type == 'cell_graph':
         if add_cls:
             special_tokens = [
@@ -187,9 +184,10 @@ def train(args: dict,
     # Get token sequence length and number of special tokens
     n_special_tokens = len(special_tokens)
     seq_len = seq_len_cell + seq_len_neighborhood + n_special_tokens
-    
+
     # Initialize torch distributed backend
-    world_size, rank = init_distributed()
+    # world_size, rank = init_distributed()
+    world_size, rank = WORLD_SIZE, LOCAL_RANK
     logger.info(f'Initialized (rank/world-size) {rank}/{world_size}.')
     if rank > 0:
         logger.setLevel(logging.ERROR)
@@ -213,15 +211,15 @@ def train(args: dict,
         dump = os.path.join(save_folder_path, 'params.yaml')
         with open(dump, 'w') as f:
             yaml.dump(args, f)
-    
-    # Start multiprocessing
-    try:
-        mp.set_start_method('spawn')
-    except Exception:
-        pass
+
+    # # Start multiprocessing
+    # try:
+    #     mp.set_start_method('spawn')
+    # except Exception:
+    #     pass
 
     # Define log/checkpointing paths
-    log_file = os.path.join(save_folder_path, f'{write_tag}_r{rank}.csv')
+    # log_file = os.path.join(save_folder_path, f'{write_tag}_r{rank}.csv')
     save_path = os.path.join(save_folder_path,
                              f'{write_tag}' + '-ep{epoch}.pth.tar')
     latest_path = os.path.join(save_folder_path, f'{write_tag}-latest.pth.tar')
@@ -289,7 +287,7 @@ def train(args: dict,
             n_special_tokens=n_special_tokens,
             target_mask_size=target_mask_size,
             context_mask_size=context_mask_size,)
-    
+
     # Initialize train and test datasets, dataloaders and samplers
     train_cell_dataset = make_cell_dataset(
         dataset=train_dataset,
@@ -330,7 +328,7 @@ def train(args: dict,
         num_epochs=num_epochs,
         ipe_scale=ipe_scale,
         use_bfloat16=use_bfloat16)
-    
+
     encoder = DistributedDataParallel(
         encoder,
         static_graph=True,
@@ -420,9 +418,9 @@ def train(args: dict,
                 _new_wd = wd_scheduler.step()
 
                 def forward_target():
-                    with torch.no_grad(): 
+                    with torch.no_grad():
                         # no backward pass for target encoder
-                        # Target encorder forward pass with output dim 
+                        # Target encorder forward pass with output dim
                         # (BATCH_SIZE, SEQ_LEN, EMBED_DIM)
                         if gt_type == 'rank':
                             h, _, _, _ = target_encoder(
@@ -441,15 +439,15 @@ def train(args: dict,
                         h = F.layer_norm(h, (h.size(-1),))
 
                         # Only keep encoded targets (masked genes of h); output
-                        # dim (BATCH_SIZE * N_TARGETS, TARGET_MASK_SIZE, 
+                        # dim (BATCH_SIZE * N_TARGETS, TARGET_MASK_SIZE,
                         # EMB_SIZE)
                         h = apply_masks(
                             h,
                             masks_pred)
                         B = len(h)
 
-                        # Repeat targets if multiple contexts; output dim 
-                        # (BATCH_SIZE * N_TARGETS * N_CONTEXTS, 
+                        # Repeat targets if multiple contexts; output dim
+                        # (BATCH_SIZE * N_TARGETS * N_CONTEXTS,
                         # TARGET_MASK_SIZE, EMB_DIM)
                         h = repeat_interleave_batch(
                             h,
@@ -469,7 +467,7 @@ def train(args: dict,
                             segments=segments,
                             tokens=tokens,
                             masks=masks_enc,
-                            masks_attention=None)                       
+                            masks_attention=None)
                     elif gt_type == 'counts':
                         z, token_emb, seg_emb, value_emb = encoder(
                             tokens=tokens,
@@ -499,8 +497,14 @@ def train(args: dict,
                     return z
 
                 def loss_fn(z, h):
-                    loss = F.smooth_l1_loss(z, h)
-                    loss = AllReduce.apply(loss)
+                    # Calculate loss per GPU
+                    loss = F.smooth_l1_loss(z, h, reduction='mean')
+
+                    # Average loss across all GPUs
+                    if world_size > 1:
+                        dist.all_reduce(loss, op=dist.ReduceOp.SUM)
+                        loss = loss / world_size
+
                     return loss
 
                 # Step 1: forward pass
