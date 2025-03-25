@@ -17,46 +17,55 @@ _GLOBAL_SEED = 0
 
 
 class CustomDistributedLengthGroupedSampler(DistributedSampler):
+    """
+    Distributed Sampler that samples indices in a way that groups together
+    features of the dataset of roughly the same length while keeping a bit
+    of randomness.
+
+    Adapted from Theodoris, C. V. et al. Transfer learning enables
+    predictions in network biology. Nature 618, 616–624 (2023);
+    https://huggingface.co/ctheodoris/Geneformer/blob/main/geneformer/pretrainer.py
+    (28.09.2024).
+
+    Parameters
+    -----------
+
+    Returns
+    -----------
+    """
+
     def __init__(self,
                  cell_dataset: Dataset,
                  batch_size: int,
                  num_replicas: Optional[int]=None,
                  rank: Optional[int]=None,
+                 world_size: Optional[int]=None,
                  seed: int=0,
                  drop_last: bool=False,
                  lengths: Optional[List[int]]=None,
                  ):
-        """
-        Distributed Sampler that samples indices in a way that groups together
-        features of the dataset of roughly the same length while keeping a bit
-        of randomness.
-        
-        Adapted from Theodoris, C. V. et al. Transfer learning enables
-        predictions in network biology. Nature 618, 616–624 (2023);
-        https://huggingface.co/ctheodoris/Geneformer/blob/main/geneformer/pretrainer.py
-        (28.09.2024).
 
-        Parameters
-        -----------
-
-        Returns
-        -----------
-        """
         # Validate distributed package
-        if num_replicas is None:
-            if not dist.is_available():
-                raise RuntimeError(
-                    "Requires distributed package to be available.")
-            num_replicas = dist.get_world_size()
-        if rank is None:
-            if not dist.is_available():
-                raise RuntimeError(
-                    "Requires distributed package to be available.")
-            rank = dist.get_rank()
+        # if num_replicas is None:
+        #     if not dist.is_available():
+        #         raise RuntimeError(
+        #             "Requires distributed package to be available.")
+        #     num_replicas = world_size
+        # if rank is None:
+        #     if not dist.is_available():
+        #         raise RuntimeError(
+        #             "Requires distributed package to be available.")
+        #     rank = rank
 
         self.cell_dataset = cell_dataset
         self.batch_size = batch_size
-        self.num_replicas = num_replicas
+        # Set the number of replicas. If num_replicas is not provided, fallback to world_size.
+        if num_replicas is None:
+            if world_size is None:
+                raise ValueError("Either num_replicas or world_size must be provided.")
+            self.num_replicas = world_size
+        else:
+            self.num_replicas = num_replicas
         self.rank = rank
         self.epoch = 0
         self.drop_last = drop_last
@@ -199,5 +208,5 @@ def init_dataloader_and_sampler(cell_dataset: CellBaseDataset,
                                 batch_size=batch_size,
                                 **dataloader_kwargs)
         logger.info('Dataloader created.')
-        
+
         return dataloader
