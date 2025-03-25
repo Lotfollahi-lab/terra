@@ -540,13 +540,11 @@ def train(args: dict,
                 # Step 3: momentum update of target encoder
                 with torch.no_grad():
                     m = next(momentum_scheduler)
-                    for param_q, param_k in zip(encoder.parameters(),
-                                                target_encoder.parameters()):
+                    for param_q, param_k in zip(encoder.parameters(), target_encoder.parameters(), strict=True):
                         param_k.data.mul_(m).add_((1.-m) * param_q.detach().data)
 
                 return (float(loss), _new_lr, _new_wd, grad_stats, grad_stats_pred)
-            (loss, _new_lr, _new_wd, grad_stats, grad_stats_pred), etime = gpu_timer(
-                train_step)
+            (loss, _new_lr, _new_wd, grad_stats, grad_stats_pred), etime = gpu_timer(train_step)
             loss_meter.update(loss)
             time_meter.update(etime)
 
@@ -599,5 +597,5 @@ def train(args: dict,
                 save_checkpoint(epoch + 1, itr // checkpoint_freq_iter)
 
         # -- Save Checkpoint after every epoch
-        logger.info('avg. loss %.3f' % loss_meter.avg)
+        logger.info(f'avg. loss {loss_meter.avg:.3f}')
         save_checkpoint(epoch + 1)
