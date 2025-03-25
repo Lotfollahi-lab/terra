@@ -68,8 +68,8 @@ def main():
         choices=["nccl", "gloo", "mpi"],
     )
     parser.add_argument(
-        '--fname', 
-        type=str, 
+        '--fname',
+        type=str,
         default='configs.yaml',
         help='Name of the config file to load.',
     )
@@ -116,7 +116,13 @@ def main():
     )
 
     train_dataset, val_dataset, test_dataset = prepare_dataset(params)
-    train(params, train_dataset, test_dataset, save_folder_path=folder_path, LOCAL_RANK=LOCAL_RANK)
+    train(params,
+          train_dataset,
+          test_dataset,
+          save_folder_path=folder_path,
+          LOCAL_RANK=LOCAL_RANK,
+          WORLD_SIZE=WORLD_SIZE,
+          RANK=WORLD_RANK)
 
 if __name__ == "__main__":
     # Print Torch Version
