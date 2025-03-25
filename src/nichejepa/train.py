@@ -1,5 +1,5 @@
 """
-Adapted from Assran, M. et al. Self-supervised learning from images with a 
+Adapted from Assran, M. et al. Self-supervised learning from images with a
 Joint-Embedding Predictive Architecture. Proc. IEEE Comput. Soc. Conf. Comput.
 Vis. Pattern Recognit. 15619–15629 (2023);
 https://github.com/facebookresearch/ijepa/blob/main/src/train.py (05.06.2024).
@@ -66,6 +66,8 @@ def train(args: dict,
           resume_preempt: bool=False,
           save_folder_path: Optional[str]=None,
           LOCAL_RANK: Optional[int]=None,
+          WORLD_SIZE: Optional[int]=None,  # Add these parameters
+          WORLD_RANK: Optional[int]=None   # Add these parameters
           ):
     """
     Train model.
@@ -114,8 +116,8 @@ def train(args: dict,
     gt_type = args['meta']['gt_type']
     count_encoding = args['meta']['count_encoding']
     n_value_bins = args['meta']['n_value_bins']
-    enc_depth = args['meta']['enc_depth'] 
-    enc_emb_dim = args['meta']['enc_emb_dim']    
+    enc_depth = args['meta']['enc_depth']
+    enc_emb_dim = args['meta']['enc_emb_dim']
     pred_depth = args['meta']['pred_depth']
     pred_emb_dim = args['meta']['pred_emb_dim']
     if 'num_heads' in args['meta'].keys():
@@ -159,7 +161,7 @@ def train(args: dict,
     load_folder_path = args['state']['folder_path']
 
     if args['data']['precomputed_n_nonzero_tokens']:
-        with open(args['data']['precomputed_n_nonzero_tokens'], "rb") as f: 
+        with open(args['data']['precomputed_n_nonzero_tokens'], "rb") as f:
             n_nonzero_tokens= pickle.load(f)
     else:
         n_nonzero_tokens = None
@@ -176,7 +178,7 @@ def train(args: dict,
     # Define tokenizer-specific params
     if tokenizer_type == 'cell_neighborhood':
         if add_cls:
-            special_tokens = ['cls_0', 'cls_1'] + special_tokens            
+            special_tokens = ['cls_0', 'cls_1'] + special_tokens
     elif tokenizer_type == 'cell_graph':
         if add_cls:
             special_tokens = [
@@ -185,9 +187,10 @@ def train(args: dict,
     # Get token sequence length and number of special tokens
     n_special_tokens = len(special_tokens)
     seq_len = seq_len_cell + seq_len_neighborhood + n_special_tokens
-    
+
     # Initialize torch distributed backend
-    world_size, rank = init_distributed()
+    # world_size, rank = init_distributed()
+    world_size, rank = WORLD_SIZE, WORLD_RANK
     logger.info(f'Initialized (rank/world-size) {rank}/{world_size}.')
     if rank > 0:
         logger.setLevel(logging.ERROR)
@@ -211,11 +214,11 @@ def train(args: dict,
         dump = os.path.join(save_folder_path, 'params.yaml')
         with open(dump, 'w') as f:
             yaml.dump(args, f)
-    
+
     # Start multiprocessing
     try:
         mp.set_start_method('spawn')
-    except Exception:
+    except RuntimeError:
         pass
 
     # Define log/checkpointing paths
@@ -287,7 +290,7 @@ def train(args: dict,
             n_special_tokens=n_special_tokens,
             target_mask_size=target_mask_size,
             context_mask_size=context_mask_size,)
-    
+
     # Initialize train and test datasets, dataloaders and samplers
     train_cell_dataset = make_cell_dataset(
         dataset=train_dataset,
@@ -328,7 +331,7 @@ def train(args: dict,
         num_epochs=num_epochs,
         ipe_scale=ipe_scale,
         use_bfloat16=use_bfloat16)
-    
+
     encoder = DistributedDataParallel(encoder, static_graph=True)
     predictor = DistributedDataParallel(predictor, static_graph=True)
     target_encoder = DistributedDataParallel(target_encoder)
@@ -407,9 +410,9 @@ def train(args: dict,
                 _new_wd = wd_scheduler.step()
 
                 def forward_target():
-                    with torch.no_grad(): 
+                    with torch.no_grad():
                         # no backward pass for target encoder
-                        # Target encorder forward pass with output dim 
+                        # Target encorder forward pass with output dim
                         # (BATCH_SIZE, SEQ_LEN, EMBED_DIM)
                         if gt_type == 'rank':
                             h, _, _, _ = target_encoder(
@@ -428,15 +431,15 @@ def train(args: dict,
                         h = F.layer_norm(h, (h.size(-1),))
 
                         # Only keep encoded targets (masked genes of h); output
-                        # dim (BATCH_SIZE * N_TARGETS, TARGET_MASK_SIZE, 
+                        # dim (BATCH_SIZE * N_TARGETS, TARGET_MASK_SIZE,
                         # EMB_SIZE)
                         h = apply_masks(
                             h,
                             masks_pred)
                         B = len(h)
 
-                        # Repeat targets if multiple contexts; output dim 
-                        # (BATCH_SIZE * N_TARGETS * N_CONTEXTS, 
+                        # Repeat targets if multiple contexts; output dim
+                        # (BATCH_SIZE * N_TARGETS * N_CONTEXTS,
                         # TARGET_MASK_SIZE, EMB_DIM)
                         h = repeat_interleave_batch(
                             h,
@@ -456,7 +459,7 @@ def train(args: dict,
                             segments=segments,
                             tokens=tokens,
                             masks=masks_enc,
-                            masks_attention=None)                       
+                            masks_attention=None)
                     elif gt_type == 'counts':
                         z, token_emb, seg_emb, value_emb = encoder(
                             tokens=tokens,
