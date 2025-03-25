@@ -1,0 +1,3 @@
+[virtualenvs]
+in-project = false
+path = "/software/isg/users/fg12/envs/"
