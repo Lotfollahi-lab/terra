@@ -37,12 +37,12 @@ class CustomDistributedLengthGroupedSampler(DistributedSampler):
     def __init__(self,
                  cell_dataset: Dataset,
                  batch_size: int,
-                 num_replicas: Optional[int]=None,
-                 rank: Optional[int]=None,
-                 world_size: Optional[int]=None,
-                 seed: int=0,
-                 drop_last: bool=False,
-                 lengths: Optional[List[int]]=None,
+                 num_replicas: int | None = None,
+                 rank: int | None = None,
+                 world_size: int | None = None,
+                 seed: int = 0,
+                 drop_last: bool = False,
+                 lengths: list[int] | None = None,
                  ):
 
         # Validate distributed package
