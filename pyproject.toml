@@ -28,6 +28,7 @@ dependencies = [
     "scikit-misc",
     "transformers",
     "torch",
+    "aiofiles",
     "datasets",
     # for debug logging (referenced from the issue template)
     "session-info",
