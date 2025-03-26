@@ -10,12 +10,10 @@ import sys
 # Add the root directory to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 import argparse
-import time
-import importlib
 import warnings
 from datetime import datetime
 from datetime import timedelta
-import random
+
 
 warnings.filterwarnings("ignore")
 # logger
@@ -29,8 +27,10 @@ def get_distributed_info():
     """
     Retrieves distributed training environment variables and logs them.
 
-    Returns:
-        tuple: (WORLD_RANK, LOCAL_RANK, WORLD_SIZE)
+    Returns
+    -------
+    tuple
+        (WORLD_RANK, LOCAL_RANK, WORLD_SIZE)
     """
     if "LOCAL_RANK" in os.environ:
         # Environment variables set by torch.distributed.launch or torchrun
@@ -85,22 +85,39 @@ def main():
         logger)
     logger.info(f'Called with params from {args.fname}.')
     logger.info(f'Params: {params}.')
+
+    # Create folder to store artifacts
+    ARTIFACT_LOCATION = f"{os.environ.get('ARTIFACT_LOCATION')}/artifacts"
+
     if WORLD_RANK==0:
-        wandb.init(project='nichejepa-sweep', id=run_id, resume="allow", group="multi_node_training", mode='online')
-        artifact_folder_path = '../nichejepa-reproducibility/artifacts'
+        if not os.path.exists(ARTIFACT_LOCATION):
+            os.makedirs(ARTIFACT_LOCATION, exist_ok=True)
+
         current_timestamp = (
-            datetime.now().strftime("%d%m%Y_%H%M%S") +
-            f"_{datetime.now().microsecond // 1000:03d}")
-        print(f'Run timestamp: {current_timestamp}.')
-        print(params)
+                datetime.now().strftime("%d%m%Y_%H%M%S") +
+                f"_{datetime.now().microsecond // 1000:03d}")
+        logger.info(f'Run timestamp: {current_timestamp}.')
+        logger.info(params)
+
         if params['state']['folder_path'] is None:
-            folder_path = os.path.join(artifact_folder_path,
-                        params['data']['dataset_name'],
-                        current_timestamp)
+            # Define path for the dataset directory within the artifact location
+            dataset_dir = os.path.join(ARTIFACT_LOCATION, params['data']['dataset_name'])
+            if not os.path.exists(dataset_dir):
+                os.makedirs(dataset_dir, exist_ok=True)
+                logger.info(f"Created dataset directory: {dataset_dir}")
+            # Define run folder with current timestamp inside the dataset directory
+            folder_path = os.path.join(dataset_dir, current_timestamp)
+            if not os.path.exists(folder_path):
+                os.makedirs(folder_path, exist_ok=True)
+                logger.info(f"Created run directory: {folder_path}")
         else:
             folder_path = params['state']['folder_path']
     else:
-        folder_path=None
+        # For non-master processes, set folder_path to None or appropriate default
+        folder_path = None
+
+    # if WORLD_RANK==0:
+    #     wandb.init(project='nichejepa-sweep', id=run_id, resume="allow", group="multi_node_training", mode='online')
 
     print(f"tcp://{os.environ['MASTER_ADDR']}:{os.environ['MASTER_PORT']}")
 
