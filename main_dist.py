@@ -104,7 +104,7 @@ def main():
     logger.info(f'Called with params from {args.fname}.')
     logger.info(f'Params: {params}.')
 
-    TMP_ARTIFACT_LOCATION = "tmp"
+    TMP_ARTIFACT_LOCATION = "/tmp"
 
     if WORLD_RANK==0:
 
@@ -156,18 +156,19 @@ def main():
           WORLD_SIZE=WORLD_SIZE,
           RANK=WORLD_RANK)
 
+    logger.info("Training completed")
+    logger.info("Copying artifacts")
+    logger.info(f"Folder path: {folder_path}")
+
+
     # First, handle artifacts (for rank 0 only)
     if WORLD_RANK == 0:
-        MY_ARTIFACT_LOCATION = f"{os.environ.get('OUTPUT_DIR')}/artifacts"
+        MY_ARTIFACT_LOCATION = os.path.join(os.environ.get('OUTPUT_DIR'), "artifacts")
+        logger.info(f"My artifact location: {MY_ARTIFACT_LOCATION}")
         if not os.path.exists(MY_ARTIFACT_LOCATION):
             os.makedirs(MY_ARTIFACT_LOCATION, exist_ok=True)
         # Run the async copy operation
         asyncio.run(copy_artifacts_wrapper(folder_path, MY_ARTIFACT_LOCATION))
-
-    # Then destroy the process group
-    dist.destroy_process_group()
-
-
 
 if __name__ == "__main__":
     # Print Torch Version
