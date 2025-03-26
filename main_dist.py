@@ -1,10 +1,12 @@
 import os
+import asyncio
 import torch
 import logging
 import torch.distributed as dist
 from src.nichejepa.train import train
 from src.nichejepa.datasets.utils import prepare_dataset
 from src.nichejepa.utils.config import create_params_from_YAML_wandb_config
+from src.nichejepa.utils.copy_artifacts_from_tmp import copy_artifacts_async
 import wandb
 import sys
 # Add the root directory to sys.path
@@ -21,6 +23,22 @@ logging.basicConfig()
 logger = logging.getLogger()
 
 # ==========================
+
+async def copy_artifacts_wrapper(artifact_location: str, my_artifact_location: str) -> None:
+    """
+    Wrapper function to copy artifacts with logging.
+
+    Args:
+        artifact_location (str): Source artifacts directory
+        my_artifact_location (str): Destination artifacts directory
+    """
+    try:
+        logger.info(f"Starting artifact copy from {artifact_location} to {my_artifact_location}")
+        await copy_artifacts_async(artifact_location, my_artifact_location)
+        logger.info("Artifact copy completed successfully")
+    except Exception as e:
+        logger.error(f"Failed to copy artifacts: {str(e)}")
+        raise
 
 # Function to retrieve and log distributed environment variables
 def get_distributed_info():
@@ -86,12 +104,9 @@ def main():
     logger.info(f'Called with params from {args.fname}.')
     logger.info(f'Params: {params}.')
 
-    # Create folder to store artifacts
-    ARTIFACT_LOCATION = f"{os.environ.get('ARTIFACT_LOCATION')}/artifacts"
+    TMP_ARTIFACT_LOCATION = "tmp"
 
     if WORLD_RANK==0:
-        if not os.path.exists(ARTIFACT_LOCATION):
-            os.makedirs(ARTIFACT_LOCATION, exist_ok=True)
 
         current_timestamp = (
                 datetime.now().strftime("%d%m%Y_%H%M%S") +
@@ -101,7 +116,7 @@ def main():
 
         if params['state']['folder_path'] is None:
             # Define path for the dataset directory within the artifact location
-            dataset_dir = os.path.join(ARTIFACT_LOCATION, params['data']['dataset_name'])
+            dataset_dir = os.path.join(TMP_ARTIFACT_LOCATION, params['data']['dataset_name'])
             if not os.path.exists(dataset_dir):
                 os.makedirs(dataset_dir, exist_ok=True)
                 logger.info(f"Created dataset directory: {dataset_dir}")
@@ -140,6 +155,19 @@ def main():
           LOCAL_RANK=LOCAL_RANK,
           WORLD_SIZE=WORLD_SIZE,
           RANK=WORLD_RANK)
+
+    # First, handle artifacts (for rank 0 only)
+    if WORLD_RANK == 0:
+        MY_ARTIFACT_LOCATION = f"{os.environ.get('OUTPUT_DIR')}/artifacts"
+        if not os.path.exists(MY_ARTIFACT_LOCATION):
+            os.makedirs(MY_ARTIFACT_LOCATION, exist_ok=True)
+        # Run the async copy operation
+        asyncio.run(copy_artifacts_wrapper(folder_path, MY_ARTIFACT_LOCATION))
+
+    # Then destroy the process group
+    dist.destroy_process_group()
+
+
 
 if __name__ == "__main__":
     # Print Torch Version
