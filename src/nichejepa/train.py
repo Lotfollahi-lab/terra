@@ -203,8 +203,7 @@ def train(args: dict,
     if rank==0:
         save_path = os.path.join(save_folder_path, f'{write_tag}' + '-ep{epoch}.pth.tar')
         latest_path = os.path.join(save_folder_path, f'{write_tag}-latest.pth.tar')
-        load_path = None
-        if load_model:
+        if load_model and os.path.exists(latest_path):
             load_path = os.path.join(
                 load_folder_path, r_file) if r_file is not None else latest_path
     else:
