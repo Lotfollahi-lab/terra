@@ -60,17 +60,17 @@ logger = logging.getLogger()
 
 def train(args: dict,
           train_dataset: datasets.Dataset,
-          resume_preempt: bool=False,
-          save_folder_path: Optional[str]=None,
-          LOCAL_RANK: Optional[int]=None,
-          WORLD_SIZE: Optional[int]=None,
-          RANK: Optional[int]=None,
+          resume_preempt: bool = False,
+          save_folder_path: str | None = None,
+          LOCAL_RANK: int | None = None,
+          WORLD_SIZE: int | None = None,
+          RANK: int | None = None,
           ):
     """
     Train model.
 
     Parameters
-    -----------
+    ----------
     args:
         Dictionary containing the hyperparams from the config file.
     train_dataset:
@@ -186,25 +186,11 @@ def train(args: dict,
     seq_len = seq_len_cell + seq_len_neighborhood + n_special_tokens
 
     # Initialize torch distributed backend
-    # world_size, rank = init_distributed()
+
     world_size, rank = WORLD_SIZE, LOCAL_RANK
     logger.info(f'Initialized (rank/world-size) {rank}/{world_size}.')
     if rank > 0:
         logger.setLevel(logging.ERROR)
-
-    # Create folder to store artifacts
-    if not save_folder_path:
-        artifact_folder_path = os.path.join(
-            os.path.dirname(os.path.dirname(
-                os.path.dirname(os.path.abspath(__file__)))), "artifacts")
-        current_timestamp = (
-            datetime.now().strftime("%d%m%Y_%H%M%S") +
-            f"_{datetime.now().microsecond // 1000:03d}")
-        save_folder_path = os.path.join(artifact_folder_path,
-                                        dataset_name,
-                                        current_timestamp)
-    if rank==0:
-        os.makedirs(save_folder_path, exist_ok=True)
 
     # Store config file with model
     if rank==0:
@@ -212,21 +198,19 @@ def train(args: dict,
         with open(dump, 'w') as f:
             yaml.dump(args, f)
 
-    # # Start multiprocessing
-    # try:
-    #     mp.set_start_method('spawn')
-    # except Exception:
-    #     pass
-
     # Define log/checkpointing paths
     # log_file = os.path.join(save_folder_path, f'{write_tag}_r{rank}.csv')
-    save_path = os.path.join(save_folder_path,
-                             f'{write_tag}' + '-ep{epoch}.pth.tar')
-    latest_path = os.path.join(save_folder_path, f'{write_tag}-latest.pth.tar')
-    load_path = None
-    if load_model:
-        load_path = os.path.join(
-            load_folder_path, r_file) if r_file is not None else latest_path
+    if rank==0:
+        save_path = os.path.join(save_folder_path, f'{write_tag}' + '-ep{epoch}.pth.tar')
+        latest_path = os.path.join(save_folder_path, f'{write_tag}-latest.pth.tar')
+        load_path = None
+        if load_model:
+            load_path = os.path.join(
+                load_folder_path, r_file) if r_file is not None else latest_path
+    else:
+        save_path = None
+        latest_path = None
+        load_path = None
 
     # Initialize csv logger
     #if rank==0:
@@ -583,14 +567,14 @@ def train(args: dict,
             #                grad_stats.max))
 
             #log_stats()
-            if LOCAL_RANK == 0:
-                wandb.log(
-                    {"loss": loss,
-                    'lr':_new_lr,
-                    'epoch': epoch,
-                    'global_norm_enc': grad_stats.global_norm,
-                    'global_norm_pred': grad_stats_pred.global_norm,
-                    })
+            # if LOCAL_RANK == 0:
+            #     wandb.log(
+            #         {"loss": loss,
+            #         'lr':_new_lr,
+            #         'epoch': epoch,
+            #         'global_norm_enc': grad_stats.global_norm,
+            #         'global_norm_pred': grad_stats_pred.global_norm,
+            #         })
             assert not np.isnan(loss), 'loss is nan'
             if itr % checkpoint_freq_iter == 0:
                 logger.info(f'Saving checkpoint at epoch {epoch} iteration {itr}')
