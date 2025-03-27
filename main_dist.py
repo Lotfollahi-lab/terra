@@ -6,6 +6,7 @@ import torch.distributed as dist
 from src.nichejepa.train import train
 from src.nichejepa.datasets.utils import prepare_dataset
 from src.nichejepa.utils.config import create_params_from_YAML_wandb_config
+from src.nichejepa.utils.setup_experiment_folders import setup_experiment_folders, setup_artifact_location
 import wandb
 import sys
 # Add the root directory to sys.path
@@ -91,29 +92,30 @@ def main():
 
     TMP_ARTIFACT_LOCATION = "/tmp"
 
-    if WORLD_RANK==0:
+    folder_path = setup_experiment_folders(
+        WORLD_RANK,
+        TMP_ARTIFACT_LOCATION,
+        params,
+        logger
+    )
 
-        current_timestamp = (
-                datetime.now().strftime("%d%m%Y_%H%M%S") +
-                f"_{datetime.now().microsecond // 1000:03d}")
-        logger.info(f'Run timestamp: {current_timestamp}.')
-        logger.info(params)
+    # Handle artifacts (create directory only on rank 0, but share path with all ranks)
+    output_dir = os.environ.get('OUTPUT_DIR')
+    if not output_dir:
+        raise ValueError("OUTPUT_DIR environment variable must be set")
 
-        if params['state']['folder_path'] is None:
-            # Define path for the dataset directory within the artifact location
-            dataset_dir = os.path.join(TMP_ARTIFACT_LOCATION, params['data']['dataset_name'])
-            if not os.path.exists(dataset_dir):
-                os.makedirs(dataset_dir, exist_ok=True)
-                logger.info(f"Created dataset directory: {dataset_dir}")
-            # Define run folder with current timestamp inside the dataset directory
-            folder_path = os.path.join(dataset_dir, current_timestamp)
-            if not os.path.exists(folder_path):
-                os.makedirs(folder_path, exist_ok=True)
-        else:
-            folder_path = params['state']['folder_path']
-    else:
-        # For non-master processes, set folder_path to None or appropriate default
-        folder_path = None
+    artifact_location = setup_artifact_location(
+        WORLD_RANK,
+        os.path.join(output_dir, "artifacts"),
+        logger
+    )
+
+    experiment_artifact_location = setup_experiment_folders(
+        WORLD_RANK,
+        artifact_location,
+        params,
+        logger
+    )
 
     # if WORLD_RANK==0:
     #     wandb.init(project='nichejepa-sweep', id=run_id, resume="allow", group="multi_node_training", mode='online')
@@ -131,17 +133,6 @@ def main():
         timeout=timedelta(seconds=120)
     )
 
-    # Handle artifacts (create directory only on rank 0, but share path with all ranks)
-    output_dir = os.environ.get('OUTPUT_DIR')
-    if not output_dir:
-        raise ValueError("OUTPUT_DIR environment variable must be set")
-
-    my_artifact_location = os.path.join(output_dir, "artifacts")
-
-    if WORLD_RANK == 0:
-        logger.info(f"Creating artifact location: {my_artifact_location}")
-        os.makedirs(my_artifact_location, exist_ok=True)
-
     # Ensure all processes wait until directory is created
     dist.barrier()
 
@@ -150,7 +141,7 @@ def main():
           train_dataset,
           test_dataset,
           save_folder_path=folder_path,
-          my_artifact_location=my_artifact_location,
+          my_artifact_location=experiment_artifact_location,
           LOCAL_RANK=LOCAL_RANK,
           WORLD_SIZE=WORLD_SIZE,
           RANK=WORLD_RANK)
