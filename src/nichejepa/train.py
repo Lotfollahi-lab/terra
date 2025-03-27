@@ -83,7 +83,7 @@ def train(args: dict,
           my_artifact_location: str | None = None,
           LOCAL_RANK: int | None = None,
           WORLD_SIZE: int | None = None,
-          RANK: int | None = None,
+          WORLD_RANK: int | None = None,
           ):
     """
     Train model.
@@ -213,20 +213,19 @@ def train(args: dict,
 
     # Initialize torch distributed backend
 
-    world_size, rank = WORLD_SIZE, LOCAL_RANK
-    logger.info(f'Initialized (rank/world-size) {rank}/{world_size}.')
-    if rank > 0:
+    logger.info(f'Initialized (rank/world-size) {LOCAL_RANK}/{WORLD_SIZE}.')
+    if WORLD_RANK > 0:
         logger.setLevel(logging.ERROR)
 
     # Store config file with model
-    if rank==0:
+    if WORLD_RANK==0:
         dump = os.path.join(save_folder_path, 'params.yaml')
         with open(dump, 'w') as f:
             yaml.dump(args, f)
 
     # Define log/checkpointing paths
     # log_file = os.path.join(save_folder_path, f'{write_tag}_r{rank}.csv')
-    if rank==0:
+    if WORLD_RANK==0:
         save_path = os.path.join(save_folder_path, f'{write_tag}' + '-ep{epoch}.pth.tar')
         latest_path = os.path.join(save_folder_path, f'{write_tag}-latest.pth.tar')
         if load_model:
@@ -313,8 +312,8 @@ def train(args: dict,
         cell_dataset=train_cell_dataset,
         batch_size=batch_size,
         distributed=True,
-        world_size=world_size,
-        rank=rank,
+        world_size=WORLD_SIZE,
+        rank=LOCAL_RANK,
         collate_fn=mask_collator,
         pin_memory=pin_memory,
         num_workers=num_workers,
@@ -385,9 +384,9 @@ def train(args: dict,
                      'epoch': epoch,
                      'loss': loss_meter.avg,
                      'batch_size': batch_size,
-                     'world_size': world_size,
+                     'world_size': WORLD_SIZE,
                      'lr': lr}
-        if rank == 0:
+        if WORLD_RANK == 0:
             torch.save(save_dict, latest_path)
             if (epoch) % checkpoint_freq == 0:
                 if iter_number is None:
@@ -464,7 +463,7 @@ def train(args: dict,
                 return z
 
             def loss_fn(z, h, itr):
-                if rank == 0 and itr % log_freq == 0:
+                if WORLD_RANK == 0 and itr % log_freq == 0:
                     logger.info(f"z shape: {z.shape}, h shape: {h.shape}")
                     logger.info(f"z memory: {z.element_size() * z.nelement() / 1024**2:.2f} MB")
                     logger.info(f"h memory: {h.element_size() * h.nelement() / 1024**2:.2f} MB")
