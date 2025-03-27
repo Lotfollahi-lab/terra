@@ -144,6 +144,7 @@ def main():
           train_dataset,
           test_dataset,
           save_folder_path=folder_path,
+          MY_ARTIFACT_LOCATION=MY_ARTIFACT_LOCATION,
           LOCAL_RANK=LOCAL_RANK,
           WORLD_SIZE=WORLD_SIZE,
           RANK=WORLD_RANK)
