@@ -109,7 +109,6 @@ def main():
             folder_path = os.path.join(dataset_dir, current_timestamp)
             if not os.path.exists(folder_path):
                 os.makedirs(folder_path, exist_ok=True)
-                logger.info(f"Created run directory: {folder_path}")
         else:
             folder_path = params['state']['folder_path']
     else:
@@ -132,19 +131,26 @@ def main():
         timeout=timedelta(seconds=120)
     )
 
-    # First, handle artifacts (for rank 0 only)
+    # Handle artifacts (create directory only on rank 0, but share path with all ranks)
+    output_dir = os.environ.get('OUTPUT_DIR')
+    if not output_dir:
+        raise ValueError("OUTPUT_DIR environment variable must be set")
+
+    my_artifact_location = os.path.join(output_dir, "artifacts")
+
     if WORLD_RANK == 0:
-        MY_ARTIFACT_LOCATION = os.path.join(os.environ.get('OUTPUT_DIR'), "artifacts")
-        logger.info(f"My artifact location: {MY_ARTIFACT_LOCATION}")
-        if not os.path.exists(MY_ARTIFACT_LOCATION):
-            os.makedirs(MY_ARTIFACT_LOCATION, exist_ok=True)
+        logger.info(f"Creating artifact location: {my_artifact_location}")
+        os.makedirs(my_artifact_location, exist_ok=True)
+
+    # Ensure all processes wait until directory is created
+    dist.barrier()
 
     train_dataset, val_dataset, test_dataset = prepare_dataset(params)
     train(params,
           train_dataset,
           test_dataset,
           save_folder_path=folder_path,
-          MY_ARTIFACT_LOCATION=MY_ARTIFACT_LOCATION,
+          my_artifact_location=my_artifact_location,
           LOCAL_RANK=LOCAL_RANK,
           WORLD_SIZE=WORLD_SIZE,
           RANK=WORLD_RANK)
