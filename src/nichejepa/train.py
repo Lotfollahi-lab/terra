@@ -80,7 +80,7 @@ def train(args: dict,
           train_dataset: datasets.Dataset,
           resume_preempt: bool = False,
           save_folder_path: str | None = None,
-          MY_ARTIFACT_LOCATION: str | None = None,
+          my_artifact_location: str | None = None,
           LOCAL_RANK: int | None = None,
           WORLD_SIZE: int | None = None,
           RANK: int | None = None,
@@ -583,17 +583,17 @@ def train(args: dict,
     logger.info("Training completed")
 
     # Only attempt to copy artifacts if both paths are provided
-    if save_folder_path and MY_ARTIFACT_LOCATION:
+    if save_folder_path and my_artifact_location:
         logger.info("Copying artifacts")
         logger.info(f"From: {save_folder_path}")
-        logger.info(f"To: {MY_ARTIFACT_LOCATION}")
+        logger.info(f"To: {my_artifact_location}")
 
         # Run the async copy operation
-        asyncio.run(copy_artifacts_wrapper(save_folder_path, MY_ARTIFACT_LOCATION))
+        asyncio.run(copy_artifacts_wrapper(save_folder_path, my_artifact_location))
         logger.info("Artifact copy completed successfully")
     else:
         logger.warning("Skipping artifact copy: save_folder_path or MY_ARTIFACT_LOCATION not provided")
         if not save_folder_path:
             logger.warning("save_folder_path is None")
-        if not MY_ARTIFACT_LOCATION:
-            logger.warning("MY_ARTIFACT_LOCATION is None")
+        if not my_artifact_location:
+            logger.warning("my_artifact_location is None")
