@@ -5,9 +5,9 @@ job_requirement:
   LSB_DEFAULT_USERGROUP: team361  # The user group to be used for scheduling the job.
   QUEUE: "gpu-lotfollahi"  # The job queue to be used for scheduling the job.
   NUM_NODES: 1  # Number of compute nodes required for the job.
-  NUM_GPUS_NODE: 2 # 4  # Number of GPUs per node.
+  NUM_GPUS_NODE: 4 # 4  # Number of GPUs per node.
   NUM_PROCESSES_NODE: 24 # 12  # Number of processes per node.
-  MEM_NODE: 224 # 448  # Memory allocated per node (in GB).
+  MEM_NODE: 448 # 448  # Memory allocated per node (in GB).
 
 infiniband:
   NCCL_IB_DISABLE: 1  # 1: Disable InfiniBand, 0: Enable InfiniBand
@@ -18,7 +18,7 @@ environment:
 #artifact:
   ARTIFACT_LOCATION: "/lustre/scratch126/cellgen/team361/sb75/nichejepa-reproducibility/artifacts/hst_corpus_70m"  # Path to store the artifacts.
   EXPERIMENT_NAME: "nemo"  # Name of the experiment.
-  RUN_NAME: "gtbaserandmask70nospecial-5" # "gtbaserandmask80nospec-1"  # Name of the run.
+  RUN_NAME: "gtbaserandmask70nospecial-7" # "gtbaserandmask80nospec-1"  # Name of the run.
 
 runner_script:
   RUNNER_SCRIPT: "job_config/runner.sh"  # Path to the runner script.
