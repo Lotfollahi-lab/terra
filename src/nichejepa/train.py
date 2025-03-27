@@ -13,6 +13,8 @@ import pickle
 import sys
 from datetime import datetime
 from typing import Optional
+import asyncio
+from src.nichejepa.utils.copy_artifacts_from_tmp import copy_artifacts_async
 
 # Third-party imports
 import datasets
@@ -58,10 +60,27 @@ logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logger = logging.getLogger()
 
 
+async def copy_artifacts_wrapper(artifact_location: str, my_artifact_location: str) -> None:
+    """
+    Wrapper function to copy artifacts with logging.
+
+    Args:
+        artifact_location (str): Source artifacts directory
+        my_artifact_location (str): Destination artifacts directory
+    """
+    try:
+        logger.info(f"Starting artifact copy from {artifact_location} to {my_artifact_location}")
+        await copy_artifacts_async(artifact_location, my_artifact_location)
+        logger.info("Artifact copy completed successfully")
+    except Exception as e:
+        logger.error(f"Failed to copy artifacts: {str(e)}")
+        raise
+
 def train(args: dict,
           train_dataset: datasets.Dataset,
           resume_preempt: bool = False,
           save_folder_path: str | None = None,
+          MY_ARTIFACT_LOCATION: str | None = None,
           LOCAL_RANK: int | None = None,
           WORLD_SIZE: int | None = None,
           RANK: int | None = None,
@@ -203,7 +222,7 @@ def train(args: dict,
     if rank==0:
         save_path = os.path.join(save_folder_path, f'{write_tag}' + '-ep{epoch}.pth.tar')
         latest_path = os.path.join(save_folder_path, f'{write_tag}-latest.pth.tar')
-        if load_model and os.path.exists(latest_path):
+        if load_model:
             load_path = os.path.join(
                 load_folder_path, r_file) if r_file is not None else latest_path
     else:
@@ -480,6 +499,15 @@ def train(args: dict,
                     return z
 
                 def loss_fn(z, h):
+                    # Log shapes and sizes when rank=0
+                    if rank == 0 and itr % log_freq == 0:  # Only log periodically to avoid spam
+                        logger.info(f"z shape: {z.shape}, h shape: {h.shape}")
+                        logger.info(f"z size: {z.size()}, h size: {h.size()}")
+                        logger.info(f"z tensor: {z[:2, :2, :2]}")  # Log first few values
+                        logger.info(f"h tensor: {h[:2, :2, :2]}")  # Log first few values
+                        logger.info(f"z memory: {z.element_size() * z.nelement() / 1024**2:.2f} MB")
+                        logger.info(f"h memory: {h.element_size() * h.nelement() / 1024**2:.2f} MB")
+
                     # Calculate loss per GPU
                     loss = F.smooth_l1_loss(z, h, reduction='mean')
 
@@ -582,3 +610,13 @@ def train(args: dict,
         # -- Save Checkpoint after every epoch
         logger.info(f'avg. loss {loss_meter.avg:.3f}')
         save_checkpoint(epoch + 1)
+
+    logger.info("Training completed")
+    logger.info("Copying artifacts")
+    logger.info(f"Folder path: {save_folder_path}")
+    logger.info(f"My artifact location: {MY_ARTIFACT_LOCATION}")
+
+    # Run the async copy operation
+    asyncio.run(copy_artifacts_wrapper(save_folder_path, MY_ARTIFACT_LOCATION))
+
+    logger.info("Artifact copy completed successfully")
