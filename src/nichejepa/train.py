@@ -470,9 +470,6 @@ def train(args: dict,
                     logger.info(f"h memory: {h.element_size() * h.nelement() / 1024**2:.2f} MB")
 
                 loss = F.smooth_l1_loss(z, h, reduction='mean')
-                if world_size > 1:
-                    dist.all_reduce(loss, op=dist.ReduceOp.SUM)
-                    loss = loss / world_size
                 return loss
 
             with torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=use_bfloat16):
