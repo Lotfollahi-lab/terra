@@ -2,26 +2,25 @@
 # they will be treated as environmental variables.
 
 job_requirement:
-  LSB_DEFAULT_USERGROUP: team361  # The user group to be used for scheduling the job.
   QUEUE: "gpu-parallel"  # The job queue to be used for scheduling the job.
   NUM_NODES: 1  # Number of compute nodes required for the job.
   NUM_GPUS_NODE: 8  # Number of GPUs per node.
   NUM_PROCESSES_NODE: 64  # Number of processes per node.
   MEM_NODE: 800  # Memory allocated per node (in GB).
-  
+
 infiniband:
   NCCL_IB_DISABLE: 1  # 1: Disable InfiniBand, 0: Enable InfiniBand
 
 environment:
-  ENV_PATH: "/nfs/users/nfs_s/sb75/.venvs/nemo"  # Path to the environment to be activated.
+  ENV_PATH: "/software/isg/users/fg12/envs/nichejepa"  # Path to the environment to be activated.
 
 #artifact:
-  ARTIFACT_LOCATION: "/lustre/scratch126/cellgen/team361/sb75/nichejepa-reproducibility/artifacts/hst_corpus_70m"  # Path to store the artifacts.
-  EXPERIMENT_NAME: "nemo"  # Name of the experiment.
+  ARTIFACT_LOCATION: "/lustre/scratch127/admin/isg/fg12/nichejepa"  # Path to store the artifacts.
+  EXPERIMENT_NAME: "nemo_async"  # Name of the experiment.
   RUN_NAME: "gthugeblockassayspecial-1"  # Name of the run.
 
 runner_script:
   RUNNER_SCRIPT: "job_config/runner.sh"  # Path to the runner script.
   TRAINING_SCRIPT_PATH: "main_dist.py"  # Path to the training script.
   BACKEND: "nccl"  # Backend for distributed training.
-  CONFIG_FILE: "/lustre/scratch126/cellgen/team361/sb75/nichejepa-reproducibility/config/model/hst_corpus_70m_cell_graph_counts5.yaml"
+  CONFIG_FILE: "/lustre/scratch126/cellgen/team361/sb75/nichejepa-reproducibility/config/model/xhs1000-39b_1p_cell_graph_counts.yaml"

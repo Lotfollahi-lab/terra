@@ -6,7 +6,6 @@ import torch.distributed as dist
 from src.nichejepa.train import train
 from src.nichejepa.datasets.utils import prepare_dataset
 from src.nichejepa.utils.config import create_params_from_YAML_wandb_config
-from src.nichejepa.utils.copy_artifacts_from_tmp import copy_artifacts_async
 import wandb
 import sys
 # Add the root directory to sys.path
@@ -24,21 +23,7 @@ logger = logging.getLogger()
 
 # ==========================
 
-async def copy_artifacts_wrapper(artifact_location: str, my_artifact_location: str) -> None:
-    """
-    Wrapper function to copy artifacts with logging.
 
-    Args:
-        artifact_location (str): Source artifacts directory
-        my_artifact_location (str): Destination artifacts directory
-    """
-    try:
-        logger.info(f"Starting artifact copy from {artifact_location} to {my_artifact_location}")
-        await copy_artifacts_async(artifact_location, my_artifact_location)
-        logger.info("Artifact copy completed successfully")
-    except Exception as e:
-        logger.error(f"Failed to copy artifacts: {str(e)}")
-        raise
 
 # Function to retrieve and log distributed environment variables
 def get_distributed_info():
@@ -147,6 +132,13 @@ def main():
         timeout=timedelta(seconds=120)
     )
 
+    # First, handle artifacts (for rank 0 only)
+    if WORLD_RANK == 0:
+        MY_ARTIFACT_LOCATION = os.path.join(os.environ.get('OUTPUT_DIR'), "artifacts")
+        logger.info(f"My artifact location: {MY_ARTIFACT_LOCATION}")
+        if not os.path.exists(MY_ARTIFACT_LOCATION):
+            os.makedirs(MY_ARTIFACT_LOCATION, exist_ok=True)
+
     train_dataset, val_dataset, test_dataset = prepare_dataset(params)
     train(params,
           train_dataset,
@@ -156,19 +148,6 @@ def main():
           WORLD_SIZE=WORLD_SIZE,
           RANK=WORLD_RANK)
 
-    logger.info("Training completed")
-    logger.info("Copying artifacts")
-    logger.info(f"Folder path: {folder_path}")
-
-
-    # First, handle artifacts (for rank 0 only)
-    if WORLD_RANK == 0:
-        MY_ARTIFACT_LOCATION = os.path.join(os.environ.get('OUTPUT_DIR'), "artifacts")
-        logger.info(f"My artifact location: {MY_ARTIFACT_LOCATION}")
-        if not os.path.exists(MY_ARTIFACT_LOCATION):
-            os.makedirs(MY_ARTIFACT_LOCATION, exist_ok=True)
-        # Run the async copy operation
-        asyncio.run(copy_artifacts_wrapper(folder_path, MY_ARTIFACT_LOCATION))
 
 if __name__ == "__main__":
     # Print Torch Version
