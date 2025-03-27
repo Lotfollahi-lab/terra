@@ -94,11 +94,18 @@ def train(args: dict,
         Dictionary containing the hyperparams from the config file.
     train_dataset:
         Train split of huggingface dataset.
-    resume_preempt:
-    save_folder_path:
+    resume_preempt: bool, optional
+        Whether to resume from a preempted job.
+    save_folder_path: str, optional
         Path for saving model artifacts.
-    LOCAL_RANK:
+    MY_ARTIFACT_LOCATION: str, optional
+        Destination path for copying artifacts.
+    LOCAL_RANK: int, optional
         Rank of the process.
+    WORLD_SIZE: int, optional
+        Total number of processes.
+    RANK: int, optional
+        Global rank of the process.
     """
     # Set random seeds
     np.random.seed(_GLOBAL_SEED)
@@ -400,14 +407,115 @@ def train(args: dict,
         maskB_meter = AverageMeter()
         time_meter = AverageMeter()
 
-        for itr, (udata, masks_enc, masks_pred, masks_attention) in enumerate(
-        train_loader):
+        def train_step(tokens, segments, positions, counts, masks_enc, masks_pred, masks_attention, itr, epoch):
+            _new_lr = scheduler.step()
+            _new_wd = wd_scheduler.step()
+
+            def forward_target():
+                with torch.no_grad():
+                    if gt_type == 'rank':
+                        h, _, _, _ = target_encoder(
+                            tokens=tokens,
+                            segments=segments,
+                            positions=positions,
+                            masks_attention=masks_attention)
+                    elif gt_type == 'counts':
+                        h, _, _, _ = target_encoder(
+                            tokens=tokens,
+                            segments=segments,
+                            counts=counts,
+                            masks_attention=masks_attention)
+
+                    h = F.layer_norm(h, (h.size(-1),))
+                    h = apply_masks(h, masks_pred)
+                    B = len(h)
+                    h = repeat_interleave_batch(h, B, repeat=len(masks_enc))
+                    return h
+
+            def forward_context():
+                if gt_type == 'rank':
+                    z, pos_emb, seg_emb, token_emb = encoder(
+                        positions=positions,
+                        segments=segments,
+                        tokens=tokens,
+                        masks=masks_enc,
+                        masks_attention=None)
+                    z = predictor(z=z,
+                                pos_embed=pos_emb,
+                                segments=segments,
+                                token_embed=token_emb,
+                                masks_enc=masks_enc,
+                                masks_pred=masks_pred,
+                                masks_attention=None)
+                elif gt_type == 'counts':
+                    z, token_emb, seg_emb, value_emb = encoder(
+                        tokens=tokens,
+                        segments=segments,
+                        counts=counts,
+                        masks=masks_enc,
+                        masks_attention=None)
+                    z = predictor(z=z,
+                                token_embed=token_emb,
+                                segments=segments,
+                                counts=counts,
+                                masks_enc=masks_enc,
+                                masks_pred=masks_pred,
+                                masks_attention=None)
+                return z
+
+            def loss_fn(z, h, itr):
+                if rank == 0 and itr % log_freq == 0:
+                    logger.info(f"z shape: {z.shape}, h shape: {h.shape}")
+                    logger.info(f"z memory: {z.element_size() * z.nelement() / 1024**2:.2f} MB")
+                    logger.info(f"h memory: {h.element_size() * h.nelement() / 1024**2:.2f} MB")
+
+                loss = F.smooth_l1_loss(z, h, reduction='mean')
+                if world_size > 1:
+                    dist.all_reduce(loss, op=dist.ReduceOp.SUM)
+                    loss = loss / world_size
+                return loss
+
+            with torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=use_bfloat16):
+                h = forward_target()
+                z = forward_context()
+                loss = loss_fn(z, h, itr)
+
+            _enc_norm, _pred_norm = 0., 0.
+            if use_bfloat16:
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+            else:
+                loss.backward()
+            if ((epoch + 1) > warmup) and (clip_grad is not None):
+                _enc_norm = torch.nn.utils.clip_grad_norm_(encoder.parameters(), clip_grad)
+                _pred_norm = torch.nn.utils.clip_grad_norm_(predictor.parameters(), clip_grad)
+            if use_bfloat16:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
+            grad_stats = grad_logger(encoder.named_parameters())
+            grad_stats.global_norm = float(_enc_norm)
+            grad_stats_pred = grad_logger(predictor.named_parameters())
+            grad_stats_pred.global_norm = float(_pred_norm)
+            optimizer.zero_grad()
+
+            with torch.no_grad():
+                m = next(momentum_scheduler)
+                for param_q, param_k in zip(encoder.parameters(), target_encoder.parameters(), strict=True):
+                    param_k.data.mul_(m).add_((1.-m) * param_q.detach().data)
+
+            return (float(loss), _new_lr, _new_wd, grad_stats, grad_stats_pred)
+
+        for itr, (udata, masks_enc, masks_pred, masks_attention) in enumerate(train_loader):
             tokens = udata[0].to(device, non_blocking=True)
             segments = udata[1].to(device, non_blocking=True)
             if gt_type == 'rank':
                 positions = udata[2].to(device, non_blocking=True)
+                counts = None
             elif gt_type == 'counts':
                 counts = udata[2].to(device, non_blocking=True)
+                positions = None
             masks_enc = [u.to(device, non_blocking=True) for u in masks_enc]
             masks_pred = [u.to(device, non_blocking=True) for u in masks_pred]
             masks_attention = masks_attention.to(device, non_blocking=True)
@@ -415,147 +523,8 @@ def train(args: dict,
             maskA_meter.update(len(masks_enc[0][0]))
             maskB_meter.update(len(masks_pred[0][0]))
 
-            def train_step():
-                _new_lr = scheduler.step()
-                _new_wd = wd_scheduler.step()
-
-                def forward_target():
-                    with torch.no_grad():
-                        # no backward pass for target encoder
-                        # Target encorder forward pass with output dim
-                        # (BATCH_SIZE, SEQ_LEN, EMBED_DIM)
-                        if gt_type == 'rank':
-                            h, _, _, _ = target_encoder(
-                                tokens=tokens,
-                                segments=segments,
-                                positions=positions,
-                                masks_attention=masks_attention)
-                        elif gt_type == 'counts':
-                            h, _, _, _ = target_encoder(
-                                tokens=tokens,
-                                segments=segments,
-                                counts=counts,
-                                masks_attention=masks_attention)
-
-                        # Normalize over feature dim
-                        h = F.layer_norm(h, (h.size(-1),))
-
-                        # Only keep encoded targets (masked genes of h); output
-                        # dim (BATCH_SIZE * N_TARGETS, TARGET_MASK_SIZE,
-                        # EMB_SIZE)
-                        h = apply_masks(
-                            h,
-                            masks_pred)
-                        B = len(h)
-
-                        # Repeat targets if multiple contexts; output dim
-                        # (BATCH_SIZE * N_TARGETS * N_CONTEXTS,
-                        # TARGET_MASK_SIZE, EMB_DIM)
-                        h = repeat_interleave_batch(
-                            h,
-                            B,
-                            repeat=len(masks_enc))
-
-                        return h
-
-                def forward_context():
-                    # Context encoder forward pass with output dim (BATCH_SIZE,
-                    # MIN_CONTEXT_SIZE, EMB_DIM) where MIN_CONTEXT_SIZE is
-                    # minmum context size in the batch after removal of
-                    # overlapping targets
-                    if gt_type == 'rank':
-                        z, pos_emb, seg_emb, token_emb = encoder(
-                            positions=positions,
-                            segments=segments,
-                            tokens=tokens,
-                            masks=masks_enc,
-                            masks_attention=None)
-                    elif gt_type == 'counts':
-                        z, token_emb, seg_emb, value_emb = encoder(
-                            tokens=tokens,
-                            segments=segments,
-                            counts=counts,
-                            masks=masks_enc,
-                            masks_attention=None)
-
-                    # Predictor forward pass with output dim (BATCH_SIZE *
-                    # N_TARGETS * N_CONTEXTS, TARGET_MASK_SIZE, EMB_DIM)
-                    if gt_type == 'rank':
-                        z = predictor(z=z,
-                                      pos_embed=pos_emb,
-                                      segments=segments,
-                                      token_embed=token_emb,
-                                      masks_enc=masks_enc,
-                                      masks_pred=masks_pred,
-                                      masks_attention=None)
-                    elif gt_type == 'counts':
-                        z = predictor(z=z,
-                                      token_embed=token_emb,
-                                      segments=segments,
-                                      counts=counts,
-                                      masks_enc=masks_enc,
-                                      masks_pred=masks_pred,
-                                      masks_attention=None)
-                    return z
-
-                def loss_fn(z, h):
-                    # Log shapes and sizes when rank=0
-                    if rank == 0 and itr % log_freq == 0:  # Only log periodically to avoid spam
-                        logger.info(f"z shape: {z.shape}, h shape: {h.shape}")
-                        logger.info(f"z size: {z.size()}, h size: {h.size()}")
-                        logger.info(f"z tensor: {z[:2, :2, :2]}")  # Log first few values
-                        logger.info(f"h tensor: {h[:2, :2, :2]}")  # Log first few values
-                        logger.info(f"z memory: {z.element_size() * z.nelement() / 1024**2:.2f} MB")
-                        logger.info(f"h memory: {h.element_size() * h.nelement() / 1024**2:.2f} MB")
-
-                    # Calculate loss per GPU
-                    loss = F.smooth_l1_loss(z, h, reduction='mean')
-
-                    # Average loss across all GPUs
-                    if world_size > 1:
-                        dist.all_reduce(loss, op=dist.ReduceOp.SUM)
-                        loss = loss / world_size
-
-                    return loss
-
-                # Step 1: forward pass
-                with torch.cuda.amp.autocast(dtype=torch.bfloat16,
-                                             enabled=use_bfloat16):
-                    h = forward_target()
-                    z = forward_context()
-                    loss = loss_fn(z, h)
-
-                # Step 2: backward pass and step
-                _enc_norm, _pred_norm = 0., 0.
-                if use_bfloat16:
-                    scaler.scale(loss).backward()
-                    scaler.unscale_(optimizer)
-                else:
-                    loss.backward()
-                if ((epoch + 1) > warmup) and (clip_grad is not None):
-                    _enc_norm = torch.nn.utils.clip_grad_norm_(
-                        encoder.parameters(), clip_grad)
-                    _pred_norm = torch.nn.utils.clip_grad_norm_(
-                        predictor.parameters(), clip_grad)
-                if use_bfloat16:
-                    scaler.step(optimizer)
-                    scaler.update()
-                else:
-                    optimizer.step()
-                grad_stats = grad_logger(encoder.named_parameters())
-                grad_stats.global_norm = float(_enc_norm)
-                grad_stats_pred = grad_logger(predictor.named_parameters())
-                grad_stats_pred.global_norm = float(_pred_norm)
-                optimizer.zero_grad()
-
-                # Step 3: momentum update of target encoder
-                with torch.no_grad():
-                    m = next(momentum_scheduler)
-                    for param_q, param_k in zip(encoder.parameters(), target_encoder.parameters(), strict=True):
-                        param_k.data.mul_(m).add_((1.-m) * param_q.detach().data)
-
-                return (float(loss), _new_lr, _new_wd, grad_stats, grad_stats_pred)
-            (loss, _new_lr, _new_wd, grad_stats, grad_stats_pred), etime = gpu_timer(train_step)
+            (loss, _new_lr, _new_wd, grad_stats, grad_stats_pred), etime = gpu_timer(
+                lambda: train_step(tokens, segments, positions, counts, masks_enc, masks_pred, masks_attention, itr, epoch))
             loss_meter.update(loss)
             time_meter.update(etime)
 
@@ -612,11 +581,19 @@ def train(args: dict,
         save_checkpoint(epoch + 1)
 
     logger.info("Training completed")
-    logger.info("Copying artifacts")
-    logger.info(f"Folder path: {save_folder_path}")
-    logger.info(f"My artifact location: {MY_ARTIFACT_LOCATION}")
 
-    # Run the async copy operation
-    asyncio.run(copy_artifacts_wrapper(save_folder_path, MY_ARTIFACT_LOCATION))
+    # Only attempt to copy artifacts if both paths are provided
+    if save_folder_path and MY_ARTIFACT_LOCATION:
+        logger.info("Copying artifacts")
+        logger.info(f"From: {save_folder_path}")
+        logger.info(f"To: {MY_ARTIFACT_LOCATION}")
 
-    logger.info("Artifact copy completed successfully")
+        # Run the async copy operation
+        asyncio.run(copy_artifacts_wrapper(save_folder_path, MY_ARTIFACT_LOCATION))
+        logger.info("Artifact copy completed successfully")
+    else:
+        logger.warning("Skipping artifact copy: save_folder_path or MY_ARTIFACT_LOCATION not provided")
+        if not save_folder_path:
+            logger.warning("save_folder_path is None")
+        if not MY_ARTIFACT_LOCATION:
+            logger.warning("MY_ARTIFACT_LOCATION is None")
