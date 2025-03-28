@@ -308,14 +308,14 @@ def infer(args: dict,
             emb_list = []
             for emb_layer in emb_layers:
                 if gt_type == 'rank':
-                    emb_list.append(target_encoder.return_layer_emb(
+                    emb_list.append(target_encoder.backbone.return_layer_emb(
                         layer=emb_layer,
                         positions=positions,
                         segments=segments,
                         tokens=tokens,
                         masks_attention=masks_attention).cpu())
                 elif gt_type == 'counts':
-                    emb_list.append(target_encoder.return_layer_emb(
+                    emb_list.append(target_encoder.backbone.return_layer_emb(
                         layer=emb_layer,
                         tokens=tokens,
                         segments=segments,
