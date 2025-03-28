@@ -102,7 +102,7 @@ def load_checkpoint(device: str,
             pretrained_dict = checkpoint['target_encoder']
             if not is_training:
                 pretrained_dict = {
-                    key.replace("module.", ""): value for key, value in 
+                    key.replace("module.", ""): value for key, value in
                     pretrained_dict.items()}
             msg = target_encoder.load_state_dict(pretrained_dict)
             logger.info(
@@ -116,11 +116,11 @@ def load_checkpoint(device: str,
         if scaler is not None:
             scaler.load_state_dict(checkpoint['scaler'])
             logger.info(f'Loaded scaler from epoch {epoch}.')
-        
+
         logger.info(f'Finished loading checkpoint with read path: {r_path}.')
         del checkpoint
 
-    except Exception as e:
+    except (FileNotFoundError, RuntimeError, KeyError) as e:
         logger.info(f'Encountered exception when loading checkpoint: {e}.')
         epoch = 0
 
@@ -136,7 +136,7 @@ def init_model(gt_type: Literal['rank', 'count'],
                n_special_tokens: int,
                n_segments: int,
                n_special_values: Optional[int]=None,
-               enc_emb_dim: int=768, 
+               enc_emb_dim: int=768,
                enc_depth: int=12,
                pred_emb_dim: int=384,
                pred_depth: int=6,
@@ -167,7 +167,7 @@ def init_model(gt_type: Literal['rank', 'count'],
     enc_depth:
         Number of transformer blocks in the encoder.
     pred_emb_dim:
-        Dimension of the predictor embedding.        
+        Dimension of the predictor embedding.
     pred_depth:
         Number of transformer blocks in the predictor.
     use_flash_attention:
@@ -226,10 +226,10 @@ def init_model(gt_type: Literal['rank', 'count'],
     encoder.to(device)
     predictor.to(device)
     logger.info(encoder)
-    
+
     return encoder, predictor
 
-    
+
 def init_opt(encoder: gt.GeneTransformerBaseEncoder,
              predictor: gt.GeneTransformerBasePredictor,
              iterations_per_epoch: int,
@@ -270,7 +270,7 @@ def init_opt(encoder: gt.GeneTransformerBaseEncoder,
     optimizer:
     scaler:
     scheduler:
-    wd_scheduler:    
+    wd_scheduler:
     """
     param_groups = [{'params': (p for n, p in encoder.named_parameters()
                                 if ('bias' not in n) and (len(p.shape) != 1))},
@@ -298,7 +298,7 @@ def init_opt(encoder: gt.GeneTransformerBaseEncoder,
         ref_lr=ref_lr,
         final_lr=final_lr,
         T_max=int(ipe_scale*num_epochs*iterations_per_epoch))
-    
+
     # Initialize weight decay scheduler
     logger.info('Initializing weight decay scheduler: CosineWDSchedule.')
     wd_scheduler = CosineWDSchedule(
@@ -306,12 +306,12 @@ def init_opt(encoder: gt.GeneTransformerBaseEncoder,
         ref_wd=wd,
         final_wd=final_wd,
         T_max=int(ipe_scale*num_epochs*iterations_per_epoch))
-    
+
     # Initialize gradient scaler for automatic mixed precision training to
     # increase the loss magnitude, ensuring gradients are large enough to be
     # represented in FP16
     logger.info('Initializing automatic mixed precision training scaler: '
                 'GradScaler.')
     scaler = torch.cuda.amp.GradScaler() if use_bfloat16 else None
-    
+
     return optimizer, scaler, scheduler, wd_scheduler
