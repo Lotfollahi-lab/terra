@@ -149,7 +149,7 @@ def init_model(gt_type: Literal['rank', 'count'],
     Initialize model.
 
     Parameters
-    -----------
+    ----------
     gt_type:
         Gene transformer type.
     device:
@@ -176,7 +176,7 @@ def init_model(gt_type: Literal['rank', 'count'],
         If `True` use layer norm, else Dynamic Tanh.
 
     Returns
-    -----------
+    -------
     encoder:
         Initialized GeneTransformerEncoder module.
     predictor:
@@ -247,30 +247,60 @@ def init_opt(encoder: gt.GeneTransformerBaseEncoder,
                         WarmupCosineSchedule,
                         CosineWDSchedule]:
     """
-    Initialize optimizer, learning rate scheduler, weight decay scheduler, and
-    automatic mixed precision scaler.
+    Initialize optimizer, learning rate scheduler, weight decay scheduler, and automatic mixed precision scaler.
+
+    This function sets up the complete optimization infrastructure for training, including:
+    1. AdamW optimizer with decoupled weight decay
+    2. Cosine learning rate schedule with warmup
+    3. Cosine weight decay schedule
+    4. Automatic mixed precision (AMP) training scaler
 
     Parameters
-    -----------
-    encoder:
-    predictor:
-    iterations_per_epoch:
-    start_lr:
-    ref_lr:
-    warmup:
-    num_epochs:
-    wd:
-    final_wd:
-    final_lr:
-    use_bfloat16:
-    ipe_scale:
+    ----------
+    encoder : GeneTransformerBaseEncoder
+        The encoder model whose parameters will be optimized.
+    predictor : GeneTransformerBasePredictor
+        The predictor model whose parameters will be optimized.
+    iterations_per_epoch : int
+        Number of iterations (batches) per training epoch.
+    start_lr : float
+        Initial learning rate at the beginning of the warmup phase.
+    ref_lr : float
+        Reference (maximum) learning rate after warmup phase.
+    warmup : int
+        Number of epochs for the warmup phase.
+    num_epochs : int
+        Total number of training epochs.
+    wd : float, optional
+        Initial weight decay value, by default 1e-6.
+    final_wd : float, optional
+        Final weight decay value at the end of training, by default 1e-6.
+    final_lr : float, optional
+        Final learning rate at the end of training, by default 0.0.
+    use_bfloat16 : bool, optional
+        Whether to use bfloat16 precision for training, by default False.
+    ipe_scale : float, optional
+        Scaling factor for iterations per epoch in scheduler calculations, by default 1.25.
 
     Returns
-    -----------
-    optimizer:
-    scaler:
-    scheduler:
-    wd_scheduler:
+    -------
+    Tuple[torch.optim.AdamW, torch.cuda.amp.GradScaler, WarmupCosineSchedule, CosineWDSchedule]
+        optimizer : torch.optim.AdamW
+            Initialized optimizer with separate parameter groups for weights and biases.
+        scaler : torch.cuda.amp.GradScaler or None
+            Gradient scaler for automatic mixed precision training if use_bfloat16=True, else None.
+        scheduler : WarmupCosineSchedule
+            Learning rate scheduler with warmup phase and cosine decay.
+        wd_scheduler : CosineWDSchedule
+            Weight decay scheduler with cosine decay.
+
+    Notes
+    -----
+    - The optimizer uses separate parameter groups for weights and biases, with weight decay
+      applied only to weight parameters (not biases or 1D parameters).
+    - The learning rate schedule includes a warmup phase followed by cosine decay.
+    - The weight decay follows a cosine schedule from initial to final value.
+    - When use_bfloat16=True, the scaler helps prevent underflow in mixed precision training.
     """
     param_groups = [{'params': (p for n, p in encoder.named_parameters()
                                 if ('bias' not in n) and (len(p.shape) != 1))},
