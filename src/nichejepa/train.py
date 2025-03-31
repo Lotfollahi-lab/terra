@@ -81,9 +81,9 @@ def train(args: dict,
           resume_preempt: bool = False,
           save_folder_path: str | None = None,
           my_artifact_location: str | None = None,
-          LOCAL_RANK: int | None = None,
-          WORLD_SIZE: int | None = None,
-          WORLD_RANK: int | None = None,
+          local_rank: int | None = None,
+          world_size: int | None = None,
+          world_rank: int | None = None,
           ):
     """
     Train model.
@@ -117,9 +117,9 @@ def train(args: dict,
     # Set device
     if not torch.cuda.is_available():
         device = torch.device('cpu')
-    elif LOCAL_RANK is not None:
-        device = torch.device(f"cuda:{LOCAL_RANK}")
-    elif LOCAL_RANK is  None:
+    elif local_rank is not None:
+        device = torch.device(f"cuda:{local_rank}")
+    elif local_rank is  None:
         device = torch.device('cuda:0')
         torch.cuda.set_device(device)
 
@@ -213,19 +213,19 @@ def train(args: dict,
 
     # Initialize torch distributed backend
 
-    logger.info(f'Initialized (rank/world-size) {LOCAL_RANK}/{WORLD_SIZE}.')
-    if WORLD_RANK > 0:
+    logger.info(f'Initialized (rank/world-size) {local_rank}/{world_size}.')
+    if world_rank > 0:
         logger.setLevel(logging.ERROR)
 
     # Store config file with model
-    if WORLD_RANK==0:
+    if world_rank==0:
         dump = os.path.join(save_folder_path, 'params.yaml')
         with open(dump, 'w') as f:
             yaml.dump(args, f)
 
     # Define log/checkpointing paths
     # log_file = os.path.join(save_folder_path, f'{write_tag}_r{rank}.csv')
-    if WORLD_RANK==0:
+    if world_rank==0:
         save_path = os.path.join(save_folder_path, f'{write_tag}' + '-ep{epoch}.pth.tar')
         latest_path = os.path.join(save_folder_path, f'{write_tag}-latest.pth.tar')
         if load_model:
@@ -312,8 +312,8 @@ def train(args: dict,
         cell_dataset=train_cell_dataset,
         batch_size=batch_size,
         distributed=True,
-        world_size=WORLD_SIZE,
-        rank=LOCAL_RANK,
+        world_size=world_size,
+        rank=local_rank,
         collate_fn=mask_collator,
         pin_memory=pin_memory,
         num_workers=num_workers,
@@ -340,17 +340,17 @@ def train(args: dict,
     encoder = DistributedDataParallel(
         encoder,
         static_graph=True,
-        device_ids=[LOCAL_RANK],
-        output_device=LOCAL_RANK)
+        device_ids=[local_rank],
+        output_device=local_rank)
     predictor = DistributedDataParallel(
         predictor,
         static_graph=True,
-        device_ids=[LOCAL_RANK],
-        output_device=LOCAL_RANK)
+        device_ids=[local_rank],
+        output_device=local_rank)
     target_encoder = DistributedDataParallel(
         target_encoder,
-        device_ids=[LOCAL_RANK],
-        output_device=LOCAL_RANK)
+        device_ids=[local_rank],
+        output_device=local_rank)
     for p in target_encoder.parameters():
         p.requires_grad = False
 
@@ -368,7 +368,8 @@ def train(args: dict,
             predictor=predictor,
             target_encoder=target_encoder,
             opt=optimizer,
-            scaler=scaler)
+            scaler=scaler,
+            world_rank=world_rank)
         for _ in range(start_epoch*ipe):
             scheduler.step()
             wd_scheduler.step()
@@ -384,9 +385,9 @@ def train(args: dict,
                      'epoch': epoch,
                      'loss': loss_meter.avg,
                      'batch_size': batch_size,
-                     'world_size': WORLD_SIZE,
+                     'world_size': world_size,
                      'lr': lr}
-        if WORLD_RANK == 0:
+        if world_rank == 0:
             torch.save(save_dict, latest_path)
             if (epoch) % checkpoint_freq == 0:
                 if iter_number is None:
@@ -463,18 +464,26 @@ def train(args: dict,
                 return z
 
             def loss_fn(z, h, itr):
-                if WORLD_RANK == 0 and itr % log_freq == 0:
+                if world_rank == 0 and itr % log_freq == 0:
                     logger.info(f"z shape: {z.shape}, h shape: {h.shape}")
                     logger.info(f"z memory: {z.element_size() * z.nelement() / 1024**2:.2f} MB")
                     logger.info(f"h memory: {h.element_size() * h.nelement() / 1024**2:.2f} MB")
 
                 loss = F.smooth_l1_loss(z, h, reduction='mean')
-                return loss
+                 # Clone the loss tensor to prevent in-place modifications during the all_reduce operation
+                loss_tensor = loss.clone()
+
+                # Sum the loss across all distributed processes
+                dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM, async_op=True)
+
+                # Compute the average loss by dividing the summed loss by the number of processes
+                loss_tensor /= world_size
+                return loss_tensor, loss
 
             with torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=use_bfloat16):
                 h = forward_target()
                 z = forward_context()
-                loss = loss_fn(z, h, itr)
+                loss, _ = loss_fn(z, h, itr)
 
             _enc_norm, _pred_norm = 0., 0.
             if use_bfloat16:
