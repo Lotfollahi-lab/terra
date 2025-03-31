@@ -144,7 +144,7 @@ def main():
           my_artifact_location=experiment_artifact_location,
           LOCAL_RANK=LOCAL_RANK,
           WORLD_SIZE=WORLD_SIZE,
-          RANK=WORLD_RANK)
+          WORLD_RANK=WORLD_RANK)
 
 
 if __name__ == "__main__":
