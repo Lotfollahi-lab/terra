@@ -29,6 +29,7 @@ def load_checkpoint(device: str,
                     opt: torch.optim.AdamW,
                     scaler: torch.cuda.amp.GradScaler,
                     is_training: bool=True,
+                    world_rank: int=0,
                     ) -> Tuple[gt.GeneTransformerBaseEncoder,
                                gt.GeneTransformerBasePredictor,
                                gt.GeneTransformerBaseEncoder,
@@ -77,6 +78,7 @@ def load_checkpoint(device: str,
     epoch:
         Number of epochs from checkpoint.
     """
+    checkpoint = None
     try:
         checkpoint = torch.load(r_path, map_location=torch.device(device))
 
@@ -120,9 +122,13 @@ def load_checkpoint(device: str,
         logger.info(f'Finished loading checkpoint with read path: {r_path}.')
         del checkpoint
 
-    except (FileNotFoundError, RuntimeError, KeyError) as e:
+    except Exception as e:
         logger.info(f'Encountered exception when loading checkpoint: {e}.')
         epoch = 0
+    finally:
+        if world_rank == 0:
+            logger.info(f'Finished loading checkpoint with read path: {r_path}.')
+            del checkpoint
 
     return encoder, predictor, target_encoder, opt, scaler, epoch
 
