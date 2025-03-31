@@ -133,7 +133,7 @@ def main():
         timeout=timedelta(seconds=120)
     )
 
-    # Ensure all processes wait until directory is created
+    # Wait for all processes to reach this point
     dist.barrier()
 
     train_dataset, val_dataset, test_dataset = prepare_dataset(params)
@@ -142,9 +142,9 @@ def main():
           test_dataset,
           save_folder_path=folder_path,
           my_artifact_location=experiment_artifact_location,
-          LOCAL_RANK=LOCAL_RANK,
-          WORLD_SIZE=WORLD_SIZE,
-          WORLD_RANK=WORLD_RANK)
+          local_rank=LOCAL_RANK,
+          world_size=WORLD_SIZE,
+          world_rank=WORLD_RANK)
 
 
 if __name__ == "__main__":
