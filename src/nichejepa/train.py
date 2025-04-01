@@ -12,7 +12,7 @@ import os
 import pickle
 import sys
 from datetime import datetime
-from typing import Optional
+from typing import Optional, list
 import asyncio
 from src.nichejepa.utils.copy_artifacts_from_tmp import copy_artifacts_async
 
@@ -41,7 +41,7 @@ from .masks.utils import apply_masks
 from .models.utils import repeat_interleave_batch
 from .utils.distributed import AllReduce
 from .utils.logging import AverageMeter, CSVLogger, gpu_timer, grad_logger
-
+from .utils.gpu_profiler import create_profiler
 # -- FOR DISTRIBUTED TRAINING ENSURE ONLY 1 DEVICE VISIBLE PER PROCESS
 try:
     # -- WARNING: IF DOING DISTRIBUTED TRAINING ON A NON-SLURM CLUSTER, MAKE
@@ -75,6 +75,47 @@ async def copy_artifacts_wrapper(artifact_location: str, my_artifact_location: s
     except Exception as e:
         logger.error(f"Failed to copy artifacts: {str(e)}")
         raise
+
+def compute_loss(z: torch.Tensor,
+                 h: torch.Tensor,
+                 itr: int,
+                 world_size: int,
+                 world_rank: int,
+                 log_freq: int = 100,
+                 calc_allreduce: bool = True) -> torch.Tensor:
+    """
+    Compute the smooth L1 loss between predicted (z) and target (h) embeddings.
+
+    Args:
+        z: Predicted embeddings from the predictor network
+        h: Target embeddings from the target encoder
+        itr: Current iteration number
+        world_size: Number of distributed processes
+        world_rank: Current process rank
+        log_freq: Frequency of logging tensor shapes and memory usage
+        calc_allreduce: Whether to perform all-reduce operation for distributed training
+
+    Returns
+    -------
+        torch.Tensor: Computed loss value
+    """
+    if world_rank == 0 and itr % log_freq == 0:
+        logger.info(f"z shape: {z.shape}, h shape: {h.shape}")
+        logger.info(f"z memory: {z.element_size() * z.nelement() / 1024**2:.2f} MB")
+        logger.info(f"h memory: {h.element_size() * h.nelement() / 1024**2:.2f} MB")
+
+    loss = F.smooth_l1_loss(z, h, reduction='mean')
+
+    if calc_allreduce:
+        # Clone the loss tensor to prevent in-place modifications during all_reduce
+        loss = loss.clone()
+        # Sum the loss across all distributed processes
+        dist.all_reduce(loss, op=dist.ReduceOp.SUM, async_op=True)
+        # Average the loss across processes
+        loss /= world_size
+
+    return loss
+
 
 def train(args: dict,
           train_dataset: datasets.Dataset,
@@ -395,6 +436,16 @@ def train(args: dict,
                 else:
                     torch.save(save_dict, save_path.format(epoch=f'{epoch}_{iter_number}'))
 
+    # Initialize profiler at start of epoch
+    if world_rank == 0:  # Only profile on main process
+        profiler = create_profiler(
+            save_folder_path=save_folder_path,
+            wait=2,  # Wait 2 steps before profiling
+            warmup=2,  # 2 warmup steps
+            active=5,  # Profile for 3 steps
+            repeat=2  # Repeat this schedule twice
+        )
+
     # Run training loop
     for epoch in range(start_epoch, num_epochs):
         logger.info(f"Epoch {epoch + 1}")
@@ -407,7 +458,16 @@ def train(args: dict,
         maskB_meter = AverageMeter()
         time_meter = AverageMeter()
 
-        def train_step(tokens, segments, positions, counts, masks_enc, masks_pred, masks_attention, itr, epoch):
+        def train_step(tokens: torch.Tensor,
+                       segments: torch.Tensor,
+                       positions: torch.Tensor,
+                       counts: torch.Tensor,
+                       masks_enc: list[torch.Tensor],
+                       masks_pred: list[torch.Tensor],
+                       masks_attention: torch.Tensor,
+                       itr: int,
+                       epoch: int,
+                       profiler: torch.profiler.profile | None = None):
             _new_lr = scheduler.step()
             _new_wd = wd_scheduler.step()
 
@@ -463,27 +523,12 @@ def train(args: dict,
                                 masks_attention=None)
                 return z
 
-            def loss_fn(z, h, itr):
-                if world_rank == 0 and itr % log_freq == 0:
-                    logger.info(f"z shape: {z.shape}, h shape: {h.shape}")
-                    logger.info(f"z memory: {z.element_size() * z.nelement() / 1024**2:.2f} MB")
-                    logger.info(f"h memory: {h.element_size() * h.nelement() / 1024**2:.2f} MB")
-
-                loss = F.smooth_l1_loss(z, h, reduction='mean')
-                 # Clone the loss tensor to prevent in-place modifications during the all_reduce operation
-                loss_tensor = loss.clone()
-
-                # Sum the loss across all distributed processes
-                dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM, async_op=True)
-
-                # Compute the average loss by dividing the summed loss by the number of processes
-                loss_tensor /= world_size
-                return loss_tensor, loss
-
-            with torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=use_bfloat16):
-                h = forward_target()
-                z = forward_context()
-                loss, _ = loss_fn(z, h, itr)
+            # Fine-grained profiling for the forward pass and loss computation.
+            with torch.profiler.record_function("forward_and_loss"):
+                with torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=use_bfloat16):
+                    h = forward_target()
+                    z = forward_context()
+                    loss = compute_loss(z, h, itr, world_size, world_rank, log_freq)
 
             _enc_norm, _pred_norm = 0., 0.
             if use_bfloat16:
@@ -499,6 +544,11 @@ def train(args: dict,
                 scaler.update()
             else:
                 optimizer.step()
+
+            if profiler is not None:
+                torch.cuda.synchronize()  # Ensure GPU ops complete before stepping profiler
+                profiler.step()
+
             grad_stats = grad_logger(encoder.named_parameters())
             grad_stats.global_norm = float(_enc_norm)
             grad_stats_pred = grad_logger(predictor.named_parameters())
@@ -528,8 +578,16 @@ def train(args: dict,
             maskA_meter.update(len(masks_enc[0][0]))
             maskB_meter.update(len(masks_pred[0][0]))
 
-            (loss, _new_lr, _new_wd, grad_stats, grad_stats_pred), etime = gpu_timer(
-                lambda: train_step(tokens, segments, positions, counts, masks_enc, masks_pred, masks_attention, itr, epoch))
+            if world_rank == 0:  # Only profile on main process
+                with profiler:
+                    (loss, _new_lr, _new_wd, grad_stats, grad_stats_pred), etime = gpu_timer(
+                        lambda: train_step(tokens, segments, positions, counts, masks_enc, masks_pred, masks_attention, itr, epoch, profiler))
+                    torch.cuda.synchronize()  # Ensure all asynchronous GPU ops complete
+                    profiler.step()
+            else:
+                (loss, _new_lr, _new_wd, grad_stats, grad_stats_pred), etime = gpu_timer(
+                    lambda: train_step(tokens, segments, positions, counts, masks_enc, masks_pred, masks_attention, itr, epoch, profiler))
+
             loss_meter.update(loss)
             time_meter.update(etime)
 
