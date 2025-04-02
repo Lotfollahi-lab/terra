@@ -12,7 +12,7 @@ import os
 import pickle
 import sys
 from datetime import datetime
-from typing import Optional, list
+from typing import Optional, List
 import asyncio
 from src.nichejepa.utils.copy_artifacts_from_tmp import copy_artifacts_async
 
@@ -436,6 +436,9 @@ def train(args: dict,
                 else:
                     torch.save(save_dict, save_path.format(epoch=f'{epoch}_{iter_number}'))
 
+    # Define profiler in a common scope
+    profiler = None
+
     # Initialize profiler at start of epoch
     if world_rank == 0:  # Only profile on main process
         profiler = create_profiler(
@@ -462,11 +465,11 @@ def train(args: dict,
                        segments: torch.Tensor,
                        positions: torch.Tensor,
                        counts: torch.Tensor,
-                       masks_enc: list[torch.Tensor],
-                       masks_pred: list[torch.Tensor],
-                       masks_attention: torch.Tensor,
-                       itr: int,
-                       epoch: int,
+                       masks_enc: List[torch.Tensor] | None = None,
+                       masks_pred: List[torch.Tensor] | None = None,
+                       masks_attention: torch.Tensor | None = None,
+                       itr: int = 0,
+                       epoch: int = 0,
                        profiler: torch.profiler.profile | None = None):
             _new_lr = scheduler.step()
             _new_wd = wd_scheduler.step()
@@ -555,10 +558,11 @@ def train(args: dict,
             grad_stats_pred.global_norm = float(_pred_norm)
             optimizer.zero_grad()
 
-            with torch.no_grad():
-                m = next(momentum_scheduler)
-                for param_q, param_k in zip(encoder.parameters(), target_encoder.parameters(), strict=True):
-                    param_k.data.mul_(m).add_((1.-m) * param_q.detach().data)
+            with torch.profiler.record_function("weight_update"):
+                with torch.no_grad():
+                    m = next(momentum_scheduler)
+                    for param_q, param_k in zip(encoder.parameters(), target_encoder.parameters(), strict=True):
+                        param_k.data.mul_(m).add_((1.-m) * param_q.detach().data)
 
             return (float(loss), _new_lr, _new_wd, grad_stats, grad_stats_pred)
 
