@@ -31,3 +31,5 @@ logs/
 wandb/
 .ipynb_checkpoints
 artifacts/
+.cursorrules
+.cursor/rules
