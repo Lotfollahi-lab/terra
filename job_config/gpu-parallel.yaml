@@ -2,11 +2,11 @@
 # they will be treated as environmental variables.
 
 job_requirement:
-  QUEUE: "gpu-parallel"  # The job queue to be used for scheduling the job.
+  QUEUE: "qpg"  # The job queue to be used for scheduling the job.
   NUM_NODES: 1  # Number of compute nodes required for the job.
-  NUM_GPUS_NODE: 8  # Number of GPUs per node.
+  NUM_GPUS_NODE: 4  # Number of GPUs per node.
   NUM_PROCESSES_NODE: 64  # Number of processes per node.
-  MEM_NODE: 800  # Memory allocated per node (in GB).
+  MEM_NODE: 600  # Memory allocated per node (in GB).
 
 infiniband:
   NCCL_IB_DISABLE: 1  # 1: Disable InfiniBand, 0: Enable InfiniBand
