@@ -6,7 +6,11 @@ def create_profiler(save_folder_path: str,
                     wait: int = 2,
                     warmup: int = 2,
                     active: int = 3,
-                    repeat: int = 1) -> torch.profiler.profile:
+                    repeat: int = 1,
+                    use_cuda: bool = True,
+                    with_stack: bool = True,
+                    with_flops: bool = True,
+                    with_modules: bool = True) -> torch.profiler.profile:
     """
     Creates and returns a configured PyTorch profiler instance.
 
@@ -43,10 +47,10 @@ def create_profiler(save_folder_path: str,
         on_trace_ready=torch.profiler.tensorboard_trace_handler(output_dir),
         record_shapes=True,
         profile_memory=True,
-        with_stack=True,  # Enable stack traces for better debugging
-        with_flops=True,  # Enable FLOPS counting
-        with_modules=True,  # Enable module-level profiling
-        use_cuda=True  # Enable CUDA profiling
+        with_stack=with_stack,
+        with_flops=with_flops,
+        with_modules=with_modules,
+        use_cuda=use_cuda
     )
 
     return profiler
