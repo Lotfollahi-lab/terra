@@ -6,7 +6,7 @@ import torch.distributed as dist
 from src.nichejepa.train import train
 from src.nichejepa.datasets.utils import prepare_dataset
 from src.nichejepa.utils.config import create_params_from_YAML_wandb_config
-from src.nichejepa.utils.setup_experiment_folders import setup_experiment_folders, setup_artifact_location
+from src.nichejepa.utils.setup_experiment_folders import setup_folders
 import wandb
 import sys
 # Add the root directory to sys.path
@@ -90,31 +90,18 @@ def main():
     logger.info(f'Called with params from {args.fname}.')
     logger.info(f'Params: {params}.')
 
-    TMP_ARTIFACT_LOCATION = "/tmp"
-
-    folder_path = setup_experiment_folders(
-        WORLD_RANK,
-        TMP_ARTIFACT_LOCATION,
-        params,
-        logger
-    )
 
     # Handle artifacts (create directory only on rank 0, but share path with all ranks)
     output_dir = os.environ.get('OUTPUT_DIR')
     if not output_dir:
         raise ValueError("OUTPUT_DIR environment variable must be set")
 
-    artifact_location = setup_artifact_location(
-        WORLD_RANK,
-        os.path.join(output_dir, "artifacts"),
-        logger
-    )
-
-    experiment_artifact_location = setup_experiment_folders(
-        WORLD_RANK,
-        artifact_location,
-        params,
-        logger
+    folder_path, experiment_artifact_location = setup_folders(
+        world_rank=WORLD_RANK,
+        tmp_artifact_path="/tmp",
+        artifact_location=os.path.join(output_dir, "artifacts"),
+        params=params,
+        logger=logger
     )
 
     # if WORLD_RANK==0:
