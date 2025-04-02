@@ -446,7 +446,11 @@ def train(args: dict,
             wait=2,  # Wait 2 steps before profiling
             warmup=2,  # 2 warmup steps
             active=5,  # Profile for 3 steps
-            repeat=2  # Repeat this schedule twice
+            repeat=2,  # Repeat this schedule twice
+            use_cuda=True, # Enable CUDA profiling
+            with_stack=False, # Disable stack traces
+            with_flops=True, # Enable FLOPS counting
+            with_modules=True # Enable module-level profiling
         )
 
     # Run training loop
