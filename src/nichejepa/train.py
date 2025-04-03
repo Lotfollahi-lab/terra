@@ -41,7 +41,6 @@ from .datasets.dataloaders import init_dataloader_and_sampler
 from .helper import (init_model,
                      init_opt,
                      load_checkpoint)
-from .masks.random_masking import RandomMaskCollator
 from .masks.block_masking  import BlockMaskCollator
 from .masks.cell_masking import CelllMaskCollator
 from .masks.utils import apply_masks
@@ -96,7 +95,7 @@ def train(args: dict,
         device = torch.device('cpu')
     elif LOCAL_RANK is not None:
         device = torch.device(f"cuda:{LOCAL_RANK}")
-    elif LOCAL_RANK is  None:
+    elif LOCAL_RANK is None:
         device = torch.device('cuda:0')
         torch.cuda.set_device(device)
 
@@ -141,6 +140,14 @@ def train(args: dict,
     target_mask_size = args['mask']['target_mask_size']
     per_block_mask_ratio = args['mask']['per_block_mask_ratio']
     targets_list = args['mask']['targets_list']
+    if 'constrain_attention_enc' in args['mask'].keys():
+        constrain_attention_enc = args['mask']['constrain_attention_enc']
+    else:
+        constrain_attention_enc = False
+    if 'constrain_attention_pred' in args['mask'].keys():
+        constrain_attention_pred = args['mask']['constrain_attention_pred']
+    else:
+        constrain_attention_pred = False
 
     warmup = args['optimization']['warmup']
     num_epochs = args['optimization']['epochs']
@@ -273,7 +280,9 @@ def train(args: dict,
             seq_len_cell=seq_len_cell,
             seq_len_neighborhood=seq_len_neighborhood,
             n_special_tokens=n_special_tokens,
-            per_block_mask_ratio=per_block_mask_ratio)
+            per_block_mask_ratio=per_block_mask_ratio,
+            constrain_attention_enc=constrain_attention_enc,
+            constrain_attention_pred=constrain_attention_pred)
     elif cell_masking:
        mask_collator = CelllMaskCollator(
             n_targets=n_targets,
@@ -283,16 +292,9 @@ def train(args: dict,
             seq_len_neighborhood=seq_len_neighborhood,
             n_special_tokens=n_special_tokens,
             per_block_mask_ratio=per_block_mask_ratio,
-            targets_list=targets_list)
-    else:
-        mask_collator = RandomMaskCollator(
-            n_targets=n_targets,
-            n_contexts=n_contexts,
-            seq_len_cell=seq_len_cell,
-            seq_len_neighborhood=seq_len_neighborhood,
-            n_special_tokens=n_special_tokens,
-            target_mask_size=target_mask_size,
-            context_mask_size=context_mask_size,)
+            targets_list=targets_list,
+            constrain_attention_enc=constrain_attention_enc,
+            constrain_attention_pred=constrain_attention_pred)
     
     # Initialize train and test datasets, dataloaders and samplers
     train_cell_dataset = make_cell_dataset(
@@ -404,7 +406,7 @@ def train(args: dict,
         maskB_meter = AverageMeter()
         time_meter = AverageMeter()
 
-        for itr, (udata, masks_enc, masks_pred, masks_attention) in enumerate(
+        for itr, (udata, masks_enc, masks_pred, masks_attention, masks_attention_enc, masks_attention_pred) in enumerate(
         train_loader):
             tokens = udata[0].to(device, non_blocking=True)
             segments = udata[1].to(device, non_blocking=True)
@@ -415,6 +417,10 @@ def train(args: dict,
             masks_enc = [u.to(device, non_blocking=True) for u in masks_enc]
             masks_pred = [u.to(device, non_blocking=True) for u in masks_pred]
             masks_attention = masks_attention.to(device, non_blocking=True)
+            if masks_attention_enc is not None:
+                masks_attention_enc = masks_attention_enc.to(device, non_blocking=True)
+            if masks_attention_pred is not None:
+                masks_attention_pred = masks_attention_pred.to(device, non_blocking=True)
 
             assert len(masks_enc) == 1, 'Currently require num encoder masks = 1'
 
@@ -468,14 +474,14 @@ def train(args: dict,
                             segments=segments,
                             tokens=tokens,
                             masks=masks_enc,
-                            masks_attention=None)                       
+                            masks_attention=masks_attention_enc)                       
                     elif gt_type == 'counts':
                         z, token_emb = encoder(
                             tokens=tokens,
                             segments=segments,
                             counts=counts,
                             masks=masks_enc,
-                            masks_attention=None)
+                            masks_attention=masks_attention_enc)
 
                     # Predictor forward pass with output dim (BATCH_SIZE *
                     # N_TARGETS * N_CONTEXTS, TARGET_MASK_SIZE, EMB_DIM)
@@ -486,7 +492,7 @@ def train(args: dict,
                                       token_embed=token_emb,
                                       masks_enc=masks_enc,
                                       masks_pred=masks_pred,
-                                      masks_attention=None)
+                                      masks_attention=masks_attention_pred)
                     elif gt_type == 'counts':
                         z = predictor(z=z,
                                       token_embed=token_emb,
@@ -494,7 +500,7 @@ def train(args: dict,
                                       counts=counts,
                                       masks_enc=masks_enc,
                                       masks_pred=masks_pred,
-                                      masks_attention=None)
+                                      masks_attention=masks_attention_pred)
                     return z
 
                 def loss_fn(z, h, loss_exp=1.0):
@@ -590,7 +596,7 @@ def train(args: dict,
             #                grad_stats.max))
 
             #log_stats()
-            if LOCAL_RANK == 0:
+            if (LOCAL_RANK == 0) and (wandb.run is not None):
                 wandb.log(
                     {"loss": loss,
                     'lr':_new_lr,

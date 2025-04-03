@@ -1,0 +1,19 @@
+    torch.set_printoptions(profile="full")
+    print('Constrained encoder: ', constrain_attention_enc)
+    print('Constrained predictor: ', constrain_attention_pred)
+    print("FULL MASK:")
+    print(masks_attention.shape)
+    print(masks_attention[0,0,0,:])
+    if masks_attention_enc is not None:
+        print(masks_attention[0,0,seq_len_cell,:])
+    if masks_attention_enc is not None:
+        print("ENC MASK:")
+        print(masks_attention_enc.shape)
+        print(masks_attention_enc[0,0,0,:])
+        print(masks_attention_enc[0,0,13,:])
+    if masks_attention_pred is not None:
+        print("PRED MASK:")
+        print(masks_attention_pred.shape)
+        print(masks_attention_pred[0,0,0,:])
+        print(masks_attention_pred[0,0,-1,:])
+    raise ValueError  

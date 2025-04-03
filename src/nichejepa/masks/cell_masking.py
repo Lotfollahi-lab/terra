@@ -37,6 +37,8 @@ class CelllMaskCollator:
         Per cell mask ratio.
     targets_list:
         List of cells that should be in target.
+    constrain_attention_enc:
+    constrain_attention_pred:
     """
     def __init__(self,
                  n_targets: int,
@@ -46,7 +48,9 @@ class CelllMaskCollator:
                  seq_len_neighborhood: int,
                  n_special_tokens: int,
                  per_block_mask_ratio: float = 0.5,
-                 targets_list: List[int]=None):
+                 targets_list: List[int]=None,
+                 constrain_attention_enc: bool=False,
+                 constrain_attention_pred: bool=False):
         self.n_targets = n_targets
         self.n_contexts = n_contexts
         self.n_segments = n_segments
@@ -68,6 +72,8 @@ class CelllMaskCollator:
         else:
             self.target_cell_indices = None
             self.context_cell_indices = None
+        self.constrain_attention_enc = constrain_attention_enc
+        self.constrain_attention_pred = constrain_attention_pred
 
     def _sample_gene_mask(self,
                           tokens: torch.Tensor,

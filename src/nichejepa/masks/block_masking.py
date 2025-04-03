@@ -14,7 +14,7 @@ from typing import List, Literal, Optional, Tuple, Union
 import numpy as np
 import torch
 
-from ..masks.utils import create_controlled_mask_context_target, configure_attention_masks
+from ..masks.utils import create_enc_attention_mask, create_pred_attention_mask, constrain_attention_matrix
 
 
 class BlockMaskCollator:
@@ -39,11 +39,8 @@ class BlockMaskCollator:
         Ratio of elements to be masked in each block. A list with min and
         max ratio can be provided, in which case a value between the min and
         max will be sampled for each batch.
-    controlled_attention_pattern:
-        The pattern that the model uses to generate the attention matrix.
-    controlled_attention_type:
-    restrict_special_attention:
-        If 'True', restrict attention of special tokens to themselves
+    constrain_attention_enc:
+    constrain_attention_pred:
     """
     def __init__(self,
                  n_targets: int,
@@ -52,7 +49,9 @@ class BlockMaskCollator:
                  seq_len_cell: int,
                  seq_len_neighborhood: int,
                  n_special_tokens: int,
-                 per_block_mask_ratio: float=0.5):
+                 per_block_mask_ratio: float=0.5,
+                 constrain_attention_enc: bool=False,
+                 constrain_attention_pred: bool=False):
         self.n_targets = n_targets
         self.n_contexts = n_contexts
         self.n_segments = n_segments
@@ -61,6 +60,8 @@ class BlockMaskCollator:
         self.seq_len_genes = self.seq_len_cell + self.seq_len_neighborhood
         self.n_special_tokens = n_special_tokens
         self.per_block_mask_ratio = per_block_mask_ratio
+        self.constrain_attention_enc = constrain_attention_enc
+        self.constrain_attention_pred = constrain_attention_pred
 
     def _sample_gene_mask(self,
                           tokens: torch.Tensor,
@@ -230,8 +231,8 @@ class BlockMaskCollator:
             collated_target_masks.append(target_masks)
             collated_context_masks.append(context_masks)
 
-            collated_masks_attention.append(
-                (batch[i][0][self.n_special_tokens:] != 0).int())
+            mask_attention = (batch[i][0][self.n_special_tokens:] != 0).int()
+            collated_masks_attention.append(mask_attention)
 
         # Trim masks to the minimum size across the batch and collate them
         collated_target_masks = [
@@ -248,4 +249,27 @@ class BlockMaskCollator:
         collated_masks_attention = torch.utils.data.default_collate(
             collated_masks_attention).unsqueeze(1).unsqueeze(1)
 
-        return collated_batch, collated_context_masks, collated_target_masks, collated_masks_attention
+        # Create constrained attention masks if specified
+        if self.constrain_attention_enc:
+            collated_masks_attention = constrain_attention_matrix(
+                attention_matrix=collated_masks_attention,
+                seq_len_cell=self.seq_len_cell) # overwrite collated_masks_attention
+            collated_masks_attention_enc = create_enc_attention_mask(
+                attention_matrix=collated_masks_attention,
+                context_masks=collated_context_masks)
+        else:
+            collated_masks_attention_enc = None
+
+        if self.constrain_attention_pred:
+            collated_masks_attention_pred = constrain_attention_matrix(
+                attention_matrix=collated_masks_attention,
+                seq_len_cell=self.seq_len_cell) # create new collated_masks_attention
+            collated_masks_attention_pred = create_pred_attention_mask(
+                attention_matrix=collated_masks_attention_pred,
+                context_masks=collated_context_masks,
+                target_masks=collated_target_masks,
+                n_special_tokens=self.n_special_tokens)
+        else:
+            collated_masks_attention_pred = None
+
+        return collated_batch, collated_context_masks, collated_target_masks, collated_masks_attention, collated_masks_attention_enc, collated_masks_attention_pred

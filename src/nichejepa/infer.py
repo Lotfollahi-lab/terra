@@ -22,7 +22,6 @@ from .datasets.cell_datasets import CellBaseDataset, make_cell_dataset
 from .datasets.dataloaders import init_dataloader_and_sampler
 from .helper import init_model, load_checkpoint
 from .masks.block_masking  import BlockMaskCollator
-from .masks.random_masking import RandomMaskCollator
 from .masks.cell_masking import CelllMaskCollator
 from .tokenizers import cell_tokenizers
 from .utils.embedding import (create_binary_selection_mask,
@@ -224,15 +223,6 @@ def infer(args: dict,
             n_special_tokens=n_special_tokens,
             per_block_mask_ratio=per_block_mask_ratio,
             targets_list=targets_list)
-    else:
-        mask_collator = RandomMaskCollator(
-            n_targets=n_targets,
-            n_contexts=n_contexts,
-            seq_len_cell=seq_len_cell,
-            seq_len_neighborhood=seq_len_neighborhood,
-            n_special_tokens=n_special_tokens,
-            target_mask_size=target_mask_size,
-            context_mask_size=context_mask_size,)
 
     # Initialize train and test datasets, dataloaders and samplers
     cell_dataset = make_cell_dataset(
@@ -276,7 +266,7 @@ def infer(args: dict,
     all_cell_gene_emb_dict = {}
     all_neighborhood_gene_emb_dict = {}
 
-    for itr, (udata, _, _, masks_attention) in tqdm(enumerate(loader)):
+    for itr, (udata, _, _, masks_attention, _, _) in tqdm(enumerate(loader)):
         # Load gene tokens and segmentation label to the specified device
         tokens = udata[0].to(device, non_blocking=True)
         segments = udata[1].to(device, non_blocking=True)
