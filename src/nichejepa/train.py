@@ -292,9 +292,7 @@ def train(args: dict,
             seq_len_neighborhood=seq_len_neighborhood,
             n_special_tokens=n_special_tokens,
             per_block_mask_ratio=per_block_mask_ratio,
-            targets_list=targets_list,
-            constrain_attention_enc=constrain_attention_enc,
-            constrain_attention_pred=constrain_attention_pred)
+            targets_list=targets_list)
     
     # Initialize train and test datasets, dataloaders and samplers
     train_cell_dataset = make_cell_dataset(
