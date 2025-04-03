@@ -1,36 +1,50 @@
+import argparse
+import importlib
 import os
-import torch
-import logging
-import torch.distributed as dist
-from src.nichejepa.train import train
-from src.nichejepa.datasets.utils import prepare_dataset
-from src.nichejepa.utils.config import create_params_from_YAML_wandb_config
-import wandb
+import random
 import sys
+import time
+import logging
+from datetime import datetime
+
+import torch
+import torch.distributed as dist
+import wandb
+
+from src.nichejepa.datasets.utils import prepare_dataset
+from src.nichejepa.train import train
+from src.nichejepa.utils.config import create_params_from_YAML_wandb_config
+
+
 # Add the root directory to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-import argparse
-import time
-import importlib
-import warnings
-from datetime import datetime
-from datetime import timedelta
-import random
 
-warnings.filterwarnings("ignore")
-# logger
+# Get logger
 logging.basicConfig()
 logger = logging.getLogger()
 
-# ==========================
 
-# Function to retrieve and log distributed environment variables
-def get_distributed_info():
+def get_distributed_info() -> tuple[int, int, int]:
     """
     Retrieves distributed training environment variables and logs them.
 
-    Returns:
-        tuple: (WORLD_RANK, LOCAL_RANK, WORLD_SIZE)
+    This function checks for environment variables used by torchrun or
+    MPI-based launchers (e.g., mpirun) to determine the process's rank and
+    world size.
+
+    Returns
+    -------
+    WORLD_RANK : int
+        Global rank of the current process across all nodes.
+    LOCAL_RANK : int
+        Rank of the current process on the local node.
+    WORLD_SIZE : int
+        Total number of processes across all nodes.
+
+    Raises
+    ------
+    SystemExit
+        If the required environment variables are not found.
     """
     if "LOCAL_RANK" in os.environ:
         # Environment variables set by torch.distributed.launch or torchrun
@@ -44,7 +58,7 @@ def get_distributed_info():
         WORLD_RANK = int(os.environ["OMPI_COMM_WORLD_RANK"])
     else:
         import sys
-        sys.exit("Can't find the environment variables for local rank")
+        sys.exit("Can't find the environment variables for local rank.")
 
     # Print the ranks
     print(f"World rank: {WORLD_RANK}, Local rank: {LOCAL_RANK}, World size: {WORLD_SIZE}")
@@ -54,7 +68,7 @@ def get_distributed_info():
 
 def setup_for_distributed(is_master):
     """
-    This function disables printing when not in master process
+    This function disables printing when not in master process.
     """
     import builtins as __builtin__
     builtin_print = __builtin__.print
@@ -71,7 +85,7 @@ def main():
     # Retrieve distributed environment variables
     WORLD_RANK, LOCAL_RANK, WORLD_SIZE = get_distributed_info()
 
-    # Argument parsing (as in your original script)
+    # Parse arguments
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
@@ -138,11 +152,8 @@ def main():
 
 
 if __name__ == "__main__":
-    # Print Torch Version
     print(f"torch.__version__: {torch.__version__}")
-    # Print torch CUDA version
     print(f"torch.version.cuda: {torch.version.cuda}")
-    # Print torch nccl version
     try:
         nccl_version = torch.cuda.nccl.version()
     except AttributeError:
@@ -153,5 +164,4 @@ if __name__ == "__main__":
     os.environ["TORCH_CPP_LOG_LEVEL"] = "INFO"
     os.environ["TORCH_DISTRIBUTED_DEBUG"] = "DETAIL"
 
-    # Start the main function
     main()

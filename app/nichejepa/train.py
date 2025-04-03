@@ -42,7 +42,7 @@ from .helper import (init_model,
                      init_opt,
                      load_checkpoint)
 from .masks.block_masking  import BlockMaskCollator
-from .masks.cell_masking import CelllMaskCollator
+from .masks.cell_masking import CellMaskCollator
 from .masks.utils import apply_masks
 from .models.utils import repeat_interleave_batch
 from .utils.distributed import (AllReduce,
@@ -289,9 +289,9 @@ def train(args: dict,
             constrain_attention_pred=constrain_attention_pred,
             constrain_attention_type=constrain_attention_type)
     elif cell_masking:
-        if constrain_attention_type == 'segment':
-            raise ValueError(f'Invalid constrain_attention_type for cell masking: {constrain_attention_type}')   
-        mask_collator = CelllMaskCollator(
+        if constrain_attention_enc or constrain_attention_pred:
+            raise ValueError('Constrained attention not supported with cell masking.')
+        mask_collator = CellMaskCollator(
             n_targets=n_targets,
             n_contexts=n_contexts,
             n_segments=n_segments,
@@ -299,9 +299,7 @@ def train(args: dict,
             seq_len_neighborhood=seq_len_neighborhood,
             n_special_tokens=n_special_tokens,
             per_block_mask_ratio=per_block_mask_ratio,
-            targets_list=targets_list,
-            constrain_attention_enc=constrain_attention_enc,
-            constrain_attention_pred=constrain_attention_pred)
+            targets_list=targets_list)
     
     # Initialize train and test datasets, dataloaders and samplers
     train_cell_dataset = make_cell_dataset(
@@ -546,8 +544,9 @@ def train(args: dict,
                     return loss
 
                 # Step 1: forward pass
-                with torch.cuda.amp.autocast(dtype=torch.bfloat16,
-                                             enabled=use_bfloat16):
+                with torch.autocast(device_type="cuda",
+                                    dtype=torch.bfloat16,
+                                    enabled=use_bfloat16):
                     h = forward_target()
                     z = forward_context()
                     loss = loss_fn(z, h)
