@@ -1,3 +1,5 @@
+from typing import Literal
+
 import torch
 import torch.nn.functional as F
 
@@ -161,7 +163,9 @@ def create_pred_attention_mask(
 
 
 def constrain_attention_matrix(attention_matrix: torch.Tensor,
-                               seq_len_cell: int
+                               seq_len_cell: int,
+                               n_segments: int,
+                               constrain_attention_type: Literal['cell_neighborhood', 'segment']
                                ) -> torch.Tensor:
     """
     Constrains attention mask based on cell and neighborhood segments.
@@ -179,18 +183,35 @@ def constrain_attention_matrix(attention_matrix: torch.Tensor,
         attention_matrix.shape[-1],
         attention_matrix.shape[-1]).clone()
 
-    # Mask neighborhood gene tokens for index cell gene tokens
-    collated_masks_attention[
-        :,
-        :,
-        :seq_len_cell,
-        seq_len_cell:] = 0
+    if constrain_attention_type == 'cell_neighborhood':
+        # Mask neighborhood gene tokens for index cell gene tokens
+        collated_masks_attention[
+            :,
+            :,
+            :seq_len_cell,
+            seq_len_cell:] = 0
 
-    # Mask index cell gene tokens for neighborhood gene tokens
-    collated_masks_attention[
-        :,
-        :,
-        seq_len_cell:,
-        :seq_len_cell] = 0
+        # Mask index cell gene tokens for neighborhood gene tokens
+        collated_masks_attention[
+            :,
+            :,
+            seq_len_cell:,
+            :seq_len_cell] = 0
+    elif constrain_attention_type == 'segment':
+        for i in range(n_segments):
+            start_idx = i * seq_len_cell
+            end_idx = (i + 1) * seq_len_cell
+            collated_masks_attention[
+                :,
+                :,
+                start_idx:end_idx,
+                :start_idx] = 0     
+            collated_masks_attention[
+                :,
+                :,
+                start_idx:end_idx,
+                end_idx:] = 0
+    else:
+        raise ValueError(f'Invalid constrain_attention_type: {constrain_attention_type}.')
 
     return collated_masks_attention

@@ -51,7 +51,8 @@ class BlockMaskCollator:
                  n_special_tokens: int,
                  per_block_mask_ratio: float=0.5,
                  constrain_attention_enc: bool=False,
-                 constrain_attention_pred: bool=False):
+                 constrain_attention_pred: bool=False,
+                 constrain_attention_type: Literal['segment', 'cell_neighborhood'] | None=None):
         self.n_targets = n_targets
         self.n_contexts = n_contexts
         self.n_segments = n_segments
@@ -62,6 +63,7 @@ class BlockMaskCollator:
         self.per_block_mask_ratio = per_block_mask_ratio
         self.constrain_attention_enc = constrain_attention_enc
         self.constrain_attention_pred = constrain_attention_pred
+        self.constrain_attention_type = constrain_attention_type
 
     def _sample_gene_mask(self,
                           tokens: torch.Tensor,
@@ -251,9 +253,11 @@ class BlockMaskCollator:
 
         # Create constrained attention masks if specified
         if self.constrain_attention_enc:
-            collated_masks_attention = constrain_attention_matrix(
+            collated_masks_attention=constrain_attention_matrix(
                 attention_matrix=collated_masks_attention,
-                seq_len_cell=self.seq_len_cell) # overwrite collated_masks_attention
+                constrain_attention_type=self.constrain_attention_type,
+                seq_len_cell=self.seq_len_cell,
+                n_segments=self.n_segments) # overwrite collated_masks_attention
             collated_masks_attention_enc = create_enc_attention_mask(
                 attention_matrix=collated_masks_attention,
                 context_masks=collated_context_masks)
@@ -263,7 +267,9 @@ class BlockMaskCollator:
         if self.constrain_attention_pred:
             collated_masks_attention_pred = constrain_attention_matrix(
                 attention_matrix=collated_masks_attention,
-                seq_len_cell=self.seq_len_cell) # create new collated_masks_attention
+                constrain_attention_type=self.constrain_attention_type,
+                seq_len_cell=self.seq_len_cell,
+                n_segments=self.n_segments) # create new collated_masks_attention
             collated_masks_attention_pred = create_pred_attention_mask(
                 attention_matrix=collated_masks_attention_pred,
                 context_masks=collated_context_masks,

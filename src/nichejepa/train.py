@@ -148,6 +148,10 @@ def train(args: dict,
         constrain_attention_pred = args['mask']['constrain_attention_pred']
     else:
         constrain_attention_pred = False
+    if 'constrain_attention_type' in args['mask'].keys():
+        constrain_attention_type = args['mask']['constrain_attention_type']
+    else:
+        constrain_attention_type = 'cell_neighborhood'
 
     warmup = args['optimization']['warmup']
     num_epochs = args['optimization']['epochs']
@@ -282,9 +286,12 @@ def train(args: dict,
             n_special_tokens=n_special_tokens,
             per_block_mask_ratio=per_block_mask_ratio,
             constrain_attention_enc=constrain_attention_enc,
-            constrain_attention_pred=constrain_attention_pred)
+            constrain_attention_pred=constrain_attention_pred,
+            constrain_attention_type=constrain_attention_type)
     elif cell_masking:
-       mask_collator = CelllMaskCollator(
+        if constrain_attention_type == 'segment':
+            raise ValueError(f'Invalid constrain_attention_type for cell masking: {constrain_attention_type}')   
+        mask_collator = CelllMaskCollator(
             n_targets=n_targets,
             n_contexts=n_contexts,
             n_segments=n_segments,
@@ -292,7 +299,9 @@ def train(args: dict,
             seq_len_neighborhood=seq_len_neighborhood,
             n_special_tokens=n_special_tokens,
             per_block_mask_ratio=per_block_mask_ratio,
-            targets_list=targets_list)
+            targets_list=targets_list,
+            constrain_attention_enc=constrain_attention_enc,
+            constrain_attention_pred=constrain_attention_pred)
     
     # Initialize train and test datasets, dataloaders and samplers
     train_cell_dataset = make_cell_dataset(
@@ -421,6 +430,26 @@ def train(args: dict,
                 masks_attention_pred = masks_attention_pred.to(device, non_blocking=True)
 
             assert len(masks_enc) == 1, 'Currently require num encoder masks = 1'
+
+            torch.set_printoptions(profile="full")
+            print('Constrained encoder: ', constrain_attention_enc)
+            print('Constrained predictor: ', constrain_attention_pred)
+            print("FULL MASK:")
+            print(masks_attention.shape)
+            print(masks_attention[0,0,0,:])
+            if masks_attention_enc is not None:
+                print(masks_attention[0,0,seq_len_cell,:])
+            if masks_attention_enc is not None:
+                print("ENC MASK:")
+                print(masks_attention_enc.shape)
+                print(masks_attention_enc[0,0,0,:])
+                print(masks_attention_enc[0,0,13,:])
+            if masks_attention_pred is not None:
+                print("PRED MASK:")
+                print(masks_attention_pred.shape)
+                print(masks_attention_pred[0,0,0,:])
+                print(masks_attention_pred[0,0,-1,:])
+            raise ValueError  
 
             maskA_meter.update(len(masks_enc[0][0]))
             maskB_meter.update(len(masks_pred[0][0]))
