@@ -92,6 +92,7 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                  ):
         super().__init__()
         self.seq_len = seq_len
+        self.n_segments = n_segments
         self.n_special_tokens = n_special_tokens
         self.embed_dim = embed_dim
         self.num_heads = num_heads
@@ -477,6 +478,7 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
                          masks: Optional[Union[
                              List[torch.Tensor], torch.Tensor]]=None,
                          masks_attention: Optional[torch.Tensor]=None,
+                         pad_neighborhood: bool=False,
                          ) -> List[torch.Tensor]:
         """
         Run encoder forward pass on a batch of input token sequences, applying
@@ -522,6 +524,9 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
 
         # Remove special tokens before encoding
         x = x[:, self.n_special_tokens:]
+
+        if pad_neighborhood:
+            x[:, (self.seq_len - self.n_special_tokens)//self.n_segments:] = 0
 
         # Mask token embeddings if masks are provided
         if masks is not None:
@@ -662,7 +667,8 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
         counts: torch.Tensor,
         masks: Optional[Union[
             List[torch.Tensor], torch.Tensor]]=None,
-        masks_attention: Optional[torch.Tensor]=None, 
+        masks_attention: Optional[torch.Tensor]=None,
+        pad_neighborhood: bool=False,
         ) -> List[torch.Tensor]:
         """
         Run encoder forward pass on a batch of cell graph sequences, applying masks if provided, and return the
@@ -726,6 +732,9 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
 
         # Remove special tokens before encoding
         x = x[:, self.n_special_tokens:]
+
+        if pad_neighborhood:
+            x[:, (self.seq_len - self.n_special_tokens)//self.n_segments:] = 0
 
         # Mask token embeddings if masks are provided
         if masks is not None:
