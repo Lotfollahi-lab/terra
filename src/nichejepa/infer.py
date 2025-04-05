@@ -305,27 +305,46 @@ def infer(args: dict,
         with torch.cuda.amp.autocast(dtype=torch.bfloat16,
                                      enabled=args['meta']['use_bfloat16']):
 
-            emb_list = []
+            cell_emb_list = []
+            neighborhood_emb_list = []
             for emb_layer in emb_layers:
                 if gt_type == 'rank':
-                    emb_list.append(target_encoder.backbone.return_layer_emb(
+                    cell_emb_list.append(target_encoder.backbone.return_layer_emb(
                         layer=emb_layer,
                         positions=positions,
                         segments=segments,
                         tokens=tokens,
-                        masks_attention=masks_attention).cpu())
+                        masks_attention=masks_attention,
+                        pad_neighborhood=True).cpu()),
+                    neighborhood_emb_list.append(target_encoder.backbone.return_layer_emb(
+                        layer=emb_layer,
+                        positions=positions,
+                        segments=segments,
+                        tokens=tokens,
+                        masks_attention=masks_attention,
+                        pad_neighborhood=False).cpu()),
                 elif gt_type == 'counts':
-                    emb_list.append(target_encoder.backbone.return_layer_emb(
+                    cell_emb_list.append(target_encoder.backbone.return_layer_emb(
                         layer=emb_layer,
                         tokens=tokens,
                         segments=segments,
                         counts=counts,
-                        masks_attention=masks_attention).cpu())
+                        masks_attention=masks_attention,
+                        pad_neighborhood=True).cpu()),
+                    neighborhood_emb_list.append(target_encoder.backbone.return_layer_emb(
+                        layer=emb_layer,
+                        tokens=tokens,
+                        segments=segments,
+                        counts=counts,
+                        masks_attention=masks_attention,
+                        pad_neighborhood=False).cpu()),
         
             if feature_norm and (emb_layers[-1] == enc_depth):
                 # Normalize last layer like in training
-                emb_list[-1] = F.layer_norm(emb_list[-1],
-                                            (emb_list[-1].size(-1),))
+                cell_emb_list[-1] = F.layer_norm(cell_emb_list[-1],
+                                                 (cell_emb_list[-1].size(-1),))
+                neighborhood_emb_list[-1] = F.layer_norm(neighborhood_emb_list[-1],
+                                                         (neighborhood_emb_list[-1].size(-1),))
 
         # Aggregate gene embeddings into cell and neighborhood embeddings
         cell_mask = create_binary_selection_mask(
@@ -350,22 +369,21 @@ def infer(args: dict,
                 top_k=top_k,
                 n_segments=n_segments).cpu()
 
-        for i, emb in enumerate(emb_list):
+        for i, (c_emb, n_emb) in enumerate(zip(cell_emb_list, neighborhood_emb_list)):
             # Average gene embeddings into cell and neighborhood embedding 
             if agg_type == 'avg':
-                cell_emb = compute_mean_unmasked_emb(emb, cell_mask)
-                neighborhood_emb = compute_mean_unmasked_emb(emb, 
-                                                             neighborhood_mask)
+                cell_emb = compute_mean_unmasked_emb(c_emb, cell_mask)
+                neighborhood_emb = compute_mean_unmasked_emb(n_emb, neighborhood_mask)
             elif agg_type == "weighted_avg":
                 cell_weights = compute_unmasked_rank_based_weights(
                     tokens, cell_mask)
                 cell_emb = compute_mean_unmasked_emb(
-                    emb * cell_weights.unsqueeze(-1),
+                    c_emb * cell_weights.unsqueeze(-1),
                     cell_mask)
                 neighborhood_weights = compute_unmasked_rank_based_weights(
                     tokens, neighborhood_mask)
                 neighborhood_emb = compute_mean_unmasked_emb(
-                    emb * neighborhood_weights.unsqueeze(-1),
+                    n_emb * neighborhood_weights.unsqueeze(-1),
                     neighborhood_mask)
 
             # Concat layer-specific embeddings across batches
@@ -377,11 +395,11 @@ def infer(args: dict,
                 all_neighborhood_emb_list[i].append(neighborhood_emb)
 
             # Store cell and neighborhood gene embeddings of last layer
-            if i == (len(emb_list) - 1):
+            if i == (len(cell_emb_list) - 1):
                 for gene_id in cell_gene_ids:
                     gene_emb = retrieve_gene_emb(
                         ns_tokens=ns_tokens,
-                        emb=emb,
+                        emb=cell_emb,
                         gene_id=gene_id,
                         gene_type="cell",
                         seq_len_cell=seq_len_cell)
@@ -392,7 +410,7 @@ def infer(args: dict,
                 for gene_id in neighborhood_gene_ids:
                     gene_emb = retrieve_gene_emb(
                         ns_tokens=ns_tokens,
-                        emb=emb,
+                        emb=neighborhood_emb,
                         gene_id=gene_id,
                         gene_type="neighborhood",
                         seq_len_cell=seq_len_cell)
