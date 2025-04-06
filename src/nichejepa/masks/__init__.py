@@ -1,3 +1,3 @@
 from .block_masking import BlockMaskCollator
-from .random_masking import RandomMaskCollator
+from .cell_masking import CellMaskCollator
 from .utils import apply_masks

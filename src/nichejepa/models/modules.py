@@ -1,8 +1,13 @@
-from typing import Optional, Tuple
+"""
+Adapted from Assran, M. et al. Self-supervised learning from images with
+a Joint-Embedding Predictive Architecture. Proc. IEEE Comput. Soc. Conf.
+Comput. Vis. Pattern Recognit. 15619–15629 (2023);
+https://github.com/facebookresearch/ijepa/blob/main/src/models/vision_transformer.py
+(05.06.2024).
+"""
 
 import torch
 import torch.nn as nn
-
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
 
@@ -26,16 +31,16 @@ class Attention(nn.Module):
     proj_drop:
         Dropout ratio in projection layer.
     use_flash_attention:
-        If use flash_attention or not.
+        If `True`, use flash_attention.
     """
     def __init__(self,
                  dim: int,
-                 num_heads: int=8,
-                 qkv_bias: bool=False,
-                 qk_scale: Optional[float]=None,
+                 num_heads: int = 8,
+                 qkv_bias: bool = False,
+                 qk_scale: float | None = None,
                  attn_drop: float=0.0,
                  proj_drop: float=0.0,
-                 use_flash_attention: bool=True,
+                 use_flash_attention: bool = True,
                  ):
         super().__init__()
         self.num_heads = num_heads
@@ -51,8 +56,8 @@ class Attention(nn.Module):
 
     def forward(self,
                 x: torch.Tensor,
-                masks: Optional[torch.Tensor]=None
-                ) -> Tuple[torch.Tensor, torch.Tensor]:
+                masks: torch.Tensor | None = None
+                ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass of the attention module.
 
@@ -74,16 +79,19 @@ class Attention(nn.Module):
 
         # Obtain query, key and value vectors
         qkv = self.qkv(x).reshape(
-            B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+            B, N, 3, self.num_heads, C // self.num_heads).permute(
+                2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
 
         if self.use_flash_attention:
             with torch.backends.cuda.sdp_kernel(enable_flash=True):
                 if masks is not None:
-                    x = nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=masks!= 0, scale=self.scale)
+                    x = nn.functional.scaled_dot_product_attention(
+                        q, k, v, attn_mask=masks!= 0, scale=self.scale)
                     attn=None
                 else:
-                    x = nn.functional.scaled_dot_product_attention(q, k, v, scale=self.scale)
+                    x = nn.functional.scaled_dot_product_attention(
+                        q, k, v, scale=self.scale)
                     attn=None
         else:
             attn = (q @ k.transpose(-2, -1)) * self.scale
@@ -110,33 +118,34 @@ class Block(nn.Module):
     num_heads:
         Number of attention heads.
     mlp_ratio:
-        Ratio to determine number of hidden dimensions in MLP module compared to
-        input and output dimensions.
+        Ratio to determine number of hidden dimensions in MLP module
+        compared to input and output dimensions.
     qkv_bias:
-        If 'True', include bias in query, key, and value layers of Attention
-        module.
+        If 'True', include bias in query, key, and value layers of
+        Attention module.
     qk_scale:
         Scaling factor for query and key vectors of Attention module.
     drop:
-        Dropout ratio in projection layer of Attention module and in MLP module.
+        Dropout ratio in projection layer of Attention module and in MLP
+        module.
     attn_drop:
         Dropout ratio in attention layer of Attention module.
     act_layer:
         Activation layer used in MLP module.
     use_layer_norm:
-        If `True`, use LayerNorm, else use dynamic tanh
+        If `True`, use LayerNorm, else use dynamic tanh.
     norm_layer:
         Normalization layer.
     use_flash_attention:
-        If use flash_attention or not
+        If `True`, use flash_attention.
     """
     def __init__(self,
                  dim: int,
                  num_heads: int,
-                 mlp_ratio: float=4.,
-                 qkv_bias: bool=False,
-                 qk_scale: Optional[float]=None,
-                 drop: float=0.0,
+                 mlp_ratio: float = 4.,
+                 qkv_bias: bool = False,
+                 qk_scale: float | None = None,
+                 drop: float = 0.0,
                  attn_drop: float=0.0,
                  act_layer: nn.modules.activation=nn.GELU,
                  use_layer_norm: bool=True,
@@ -167,8 +176,8 @@ class Block(nn.Module):
 
     def forward(self,
                 x: torch.Tensor,
-                return_attention: bool=False,
-                masks: Optional[torch.Tensor]=None,
+                return_attention: bool = False,
+                masks: torch.Tensor | None = None,
                 ) -> torch.Tensor:
         """
         Forward pass of the transformer block.
@@ -178,8 +187,8 @@ class Block(nn.Module):
         x:
             Input to the transformer block with shape (B, N, D).
         return_attention:
-            If 'True', return attention vector instead of transformer block
-            output.
+            If `True`, return attention vector instead of transformer
+            block output.
         masks:
             Mask used in Attention module.
 
@@ -199,13 +208,26 @@ class Block(nn.Module):
 
 
 class DyT(nn.Module):
-    def __init__(self, num_features, alpha_init_value=0.5):
+    """
+    Dynamic tanh module.
+
+    Parameters
+    -----------
+    num_features:
+        Number of features.
+    alpha_init_value:
+        Initial value for alpha.
+    """
+    def __init__(self,
+                 num_features: int,
+                 alpha_init_value: float = 0.5
+                 ):
         super().__init__()
         self.alpha = nn.Parameter(torch.ones(1) * alpha_init_value)
         self.weight = nn.Parameter(torch.ones(num_features))
         self.bias = nn.Parameter(torch.zeros(num_features))
     
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = torch.tanh(self.alpha * x)
         return x * self.weight + self.bias
 
@@ -219,11 +241,11 @@ class MLP(nn.Module):
     in_features:
         Number of input features.
     hidden_features:
-        Number of hidden features. If not specified, equals number of input
-        features.
+        Number of hidden features. If not specified, equals number of
+        input features.
     out_features:
-        Number of output features. If not specified, equals number of input
-        features.
+        Number of output features. If not specified, equals number of
+        input features.
     act_layer:
         Activation layer after first fully connected layer.
     drop:
@@ -231,10 +253,10 @@ class MLP(nn.Module):
     """
     def __init__(self,
                  in_features: int, 
-                 hidden_features: Optional[int]=None,
-                 out_features: Optional[int]=None,
-                 act_layer: nn.modules.activation=nn.GELU,
-                 drop: float=0.0,
+                 hidden_features: int | None = None,
+                 out_features: int | None = None,
+                 act_layer: nn.modules.activation = nn.GELU,
+                 drop: float = 0.0,
                  ):
         super().__init__()
         out_features = out_features or in_features
@@ -258,7 +280,8 @@ class MLP(nn.Module):
         Returns
         -----------
         x:
-            Output of the MLP module with shape (B, N, O), by default O=I.
+            Output of the MLP module with shape (B, N, O), by default
+            O=I.
         """
         x = self.fc1(x)
         x = self.act(x)
@@ -271,7 +294,8 @@ class MLP(nn.Module):
 
 class ValueEmbWeightsProjection(nn.Module):
     def __init__(self,
-                 dim=100):
+                 dim: int = 100
+                 ):
         """
         Project counts to value embedding weights.
 
@@ -286,7 +310,7 @@ class ValueEmbWeightsProjection(nn.Module):
         self.linear2 = nn.Linear(dim, dim)
         self.softmax = nn.Softmax(dim=-1)
     
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.linear1(x)
         x = self.leaky_relu(x)
         out = self.linear2(x)

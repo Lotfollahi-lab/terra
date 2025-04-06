@@ -1,9 +1,7 @@
 """
-Gene transformers.
-
-Adapted from Assran, M. et al. Self-supervised learning from images with a
-Joint-Embedding Predictive Architecture. Proc. IEEE Comput. Soc. Conf. Comput.
-Vis. Pattern Recognit. 15619–15629 (2023);
+Adapted from Assran, M. et al. Self-supervised learning from images with
+a Joint-Embedding Predictive Architecture. Proc. IEEE Comput. Soc. Conf.
+Comput. Vis. Pattern Recognit. 15619–15629 (2023);
 https://github.com/facebookresearch/ijepa/blob/main/src/models/vision_transformer.py
 (05.06.2024).
 """
@@ -12,7 +10,7 @@ https://github.com/facebookresearch/ijepa/blob/main/src/models/vision_transforme
 import math
 from abc import ABC, abstractmethod
 from functools import partial
-from typing import List, Literal, Optional, Tuple, Union
+from typing import Literal
 
 import numpy as np
 import torch
@@ -50,8 +48,8 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
     num_heads:
         Number of attention heads in the Attention modules.
     mlp_ratio:
-        Ratio to determine number of hidden dimensions in MLP modules compared
-        to input and output dimensions.
+        Ratio to determine number of hidden dimensions in MLP modules
+        compared to input and output dimensions.
     qkv_bias:
         If 'True', include bias in query, key, and value layers of Attention
         modules.
@@ -74,20 +72,20 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                  seq_len: int,
                  n_special_tokens: int,
                  n_segments: int,
-                 embed_dim: int=768,
-                 depth: int=12,
-                 predictor_embed_dim: int=384,
-                 predictor_depth: int=12,
-                 num_heads: int=12,
-                 mlp_ratio: float=4.0,
-                 qkv_bias: bool=True,
-                 qk_scale: Optional[float]=None,
-                 drop_rate: float=0.0,
-                 attn_drop_rate: float=0.0,
+                 embed_dim: int = 768,
+                 depth: int = 12,
+                 predictor_embed_dim: int = 384,
+                 predictor_depth: int = 12,
+                 num_heads: int = 12,
+                 mlp_ratio: float = 4.0,
+                 qkv_bias: bool = True,
+                 qk_scale: float | None = None,
+                 drop_rate: float = 0.0,
+                 attn_drop_rate: float = 0.0,
                  norm_layer: nn.modules.normalization=nn.LayerNorm,
-                 init_std: float=0.02,
-                 use_flash_attention: bool=True,
-                 use_layer_norm: bool=True,
+                 init_std: float = 0.02,
+                 use_flash_attention: bool = True,
+                 use_layer_norm: bool = True,
                  **kwargs
                  ):
         super().__init__()
@@ -216,7 +214,7 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         pass
 
     @abstractmethod
-    def return_layer_emb() -> List[torch.Tensor]:
+    def return_layer_emb() -> list[torch.Tensor]:
         """
         Encoder-specific logic for returning layer-specific embeddings during
         inference.
@@ -270,18 +268,18 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
                  seq_len: int,
                  n_special_tokens: int,
                  n_segments: int,
-                 predictor_embed_dim: int=768,
-                 depth: int=6,
-                 num_heads: int=12,
-                 mlp_ratio: float=4.0,
-                 qkv_bias: bool=True,
-                 qk_scale: Optional[float]=None,
-                 drop_rate: float=0.0,
-                 attn_drop_rate: float=0.0,
+                 predictor_embed_dim: int = 768,
+                 depth: int = 6,
+                 num_heads: int = 12,
+                 mlp_ratio: float = 4.0,
+                 qkv_bias: bool = True,
+                 qk_scale: float | None = None,
+                 drop_rate: float = 0.0,
+                 attn_drop_rate: float = 0.0,
                  norm_layer: torch.nn.modules.normalization=nn.LayerNorm,
-                 init_std: float=0.02,
-                 use_flash_attention: bool=True,
-                 use_layer_norm: bool=True,
+                 init_std: float = 0.02,
+                 use_flash_attention: bool = True,
+                 use_layer_norm: bool = True,
                  **kwargs
                  ):
         super().__init__()
@@ -386,7 +384,7 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
         positional embeddings.
     """
     def __init__(self,
-                 pos_learnable: bool=False,
+                 pos_learnable: bool = False,
                  **base_encoder_kwargs,
                  ):
         super().__init__(**base_encoder_kwargs)
@@ -409,8 +407,8 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
                 positions: torch.Tensor,
                 segments: torch.Tensor,
                 tokens: torch.Tensor,
-                masks: Optional[Union[List[torch.Tensor], torch.Tensor]]=None,
-                masks_attention: Optional[torch.Tensor]=None 
+                masks: list[torch.Tensor] | torch.Tensor | None = None,
+                masks_attention: torch.Tensor | None = None 
                 ) -> torch.Tensor:
             """
             Run encoder forward pass on a batch of input token sequences. For
@@ -476,11 +474,10 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
                          positions: torch.Tensor,
                          segments: torch.Tensor,
                          tokens: torch.Tensor,
-                         masks: Optional[Union[
-                             List[torch.Tensor], torch.Tensor]]=None,
-                         masks_attention: Optional[torch.Tensor]=None,
-                         pad_neighborhood: bool=False,
-                         ) -> List[torch.Tensor]:
+                         masks: list[torch.Tensor] | torch.Tensor | None = None,
+                         masks_attention: torch.Tensor | None = None,
+                         pad_neighborhood: bool = False,
+                         ) -> list[torch.Tensor]:
         """
         Run encoder forward pass on a batch of input token sequences, applying
         masks if provided, and return the embeddings of a specific layer.
@@ -558,8 +555,8 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
     """
     def __init__(
         self,
-        count_encoding: Literal['value_bins', 'mlp']='value_bins',
-        n_value_bins: Optional[int]=100,
+        count_encoding: Literal['value_bins', 'mlp'] = 'mlp',
+        n_value_bins: int | None = 100,
         **base_encoder_kwargs
         ):
 
@@ -591,12 +588,13 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
         tokens: torch.Tensor,
         segments: torch.Tensor,
         counts: torch.Tensor,
-        masks: Optional[Union[List[torch.Tensor], torch.Tensor]]=None,
-        masks_attention: Optional[torch.Tensor]=None
+        masks: list[torch.Tensor] | torch.Tensor | None = None,
+        masks_attention: torch.Tensor | None = None
         ) -> torch.Tensor:
         """
-        Run encoder forward pass on a batch of cell graph sequences. For each observation in the batch return only
-        embeddings for tokens included in the masks.
+        Run encoder forward pass on a batch of cell graph sequences. For
+        each observation in the batch return only embeddings for tokens
+        included in the masks.
 
         Parameters
         -----------
@@ -666,11 +664,10 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
         tokens: torch.Tensor,
         segments: torch.Tensor,
         counts: torch.Tensor,
-        masks: Optional[Union[
-            List[torch.Tensor], torch.Tensor]]=None,
-        masks_attention: Optional[torch.Tensor]=None,
-        pad_neighborhood: bool=False,
-        ) -> List[torch.Tensor]:
+        masks: list[torch.Tensor] | torch.Tensor | None = None,
+        masks_attention: torch.Tensor | None = None,
+        pad_neighborhood: bool = False,
+        ) -> list[torch.Tensor]:
         """
         Run encoder forward pass on a batch of cell graph sequences, applying masks if provided, and return the
         embeddings of a specific layer.
@@ -783,8 +780,8 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
         pos_embed: torch.Tensor,
         seg_embed: torch.Tensor,
         token_embed: torch.Tensor,
-        masks_enc: Union[List[torch.Tensor], torch.Tensor],
-        masks_pred: Union[List[torch.Tensor], torch.Tensor],
+        masks_enc: list[torch.Tensor] | torch.Tensor,
+        masks_pred: list[torch.Tensor] | torch.Tensor,
         masks_attention: torch.Tensor=None,
         ) -> torch.Tensor:
             """
@@ -937,8 +934,8 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
         token_embed: torch.Tensor,
         segments: torch.Tensor,
         counts: torch.Tensor,
-        masks_enc: Union[List[torch.Tensor], torch.Tensor],
-        masks_pred: Union[List[torch.Tensor], torch.Tensor],
+        masks_enc: list[torch.Tensor] | torch.Tensor,
+        masks_pred: list[torch.Tensor] | torch.Tensor,
         masks_attention: torch.Tensor=None,
         ) -> torch.Tensor:
         """
@@ -959,16 +956,16 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
         enc_seg_embed:
             Segment embeddings from the encoder.
         masks_enc:
-            List of N_CONTEXT_MASKS tensors containing indices (within the
-            sequence) of tokens to keep with shape (BATCH_SIZE,
+            List of N_CONTEXT_MASKS tensors containing indices (within
+            the sequence) of tokens to keep with shape (BATCH_SIZE,
             CONTEXT_MASK_SIZE).
         masks_pred:
-            List of N_TARGET_MASKS tensors containing indices (within the
-            sequence) of tokens to keep with shape (BATCH_SIZE,
+            List of N_TARGET_MASKS tensors containing indices (within
+            the sequence) of tokens to keep with shape (BATCH_SIZE,
             TARGET_MASK_SIZE).
         masks_attention:
-            An attention mask that controls how different tokens attend to
-            each other within a sequence.
+            An attention mask that controls how different tokens attend
+            to each other within a sequence.
 
         Returns
         -----------
@@ -1059,8 +1056,7 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
 
 def init_gt_encoder(encoder_type: Literal['rank', 'counts'],
                     **encoder_kwargs
-                    ) -> Union[GeneTransformerRankEncoder,
-                                GeneTransformerCountEncoder]:
+                    ) -> GeneTransformerRankEncoder | GeneTransformerCountEncoder:
     if encoder_type == 'rank':
         model = GeneTransformerRankEncoder(
             mlp_ratio=4,
@@ -1078,10 +1074,9 @@ def init_gt_encoder(encoder_type: Literal['rank', 'counts'],
 
 
 def init_gt_predictor(predictor_type: Literal['rank', 'counts'],
-                      n_special_values: Optional[int]=None,
+                      n_special_values: int | None = None,
                       **predictor_kwargs
-                 ) -> Union[GeneTransformerRankPredictor,
-                            GeneTransformerCountPredictor]:
+                      ) -> GeneTransformerRankPredictor | GeneTransformerCountPredictor:
     if predictor_type == 'rank':
         model = GeneTransformerRankPredictor(
             mlp_ratio=4,

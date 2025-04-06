@@ -66,5 +66,5 @@ For multi-node training, first configure the required settings in your job_confi
 Then, execute the following command:
 
 ```shell
-bsub_mn_mg_yaml job_config/job_config.yaml
+bsub_mn_mg_yaml configs/job/hst_corpus_70m_test.yaml
 ```

@@ -1,19 +1,35 @@
 """
-Adapted from Bardes, A et al. Revisiting Feature Prediction for Learning Visual Representations from Video.
-arXiv:2404.08471 (2024); https://github.com/facebookresearch/jepa/blob/main/src/models/utils/multimask.py (25.03.2025).
+Adapted from Bardes, A et al. Revisiting Feature Prediction for Learning
+Visual Representations from Video. arXiv:2404.08471 (2024);
+https://github.com/facebookresearch/jepa/blob/main/src/models/utils/multimask.py
+(25.03.2025).
 """
 
-
+import torch
 import torch.nn as nn
 
 
 class EncoderMultiMaskWrapper(nn.Module):
+    """
+    EncoderMultiMaskWrapper class for encoding iteratively with multiple
+    masks.
 
-    def __init__(self, backbone):
+    Parameters
+    ----------
+    backbone:
+        The encoder backbone network.
+    """
+    def __init__(self, backbone: nn.Module):
         super().__init__()
         self.backbone = backbone
 
-    def forward(self, tokens, segments, counts, masks=None, masks_attention=None):
+    def forward(self,
+                tokens: torch.Tensor,
+                segments: torch.Tensor,
+                counts: torch.Tensor,
+                masks: torch.Tensor | list | None = None,
+                masks_attention: torch.Tensor | None = None
+                ) -> tuple[list[torch.Tensor], torch.Tensor]:
         if masks is None:
             return self.backbone(tokens=tokens,
                                  segments=segments,
@@ -35,12 +51,30 @@ class EncoderMultiMaskWrapper(nn.Module):
 
 
 class PredictorMultiMaskWrapper(nn.Module):
+    """
+    PredictorMultiMaskWrapper class for predicting iteratively with
+    multiple masks.
 
-    def __init__(self, backbone):
+    Only works with a single context/encoder mask.
+
+    Parameters
+    ----------
+    backbone:
+        The predictor backbone network.
+    """
+    def __init__(self, backbone: nn.Module):
         super().__init__()
         self.backbone = backbone
 
-    def forward(self, z, token_embed, segments, counts, masks_enc, masks_pred, masks_attention):
+    def forward(self,
+                z: torch.Tensor | list,
+                token_embed: torch.Tensor,
+                segments: torch.Tensor,
+                counts: torch.Tensor,
+                masks_enc: torch.Tensor | list,
+                masks_pred: torch.Tensor | list,
+                masks_attention: torch.Tensor
+                ) -> list[torch.Tensor]:
         if type(z) is not list:
             z = [z]
         if type(masks_enc) is not list:

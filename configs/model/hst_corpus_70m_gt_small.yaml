@@ -43,13 +43,13 @@ mask:
   target_mask_size: 50 # this doesn't have meaning in block masking.
   per_block_mask_ratio: 0.7 # 0.5, 
 optimization:
-  warmup: 4
-  epochs: 16
+  warmup: 0.3
+  epochs: 3
   ema:
-  - 0.98 # 0.996
+  - 0.98
   - 1.0
-  start_lr: 2.0e-05 # 1.0e-0.5
-  lr: 6.0e-05 # 1.0e-0.4
+  start_lr: 0.0002
+  lr: 0.000625
   final_lr: 1.0e-06
   weight_decay: 0.04
   final_weight_decay: 0.4

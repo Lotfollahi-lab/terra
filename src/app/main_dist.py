@@ -2,9 +2,9 @@ import os
 import torch
 import logging
 import torch.distributed as dist
-from src.nichejepa.train import train
-from src.nichejepa.datasets.utils import prepare_dataset
-from src.nichejepa.utils.config import create_params_from_YAML_wandb_config
+from app.train import train
+from nichejepa.datasets.utils import prepare_dataset
+from nichejepa.utils.config import create_params_from_YAML_wandb_config
 import wandb
 import sys
 # Add the root directory to sys.path

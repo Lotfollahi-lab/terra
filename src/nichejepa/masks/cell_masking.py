@@ -14,9 +14,9 @@ import numpy as np
 import torch
 
 
-class CelllMaskCollator:
+class CellMaskCollator:
     """
-    CelllMaskCollator class for sampling target and context block masks from
+    CellMaskCollator class for sampling target and context block masks from
     cell and neighborhood segments using cell-based masking.
 
     Parameters

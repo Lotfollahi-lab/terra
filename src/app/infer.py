@@ -18,19 +18,18 @@ from datasets import Dataset, load_from_disk
 from tqdm import tqdm
 from pyensembl import EnsemblRelease
 
-from .datasets.cell_datasets import CellBaseDataset, make_cell_dataset
-from .datasets.dataloaders import init_dataloader_and_sampler
-from .helper import init_model, load_checkpoint
-from .masks.block_masking  import BlockMaskCollator
-from .masks.random_masking import RandomMaskCollator
-from .masks.cell_masking import CelllMaskCollator
-from .tokenizers import cell_tokenizers
-from .utils.embedding import (create_binary_selection_mask,
+from app.helper import init_model, load_checkpoint
+from nichejepa.datasets.cell_datasets import CellBaseDataset, make_cell_dataset
+from nichejepa.datasets.dataloaders import init_dataloader_and_sampler
+from nichejepa.masks.block_masking  import BlockMaskCollator
+from nichejepa.masks.cell_masking import CellMaskCollator
+from nichejepa.tokenizers import cell_tokenizers
+from nichejepa.utils.embedding import (create_binary_selection_mask,
                               compute_mean_unmasked_emb,
                               compute_unmasked_rank_based_weights,
                               collect_adata_from_folder,
                               retrieve_gene_emb)
-from .utils.logging import CSVLogger
+from nichejepa.utils.logging import CSVLogger
 
 
 _GLOBAL_SEED = 0
@@ -215,7 +214,7 @@ def infer(args: dict,
             n_special_tokens=n_special_tokens,
             per_block_mask_ratio=per_block_mask_ratio)
     elif cell_masking:
-       mask_collator = CelllMaskCollator(
+       mask_collator = CellMaskCollator(
             n_targets=n_targets,
             n_contexts=n_contexts,
             n_segments=n_segments,
@@ -224,15 +223,6 @@ def infer(args: dict,
             n_special_tokens=n_special_tokens,
             per_block_mask_ratio=per_block_mask_ratio,
             targets_list=targets_list)
-    else:
-        mask_collator = RandomMaskCollator(
-            n_targets=n_targets,
-            n_contexts=n_contexts,
-            seq_len_cell=seq_len_cell,
-            seq_len_neighborhood=seq_len_neighborhood,
-            n_special_tokens=n_special_tokens,
-            target_mask_size=target_mask_size,
-            context_mask_size=context_mask_size,)
 
     # Initialize train and test datasets, dataloaders and samplers
     cell_dataset = make_cell_dataset(

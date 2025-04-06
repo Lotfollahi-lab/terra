@@ -12,9 +12,9 @@ from typing import Literal, Optional, Tuple
 import torch
 
 import nichejepa.models.gene_transformers as gt
-from .models.multimask import EncoderMultiMaskWrapper, PredictorMultiMaskWrapper
-from .models.utils import trunc_normal_
-from .utils.schedulers import (CosineWDSchedule,
+from nichejepa.models.multimask import EncoderMultiMaskWrapper, PredictorMultiMaskWrapper
+from nichejepa.models.utils import trunc_normal_
+from nichejepa.utils.schedulers import (CosineWDSchedule,
                                WarmupCosineSchedule)
 
 
