@@ -6,9 +6,6 @@ from typing import Literal
 import pickle
 import datasets
 from datasets import load_from_disk
-from sklearn.model_selection import train_test_split
-
-from ..utils.embedding import collect_adata_from_folder
 
 
 def get_ensembl_ids(gene_names: list[str],

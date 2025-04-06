@@ -1,12 +1,10 @@
-from typing import Optional, Tuple
-
 import numpy as np
 
 
 def process_gene_tokens(gene_tokens: list[int],
                         length: int,
                         token_dict: dict,
-                        ) -> Tuple[np.ndarray, int]:
+                        ) -> tuple[np.ndarray, int]:
     """
     Add pad tokens or truncate gene token list based on length.
 
@@ -82,7 +80,7 @@ def process_gene_expr(gene_expr: list[float],
 
 def rank_gene_tokens(gene_scores: np.ndarray,
                      gene_tokens: np.ndarray,
-                     n_tokens: Optional[int]=None,
+                     n_tokens: int | None = None,
                      ) -> np.ndarray:
     """
     Rank gene tokens based on matching gene scores (highest score -> rank 1).

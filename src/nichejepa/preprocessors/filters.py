@@ -11,7 +11,8 @@ def filter_cells(adata: ad.AnnData) -> ad.AnnData:
     Parameters
     --------
     adata:
-        An AnnData object containing a QC field in `adata.obs['filter_pass']`.
+        An AnnData object containing a QC field in
+        `adata.obs['filter_pass']`.
 
     Returns
     --------

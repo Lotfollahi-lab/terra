@@ -1,4 +1,4 @@
-from typing import List, Literal, Optional
+from typing import List, Literal
 
 import anndata
 import numpy as np
@@ -13,12 +13,12 @@ from sklearn.neighbors import KNeighborsClassifier
 
 def classification_metrics(adata: anndata.AnnData,
                            label_col: str='cell_type',
-                           classifier: Literal['knn', 'logistic']='knn',
-                           n_neighbors: Optional[int]=5
+                           classifier: Literal['knn', 'logistic'] = 'knn',
+                           n_neighbors: int | None = 5
                            ) -> dict:
     """
-    Train and evaluate a classifier (KNN or Logistic Regression) on learned
-    embeddings.
+    Train and evaluate a classifier (KNN or Logistic Regression) on
+    learned embeddings.
 
     Parameters
     -----------

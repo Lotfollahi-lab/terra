@@ -1,15 +1,14 @@
-from typing import Optional
-
 import anndata as ad
 import squidpy as sq
 
 
 def construct_neighbor_graph(adata: ad.AnnData,
-                             n_neighs: Optional[int]=None,
-                             radius: Optional[float]=None,
-                             delaunay: bool=True,
-                             include_self_loop: bool=False,
-                             compute_neighbor_counts: bool=False) -> ad.AnnData:
+                             n_neighs: int | None = None,
+                             radius: float | None = None,
+                             delaunay: bool = True,
+                             include_self_loop: bool = False,
+                             compute_neighbor_counts: bool = False
+                             ) -> ad.AnnData:
     """
     Compute neighbor graph and optionally aggregate cell features across
     neighbors.
@@ -20,17 +19,17 @@ def construct_neighbor_graph(adata: ad.AnnData,
         AnnData object with spatial coordinates available in
         `adata.obsm['spatial']`.
     n_neighs:
-        If specified, use `n_neighs` to compute the neighborhood graph. If
-        'radius' or 'delaunay' are also specified, an intersection neighborhood
-        graph will be computed.
+        If specified, use `n_neighs` to compute the neighborhood graph.
+        If 'radius' or 'delaunay' are also specified, an intersection
+        neighborhood graph will be computed.
     radius:
         If specified, use `radius` to compute the neighborhood graph. If
         'n_neighs' or 'delaunay' are also specified, an intersection
         neighborhood graph will be computed.
     delaunay:
-        If 'True', compute the neighborhood graph by delaunay triangulation. If
-        'n_neighs' or 'radius' are also specified, an intersection neighborhood
-        graph will be computed.
+        If 'True', compute the neighborhood graph by delaunay
+        triangulation. If 'n_neighs' or 'radius' are also specified, an
+        intersection neighborhood graph will be computed.
     include_self_loop:
         If 'True', include cell itself in neighborhood graph.
     compute_neighbor_counts:

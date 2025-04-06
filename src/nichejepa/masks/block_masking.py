@@ -1,49 +1,41 @@
 """
-Block masking.
-
-Adapted from Assran, M. et al. Self-supervised learning from images with a
-Joint-Embedding Predictive Architecture.
-Proc. IEEE Comput. Soc. Conf. Comput. Vis. Pattern Recognit. 15619–15629 (2023);
+Adapted from Assran, M. et al. Self-supervised learning from images with
+a Joint-Embedding Predictive Architecture. Proc. IEEE Comput. Soc. Conf.
+Comput. Vis. Pattern Recognit. 15619–15629 (2023);
 https://github.com/facebookresearch/ijepa/blob/main/src/masks/multiblock.py
 (05.06.2024).
 """
 
-
-from typing import List, Literal, Optional, Tuple, Union
+from typing import Literal
 
 import numpy as np
-import torch
-
-from ..masks.utils import create_controlled_mask_context_target, configure_attention_masks
+import torch 
 
 
 class BlockMaskCollator:
     """
-    BlockMaskCollator class for sampling target and context block masks from
-    cell and neighborhood segments.
+    BlockMaskCollator class for sampling target and context block masks
+    from cell and neighborhood segments.
     
     Parameters
     ----------
     n_targets:
         Number of target masks to sample for each token sequence.
     n_contexts:
+        Number of context masks to sample for each token sequence.
     n_segments:
-        Number of segments
+        Number of segments.
     seq_len_cell:
         The length of the token sequence representing the cell segment.
     seq_len_neighborhood:
-        The length of the token sequence representing the neighborhood segments.
+        The length of the token sequence representing the neighborhood\
+        segments.
     n_special_tokens:
-        Number of special tokens in each token sequence, including <cls> tokens.
+        Number of special tokens in each token sequence.
     per_block_mask_ratio:
-        Ratio of elements to be masked in each block. A list with min and
-        max ratio can be provided, in which case a value between the min and
-        max will be sampled for each batch.
-    controlled_attention_pattern:
-        The pattern that the model uses to generate the attention matrix.
-    controlled_attention_type:
-    restrict_special_attention:
-        If 'True', restrict attention of special tokens to themselves
+        Ratio of elements to be masked in each block. A list with min
+        and max ratio can be provided, in which case a value between the
+        min and max will be sampled for each batch.
     """
     def __init__(self,
                  n_targets: int,
@@ -52,7 +44,7 @@ class BlockMaskCollator:
                  seq_len_cell: int,
                  seq_len_neighborhood: int,
                  n_special_tokens: int,
-                 per_block_mask_ratio: float=0.5):
+                 per_block_mask_ratio: float = 0.5):
         self.n_targets = n_targets
         self.n_contexts = n_contexts
         self.n_segments = n_segments
@@ -65,13 +57,13 @@ class BlockMaskCollator:
     def _sample_gene_mask(self,
                           tokens: torch.Tensor,
                           segments: torch.Tensor,
-                          ) -> Tuple[List[torch.Tensor],
-                                     List[torch.Tensor],
+                          ) -> tuple[list[torch.Tensor],
+                                     list[torch.Tensor],
                                      int]:
         """
-        Perform block masking on the sequence based on the number of targets
-        (number of blocks) and per block mask ratio. Tokens not sampled in the
-        targets will be part of the context.
+        Perform block masking on the sequence based on the number of
+        targets (number of blocks) and per block mask ratio. Tokens not
+        sampled in the targets will be part of the context.
 
         Parameters
         ----------
@@ -170,12 +162,12 @@ class BlockMaskCollator:
         return target_masks, context_masks
 
     def __call__(self,
-                 batch: Tuple[torch.Tensor,
+                 batch: tuple[torch.Tensor,
                               torch.Tensor,
                               torch.Tensor,
                               torch.Tensor,
-                              List[str]],
-                 ) -> Tuple[torch.Tensor,
+                              list[str]],
+                 ) -> tuple[torch.Tensor,
                             torch.Tensor,
                             torch.Tensor,
                             torch.Tensor]:

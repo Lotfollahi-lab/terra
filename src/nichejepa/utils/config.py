@@ -2,23 +2,24 @@ import yaml
 import logging
 
 
-def create_params_from_YAML_wandb_config(YAML_file:str,
+def create_params_from_YAML_wandb_config(YAML_file: str,
                                          logger: logging.RootLogger,
-                                         sweep_config=None,
-                                         has_same_dimension: bool=True,
-                                         update_from_sweep: bool=False
-                                         ):
+                                         sweep_config: Any = None,
+                                         has_same_dimension: bool = True,
+                                         update_from_sweep: bool = False
+                                         ) -> dict:
     """
-    Updates the `params` dictionary with values from the YAML config file and
-    optionally from the wandb configuration file. This can be useful when using
-    wandb sweeps for hyperparameter optimization. Also sets the seed in `params`
-    from `args.seed`.
+    Updates the `params` dictionary with values from the YAML config
+    file and optionally from the wandb configuration file. This can be
+    useful when using wandb sweeps for hyperparameter optimization.
+    Also sets the seed in `params` from `args.seed`.
 
     Parameters
     -----------
     YAML_file:
-        contains the filename of the YAML configuration for static params.
-    Logger:
+        contains the filename of the YAML configuration for static
+        params.
+    logger:
         Logger object to log the loaded parameters.
     sweep_config:
         A configuration object (such as one from wandb) containing the
@@ -26,8 +27,8 @@ def create_params_from_YAML_wandb_config(YAML_file:str,
     has_same_dimension:
         Indicates if the pred_emb_dim and enc_emb_dim should be the same.
     update_from_sweep:
-        Flag to determine whether to update parameters from the sweep_config
-        (wandb).
+        Flag to determine whether to update parameters from the
+        sweep_config (wandb).
 
     Returns
     -----------

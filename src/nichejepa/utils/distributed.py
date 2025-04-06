@@ -1,14 +1,14 @@
 """
-Adapted from Assran, M. et al. Self-supervised learning from images with a
-Joint-Embedding Predictive Architecture.
-Proc. IEEE Comput. Soc. Conf. Comput. Vis. Pattern Recognit. 15619–15629 (2023);
+Adapted from Assran, M. et al. Self-supervised learning from images with
+a Joint-Embedding Predictive Architecture. Proc. IEEE Comput. Soc. Conf.
+Comput. Vis. Pattern Recognit. 15619–15629 (2023);
 https://github.com/facebookresearch/ijepa/blob/main/src/utils/distributed.py
 (05.06.2024).
 """
 
 import math
 import os
-from typing import List, Optional
+from typing import List
 
 import torch
 import torch.distributed as dist
@@ -50,67 +50,3 @@ def init_distributed(port: int=40112, rank_and_world_size=(None, None)):
         logger.info(f'distributed training not available {e}')
 
     return world_size, rank
-
-
-class AllGather(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, x):
-        if (
-            dist.is_available()
-            and dist.is_initialized()
-            and (dist.get_world_size() > 1)
-        ):
-            x = x.contiguous()
-            outputs = [
-                torch.zeros_like(x) for _ in range(dist.get_world_size())]
-            dist.all_gather(outputs, x)
-            return torch.cat(outputs, 0)
-        return x
-
-    @staticmethod
-    def backward(ctx, grads):
-        if (
-            dist.is_available()
-            and dist.is_initialized()
-            and (dist.get_world_size() > 1)
-        ):
-            s = (grads.shape[0] // dist.get_world_size()) * dist.get_rank()
-            e = (grads.shape[0] // dist.get_world_size()) * (dist.get_rank() + 1)
-            grads = grads.contiguous()
-            dist.all_reduce(grads)
-            return grads[s:e]
-        return grads
-
-
-class AllReduceSum(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, x):
-        if (
-            dist.is_available()
-            and dist.is_initialized()
-            and (dist.get_world_size() > 1)
-        ):
-            x = x.contiguous()
-            dist.all_reduce(x)
-        return x
-
-    @staticmethod
-    def backward(ctx, grads):
-        return grads
-
-
-class AllReduce(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, x):
-        if (
-            dist.is_available()
-            and dist.is_initialized()
-            and (dist.get_world_size() > 1)
-        ):
-            x = x.contiguous() / dist.get_world_size()
-            dist.all_reduce(x)
-        return x
-
-    @staticmethod
-    def backward(ctx, grads):
-        return grads

@@ -10,20 +10,22 @@ from skmisc.loess import loess
 
 
 def normalize_by_analytic_pearson_residuals(x: sp.csr_matrix,
-                                            theta: float=100,
+                                            theta: float = 100,
                                             ) -> sp.csr_matrix:
     """
-    Normalize gene expression counts per gene (within the batch) and cell using
-    analytic pearson residuals.
+    Normalize gene expression counts per gene (within the batch) and
+    cell using analytic pearson residuals.
 
-    Implements normalization as described in "Lause, J., Berens, P. & Kobak, D.
-    Analytic Pearson residuals for normalization of single-cell RNA-seq UMI
-    data. Genome Biol. 22, 258 (2021)". Residuals are based on a negative
-    binomial offset model with overdispersion shared across genes. Residuals are
-    clipped to 'sqrt(n_obs)'. Negative residuals for a cell and gene indicate
-    that fewer counts are observed than expected, compared to the gene’s average
-    expression and cell read depth. Positive residuals indicate more counts than
-    expected. By default, overdispersion `theta=100` is used.
+    Implements normalization as described in "Lause, J., Berens, P. & 
+    Kobak, D. Analytic Pearson residuals for normalization of
+    single-cell RNA-seq UMI data. Genome Biol. 22, 258 (2021)".
+    Residuals are based on a negative binomial offset model with
+    overdispersion shared across genes. Residuals are clipped to
+    'sqrt(n_obs)'. Negative residuals for a cell and gene indicate that
+    fewer counts are observed than expected, compared to the gene’s
+    average expression and cell read depth. Positive residuals indicate
+    more counts than expected. By default, overdispersion `theta=100` is
+    used.
 
     The implementation is based on
     https://github.com/scverse/scanpy/blob/4642cf8e2e51b257371792cb4fcb9611c0a81123/scanpy/experimental/pp/_normalization.py#L36.
@@ -31,9 +33,9 @@ def normalize_by_analytic_pearson_residuals(x: sp.csr_matrix,
     Parameters
     ----------
     x:
-        A sparse matrix where each row represents an observation and each column
-        represents a feature, containing raw counts as features (i.e. not scaled
-        or normalized).
+        A sparse matrix where each row represents an observation and
+        each column represents a feature, containing raw counts as
+        features (i.e. not scaled or normalized).
     theta:
         The overdispersion parameter, defaults to `100`.
 
@@ -42,7 +44,6 @@ def normalize_by_analytic_pearson_residuals(x: sp.csr_matrix,
     y:
         A sparse matrix containing the normalized features.
     """
-
     if theta <= 0:
         raise ValueError('Pearson residuals require theta > 0')
 
@@ -69,8 +70,8 @@ def normalize_by_cell_area(x: sp.csr_matrix,
     Parameters
     ----------
     x:
-        A sparse matrix where each row represents an observation and each column
-        represents a feature.
+        A sparse matrix where each row represents an observation and
+        each column represents a feature.
     cell_areas:
         Numpy array with the cell areas.
 
@@ -90,18 +91,19 @@ def normalize_by_cell_area(x: sp.csr_matrix,
 
 def normalize_by_gene_corrected_read_depth(
     x: sp.csr_matrix,
-    basis_target_read_depth: float=153.4768,
-    target_read_depth_per_gene: float=0.0487,
+    basis_target_read_depth: float = 153.4768,
+    target_read_depth_per_gene: float = 0.0487,
     ) -> sp.csr_matrix:
     """
-    Normalize gene expression counts per cell by read depth adjusted for number
-    of probed genes. Default values are linear regression fit on corpus.
+    Normalize gene expression counts per cell by read depth adjusted for
+    number of probed genes. Default values are linear regression fit on
+    corpus.
 
     Parameters
     ----------
     x:
-        A sparse matrix where each row represents an observation and each column
-        represents a feature.
+        A sparse matrix where each row represents an observation and
+        each column represents a feature.
     basis_target_read_depth:
         Read depth independent of number of probed genes.
     target_read_depth_per_gene:
@@ -130,14 +132,14 @@ def normalize_by_factor(x: sp.csr_matrix,
                             'gene_corrected_read_depth_nonzero_mean'],
                       ) -> sp.csr_matrix:
     """
-    Normalize gene expression counts per gene (across batches in the corpus) by
-    a normalization factor.
+    Normalize gene expression counts per gene (across batches in the
+    corpus) by a normalization factor.
 
     Parameters
     ----------
     x:
-        A sparse matrix where each row represents an observation and each column
-        represents a feature.
+        A sparse matrix where each row represents an observation and
+        each column represents a feature.
     norm_factor:
         Factor which is used for normalization.
     norm_factor_file_path:
@@ -165,7 +167,7 @@ def normalize_by_factor(x: sp.csr_matrix,
 
 
 def normalize_by_read_depth(x: sp.csr_matrix,
-                            target_size: int=10_000,
+                            target_size: int = 10_000,
                             ) -> sp.csr_matrix:
     """
     Normalize gene expression counts per cell by read depth.
@@ -173,11 +175,11 @@ def normalize_by_read_depth(x: sp.csr_matrix,
     Parameters
     ----------
     x:
-        A sparse matrix where each row represents an observation and each column
-        represents a feature.
+        A sparse matrix where each row represents an observation and
+        each column represents a feature.
     target_size:
-        The target read depth per observation (i.e. the sum of features across
-        an observation).
+        The target read depth per observation (i.e. the sum of features
+        across an observation).
 
     Returns
     ----------
@@ -191,16 +193,17 @@ def normalize_by_read_depth(x: sp.csr_matrix,
 
 def normalize_by_seurat(x: sp.csr_matrix) -> sp.csr_matrix:
     """
-    Normalize gene expression counts per gene (within the batch) using seurat
-    v3 `FindVariableFeatures`.
+    Normalize gene expression counts per gene (within the batch) using
+    seurat v3 `FindVariableFeatures`.
 
-    Implements normalization as described in "Stuart, T. et al. Comprehensive
-    Integration of Single-Cell Data. Cell 177, 1888–1902.e21 (2019)". Counts are
-    normalized by centering around the expected mean and scaling by the expected
-    standard deviation, as learned from the global mean-variance relationships.
-    This normalization should be applied independently for each batch in the
-    training corpus. Note, we do not implement clipping as described in the
-    seurat publication.
+    Implements normalization as described in "Stuart, T. et al.
+    Comprehensive Integration of Single-Cell Data. Cell 177,
+    1888–1902.e21 (2019)". Counts are normalized by centering around the
+    expected mean and scaling by the expected standard deviation, as
+    learned from the global mean-variance relationships. This
+    normalization should be applied independently for each batch in the
+    training corpus. Note, we do not implement clipping as described in
+    the seurat publication.
 
     The implementation is based on
     https://github.com/scverse/scanpy/blob/4642cf8e2e51b257371792cb4fcb9611c0a81123/scanpy/preprocessing/_highly_variable_genes.py#L26.
@@ -208,9 +211,9 @@ def normalize_by_seurat(x: sp.csr_matrix) -> sp.csr_matrix:
     Parameters
     ----------
     x:
-        A sparse matrix where each row represents an observation and each column
-        represents a feature, containing raw counts as features (i.e. not scaled
-        or normalized).
+        A sparse matrix where each row represents an observation and
+        each column represents a feature, containing raw counts as
+        features (i.e. not scaled or normalized).
 
     Returns
     ----------
@@ -252,8 +255,8 @@ def normalize_by_shifted_log(x: sp.csr_matrix) -> sp.csr_matrix:
     Parameters
     ----------
     x:
-        A sparse matrix where each row represents an observation and each column
-        represents a feature.
+        A sparse matrix where each row represents an observation and
+        each column represents a feature.
 
     Returns
     ----------
