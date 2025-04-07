@@ -6,31 +6,32 @@ https://github.com/facebookresearch/ijepa/blob/main/src/masks/multiblock.py
 (05.06.2024).
 """
 
-from typing import List, Tuple
-
 import numpy as np
 import torch
 
 
 class CellMaskCollator:
     """
-    CellMaskCollator class for sampling target and context block masks from
-    cell and neighborhood segments using cell-based masking.
+    CellMaskCollator class for sampling target and context block masks
+    from cell and neighborhood segments using cell-based masking.
 
     Parameters
     ----------
     n_targets:
-        Number of target masks (i.e., number of cells to mask) for each token sequence.
+        Number of target masks (i.e., number of cells to mask) for each
+        token sequence.
     n_contexts:
         Number of context masks to sample.
     n_segments:
         Number of segments.
     seq_len_cell:
-        The length of the token sequence representing a single cell segment.
+        The length of the token sequence representing a single cell
+        segment.
     seq_len_neighborhood:
-        The length of the token sequence representing the neighborhood segments.
+        The length of the token sequence representing the neighborhood
+        segments.
     n_special_tokens:
-        Number of special tokens in each token sequence, including <cls> tokens.
+        Number of special tokens in each token sequence.
     per_block_mask_ratio:
         Per cell mask ratio.
     targets_list:
@@ -44,7 +45,7 @@ class CellMaskCollator:
                  seq_len_neighborhood: int,
                  n_special_tokens: int,
                  per_block_mask_ratio: float = 0.5,
-                 targets_list: List[int]=None):
+                 targets_list: list[int] | None = None):
         self.n_targets = n_targets
         self.n_contexts = n_contexts
         self.n_segments = n_segments
@@ -55,43 +56,48 @@ class CellMaskCollator:
         self.per_block_mask_ratio = per_block_mask_ratio
         if targets_list is not None:
             # Use provided targets_list.
-            self.target_cell_indices = torch.tensor(targets_list, dtype=torch.long)
+            self.target_cell_indices = torch.tensor(
+                targets_list, dtype=torch.long)
             all_cell_indices = torch.arange(self.n_segments, dtype=torch.long)
-            # Compute context indices as those indices not in target_cell_indices.
+            # Compute context indices as those indices not in
+            # target_cell_indices.
             context_list = []
             for idx in all_cell_indices:
                 if idx not in self.target_cell_indices:
                     context_list.append(idx)
-            self.context_cell_indices = torch.tensor(context_list, dtype=torch.long)
+            self.context_cell_indices = torch.tensor(
+                context_list, dtype=torch.long)
         else:
             self.target_cell_indices = None
             self.context_cell_indices = None
 
     def _sample_gene_mask(self,
                           tokens: torch.Tensor,
-                          segments: torch.Tensor,
-                          ) -> Tuple[List[torch.Tensor],
-                                     List[torch.Tensor],
+                          ) -> tuple[list[torch.Tensor],
+                                     list[torch.Tensor],
                                      int]:
         """
-        Perform cell masking: select `n_targets` random cells, include their nonzero tokens
-        in the target mask(s), and place all other nonzero tokens into context masks.
+        Perform cell masking: select `n_targets` random cells, include
+        their nonzero tokens in the target mask(s), and place all other
+        nonzero tokens into context masks.
 
         Parameters
         ----------
         tokens:
-            Token sequence with shape (N,) where N is total token length.
-        segments:
-            Segment information (not used in this version but kept for API compatibility).
+            Token sequence with shape (N,) where N is total token
+            length.
 
         Returns
         ----------
         target_masks:
-            List of tensors with indices of nonzero tokens in selected target cells.
+            List of tensors with indices of nonzero tokens in selected
+            target cells.
         context_masks:
-            List of tensors with indices of nonzero tokens in context (non-target) cells.
+            List of tensors with indices of nonzero tokens in context
+            (non-target) cells.
         keep_tokens_target:
-            Minimum number of nonzero tokens kept in any target mask (used for batch collation).
+            Minimum number of nonzero tokens kept in any target mask
+            (used for batch collation).
         """
         # Determine mask ratio; sample if list is provided
         if isinstance(self.per_block_mask_ratio, list):
@@ -114,8 +120,10 @@ class CellMaskCollator:
             target_cell_indices = all_cell_indices[:self.n_targets]
             context_cell_indices = all_cell_indices[self.n_targets:]
         else:
-            target_cell_indices = self.target_cell_indices[torch.randperm(len(self.target_cell_indices))]
-            context_cell_indices = self.context_cell_indices[torch.randperm(len(self.context_cell_indices))]
+            target_cell_indices = self.target_cell_indices[
+                torch.randperm(len(self.target_cell_indices))]
+            context_cell_indices = self.context_cell_indices[
+                torch.randperm(len(self.context_cell_indices))]
 
         target_masks = []
         context_indices = []
@@ -139,7 +147,8 @@ class CellMaskCollator:
             global_target_indices = permuted_indices[:num_to_mask]
             global_context_indices = permuted_indices[num_to_mask:]
 
-            keep_tokens_target = min(keep_tokens_target, len(global_target_indices))
+            keep_tokens_target = min(
+                keep_tokens_target, len(global_target_indices))
 
             context_indices.append(global_context_indices)
             target_masks.append(global_target_indices)
@@ -161,9 +170,15 @@ class CellMaskCollator:
         context_indices = torch.cat(context_indices)
 
         # Shuffle and split context indices into n_contexts masks
-        permuted_indices = context_indices[torch.randperm(len(context_indices))]
+        permuted_indices = context_indices[
+            torch.randperm(len(context_indices))]
         split_size = len(permuted_indices) // self.n_contexts
         remainder = len(permuted_indices) % self.n_contexts
+
+        # TO DO: At the moment, only 1 context mask is supported.
+        if self.n_contexts > 1:
+            raise ValueError(
+                "At the moment, only 1 context mask is supported.")
 
         context_masks = []
         start = 0
@@ -174,15 +189,18 @@ class CellMaskCollator:
             context_masks.append(context_mask)
             start = end
 
-        return target_masks, context_masks, keep_tokens_target, keep_tokens_context
+        return target_masks, \
+               context_masks, \
+               keep_tokens_target, \
+               keep_tokens_context
 
     def __call__(self,
-                 batch: Tuple[torch.Tensor,
+                 batch: tuple[torch.Tensor,
                               torch.Tensor,
                               torch.Tensor,
                               torch.Tensor,
-                              List[str]],
-                 ) -> Tuple[torch.Tensor,
+                              list[str]],
+                 ) -> tuple[torch.Tensor,
                             torch.Tensor,
                             torch.Tensor,
                             torch.Tensor]:
@@ -192,7 +210,8 @@ class CellMaskCollator:
         Parameters
         ----------
         batch:
-            Tuple containing gene tokens, segments, positions, counts, and cell IDs.
+            Tuple containing gene tokens, segments, positions, counts,
+            and cell IDs.
 
         Returns
         ----------
@@ -216,9 +235,10 @@ class CellMaskCollator:
         keep_tokens_context = self.seq_len_genes
 
         for i in range(B):
-            target_masks, context_masks, min_target_len, min_context_len = self._sample_gene_mask(
-                tokens=batch[i][0],
-                segments=batch[i][1])
+            target_masks, \
+            context_masks, \
+            min_target_len, \
+            min_context_len = self._sample_gene_mask(tokens=batch[i][0])
 
             keep_tokens_target = min(keep_tokens_target, min_target_len)
             keep_tokens_context = min(keep_tokens_context, min_context_len)
@@ -244,4 +264,7 @@ class CellMaskCollator:
         collated_masks_attention = torch.utils.data.default_collate(
             collated_masks_attention).unsqueeze(1).unsqueeze(1)
 
-        return collated_batch, collated_context_masks, collated_target_masks, collated_masks_attention
+        return collated_batch, \
+               collated_context_masks, \
+               collated_target_masks, \
+               collated_masks_attention

@@ -2,12 +2,12 @@ data:
   dataset_name: 'hst_corpus_70m'
   raw_data_folder_path: '/lustre/scratch126/cellgen/team361/DATASETS/silver/hst_corpus_70m'
   token_dict_folder_path: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/token_dictionary_homo_sapiens.pkl'
-  tokenized_data_folder_path: '/lustre/scratch126/cellgen/team361/DATASETS/gold/cell-graph-tokenizer/hst_corpus_70m/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_6.dataset'
-  precomputed_split: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_6_precomputed_split_train.pkl'
-  precomputed_n_nonzero_tokens: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_6_n_nonzero_tokens_train.pkl'
-  #tokenized_data_folder_path: '/lustre/scratch126/cellgen/team361/DATASETS/gold/cell-graph-tokenizer/hst_corpus_70m/hst_corpus_70m_32_gene_corrected_read_depth_nonzero_mean_None_None_None_shifted_log_knn_6.dataset'
-  #precomputed_split: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_gene_corrected_read_depth_nonzero_mean_None_None_None_shifted_log_knn_6_precomputed_split_train.pkl'
-  #precomputed_n_nonzero_tokens: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_gene_corrected_read_depth_nonzero_mean_None_None_None_shifted_log_knn_6_n_nonzero_tokens_train.pkl'
+  #tokenized_data_folder_path: '/lustre/scratch126/cellgen/team361/DATASETS/gold/cell-graph-tokenizer/hst_corpus_70m/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_6.dataset'
+  #precomputed_split: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_6_precomputed_split_train.pkl'
+  #precomputed_n_nonzero_tokens: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_6_n_nonzero_tokens_train.pkl'
+  tokenized_data_folder_path: '/lustre/scratch126/cellgen/team361/DATASETS/gold/cell-graph-tokenizer/hst_corpus_70m/hst_corpus_70m_32_gene_corrected_read_depth_nonzero_mean_None_None_None_shifted_log_knn_6.dataset'
+  precomputed_split: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_gene_corrected_read_depth_nonzero_mean_None_None_None_shifted_log_knn_6_precomputed_split_train.pkl'
+  precomputed_n_nonzero_tokens: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_gene_corrected_read_depth_nonzero_mean_None_None_None_shifted_log_knn_6_n_nonzero_tokens_train.pkl'
   #tokenized_data_folder_path: '/lustre/scratch126/cellgen/team361/DATASETS/gold/cell-graph-tokenizer/hst_corpus_70m/hst_corpus_70m_32_gene_corrected_read_depth_nonzero_mean_None_gene_corrected_read_depth_nonzero_mean_shifted_log_knn_6.dataset'
   #precomputed_split: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_gene_corrected_read_depth_nonzero_mean_None_gene_corrected_read_depth_nonzero_mean_shifted_log_knn_6_precomputed_split_train.pkl'
   #precomputed_n_nonzero_tokens: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_gene_corrected_read_depth_nonzero_mean_None_gene_corrected_read_depth_nonzero_mean_shifted_log_knn_6_n_nonzero_tokens_train.pkl'
@@ -22,9 +22,9 @@ data:
   sample_subset: False
   split: 0
   stratify: False
-  seq_len_cell: 128 # 64, 128, 256
-  seq_len_neighborhood: 768 # 384/640, 1536/2816
-  n_segments: 7 # 7, 11; number of unique segment tokens (gene segments)
+  seq_len_cell: 256 # 64, 128, 256
+  seq_len_neighborhood: 2560 # 384/640, 1536/2816
+  n_segments: 11 # 7, 11; number of unique segment tokens (gene segments)
   sampling_strategy: null # null, 'rand_sampling', 'norm_count_rank_sampling', 'rand_sampling_rep', 'norm_count_rank_sampling_rep'
   batch_size: 384 # 224 # 96 # 128 # 192 # 96 (norm, no bfloat), 128 (dyt, bfloat), 144 (norm, bfloat)
   num_workers: 24
