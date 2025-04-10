@@ -280,9 +280,12 @@ def retrieve_gene_emb(
                 occ_indices = torch.cat([indices, pad], dim=0)
             occ_indices_list.append(occ_indices.unsqueeze(0))  # shape (1, max_occ)
         occ_indices_tensor = torch.cat(occ_indices_list, dim=0)  # shape (N, max_occ)
-        # Create occurrence mask: valid if the number of nonzero entries is > 0.
-        # Note: if a valid index can be 0, use gene_mask.sum(dim=1)>0 instead.
-        occ_mask = (occ_indices_tensor != 0).float()
+        # Instead of checking for nonzero indices (which would mask a valid occurrence at index 0),
+        # we compute the number of valid occurrences per sequence from gene_mask.
+        occ_counts = gene_mask.sum(dim=1)  # (N,)
+        # Create a range tensor and compare to counts for each sequence.
+        range_tensor = torch.arange(max_occ, device=occ_indices_tensor.device).unsqueeze(0).expand(N, max_occ)
+        occ_mask = (range_tensor < occ_counts.unsqueeze(1)).float()
         occ_mask[~gene_presence] = 0.0
         # Gather embeddings for each occurrence.
         gene_occ = torch.gather(emb, 1, occ_indices_tensor.unsqueeze(-1).expand(-1, -1, emb.shape[-1]))
