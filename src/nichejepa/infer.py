@@ -62,6 +62,7 @@ def infer(args: dict,
           feature_norm: bool=False,
           top_k: Optional[int]=None,
           return_gene: bool=True,
+          return_cosine_sim: bool=False,
           ) -> ad.AnnData:
     """
     Use a trained model for inference. Run forward pass on a given dataset and
@@ -96,7 +97,8 @@ def infer(args: dict,
         Include only top_k genes in aggregation.
     return_gene: 
         If return gene_embedding or not.
-
+    return_cosine_sim: 
+        If 'True' will compute and return cosine_sim matrix.
     Returns
     -----------
     adata:
@@ -183,9 +185,9 @@ def infer(args: dict,
     feature_path = f"{save_folder}/"
 
     os.makedirs(save_folder, exist_ok=True)
-    dump = os.path.join(save_folder, f'params.yaml')
-    with open(dump, 'w') as f:
-        yaml.dump(args, f)
+    #dump = os.path.join(save_folder, f'params.yaml')
+    #with open(dump, 'w') as f:
+    #    yaml.dump(args, f)
 
     # Define checkpointing path
     latest_path = os.path.join(load_folder_path, f'{tag}-latest.pth.tar')
@@ -432,10 +434,11 @@ def infer(args: dict,
                             all_neighborhood_gene_emb_dict[gene_id].append(gene_occ * occ_mask.unsqueeze(-1))
                 # Stack neighborhood gene occurrence tensors along gene dimension:
                 # Resulting shape: (N, num_neb_genes, max_occ, D) and mask: (N, num_neb_genes, max_occ)
-                neb_occ_tensor = torch.stack(neb_occ_list, dim=1)
-                neb_occ_mask_tensor = torch.stack(neb_occ_mask_list, dim=1)
+                if len(neighborhood_gene_ids) != 0:
+                    neb_occ_tensor = torch.stack(neb_occ_list, dim=1)
+                    neb_occ_mask_tensor = torch.stack(neb_occ_mask_list, dim=1)
                 # Compute cosine similarity components using our function for multiple occurrences.
-                if len(cell_gene_ids) != 0:
+                if return_cosine_sim:
                     if itr == 0:
                         sum_cos_sim, count = compute_running_mean_cosine_mult_occ(cell_embs, cell_presence, neb_occ_tensor, neb_occ_mask_tensor)
                     else:
@@ -481,7 +484,7 @@ def infer(args: dict,
             adata.obsm[f"neighborhood_emb_gene{gene_id}"] = np.array(torch.cat(
                 all_neighborhood_gene_emb_dict[gene_id],
                 dim=0).cpu())
-    if len(cell_gene_ids)!=0:
+    if return_cosine_sim:
         adata.uns['sum_cos_sim'] = sum_cos_sim.numpy()
         adata.uns['count'] = count.numpy()
         adata.uns['cos_sim'] = adata.uns['sum_cos_sim'] / adata.uns['count']

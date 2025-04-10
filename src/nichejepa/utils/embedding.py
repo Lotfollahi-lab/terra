@@ -267,7 +267,7 @@ def retrieve_gene_emb(
     ).cpu()
     gene_presence = gene_mask.any(dim=1)  # (N,)
     
-    if aggregate_multiple and gene_type == "neighborhood":
+    if aggregate_multiple:
         N, L = gene_mask.shape
         occ_indices_list: List[torch.Tensor] = []
         for i in range(N):
