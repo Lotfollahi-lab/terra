@@ -109,8 +109,14 @@ def infer(args: dict,
     # Load params from config file
     add_cls = args['meta']['add_cls']
     gt_type = args['meta']['gt_type']
-    count_encoding = args['meta']['count_encoding']
-    n_value_bins = args['meta']['n_value_bins']
+    if 'count_encoding' in args['meta'].keys():
+        count_encoding = args['meta']['count_encoding']
+    else:
+        count_encoding = 'mlp'
+    if 'n_value_bins' in args['meta'].keys():
+        n_value_bins = args['meta']['n_value_bins']
+    else:
+        n_value_bins = 100
     enc_depth = args['meta']['enc_depth']
     enc_emb_dim = args['meta']['enc_emb_dim']
     pred_depth = args['meta']['pred_depth']
@@ -138,11 +144,17 @@ def infer(args: dict,
     n_contexts = args['mask']['n_contexts']
     n_targets = args['mask']['n_targets']
     block_masking = args['mask']['block_masking']
-    cell_masking = args['mask']['cell_masking']
+    if 'cell_masking' in args['mask'].keys():
+        cell_masking = args['mask']['cell_masking']
+    else:
+        cell_masking = False
     context_mask_size = args['mask']['context_mask_size']
     target_mask_size = args['mask']['target_mask_size']
     per_block_mask_ratio = args['mask']['per_block_mask_ratio']
-    targets_list = args['mask']['targets_list']
+    if 'targets_list' in args['mask'].keys():
+        targets_list = args['mask']['targets_list']
+    else:
+        targets_list = []
 
     r_file = args['state']['read_checkpoint']
     tag = args['state']['write_tag']
