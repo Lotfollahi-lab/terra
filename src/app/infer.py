@@ -473,9 +473,12 @@ def infer(args: dict,
                     neb_occ_mask_list.append(occ_mask)    # occ_mask: (N, max_occ)
                     if return_gene:
                         if itr == 0:
-                            all_neighborhood_gene_emb_dict[gene_id] = [gene_occ * occ_mask.unsqueeze(-1)]
+                            #all_neighborhood_gene_emb_dict[gene_id] = [gene_occ * occ_mask.unsqueeze(-1)]
+                            all_neighborhood_gene_emb_dict[gene_id] = [compute_mean_unmasked_emb(gene_occ,occ_mask)]
+
                         else:
-                            all_neighborhood_gene_emb_dict[gene_id].append(gene_occ * occ_mask.unsqueeze(-1))
+                            #all_neighborhood_gene_emb_dict[gene_id].append(gene_occ * occ_mask.unsqueeze(-1))
+                            all_neighborhood_gene_emb_dict[gene_id].append(compute_mean_unmasked_emb(gene_occ,occ_mask))
                 # Stack neighborhood gene occurrence tensors along gene dimension:
                 # Resulting shape: (N, num_neb_genes, max_occ, D) and mask: (N, num_neb_genes, max_occ)
                 if len(neighborhood_gene_ids) != 0:
