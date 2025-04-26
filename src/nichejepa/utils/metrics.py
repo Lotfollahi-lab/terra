@@ -1,4 +1,9 @@
 
+import numpy as np
+from sklearn.metrics import pairwise_distances
+from sklearn.metrics.pairwise import rbf_kernel
+from scipy.stats import wasserstein_distance
+
 def compute_energy_distance(
     x: np.ndarray,
     y: np.ndarray
