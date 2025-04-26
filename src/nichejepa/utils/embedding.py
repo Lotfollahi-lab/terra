@@ -364,7 +364,8 @@ def compute_count_mean_cosine_sim(
     cell_embs: torch.Tensor,
     cell_presence: torch.Tensor,
     neb_occ: torch.Tensor,
-    neb_mask: torch.Tensor
+    neb_mask: torch.Tensor,
+    return_per_cell: bool=False
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Computes the total (summed) cosine similarity and the total count of valid occurrence pairs
@@ -381,13 +382,20 @@ def compute_count_mean_cosine_sim(
         Shape: (N, num_neb_genes, max_occ, D) -- neighborhood gene occurrence embeddings.
     neb_mask : torch.Tensor
         Shape: (N, num_neb_genes, max_occ) -- binary mask indicating valid occurrences.
-
+    return_per_cell: bool
+        If 'True' will return the cosine matrix per cell.
     Returns
     -------
-    total_cs : torch.Tensor
-        Shape: (num_cell_genes, num_neb_genes) -- total sum of cosine similarities.
-    total_count : torch.Tensor
-        Shape: (num_cell_genes, num_neb_genes) -- total count of valid occurrence pairs.
+    if return_per_cell is true:
+        occ_sum_masked : torch.Tensor
+            Shape: (B, num_cell_genes, num_neb_genes) -- total sum of cosine similarities per cell.
+        occ_count_masked : torch.Tensor
+            Shape: (B, num_cell_genes, num_neb_genes) -- total count of valid occurrence pairs per cell.
+    else:
+        total_cs : torch.Tensor
+            Shape: (num_cell_genes, num_neb_genes) -- total sum of cosine similarities.
+        total_count : torch.Tensor
+            Shape: (num_cell_genes, num_neb_genes) -- total count of valid occurrence pairs.
     """
     # Normalize embeddings along the last dimension.
     cell_embs = F.normalize(cell_embs, p=2, dim=-1)
@@ -410,6 +418,8 @@ def compute_count_mean_cosine_sim(
     occ_sum_masked = occ_sum * cell_pres_exp
     occ_count_masked = occ_count * cell_pres_exp
     
+    if return_per_cell:
+        return occ_sum_masked, occ_count_masked
     # Sum over all sequences.
     total_cs = occ_sum_masked.sum(dim=0)       # (num_cell_genes, num_neb_genes)
     total_count = occ_count_masked.sum(dim=0)    # (num_cell_genes, num_neb_genes)
@@ -427,7 +437,10 @@ def batch_rowwise_distances(
          * Extract non-zero, non-NaN values from B[b, i, :] (excluding diag)
          * Compute distances between these two independently filtered vectors
       - Average over all valid rows
-
+    Parameters
+    ----------
+        A: First matrix
+        B: Second matrix
     Returns:
         Tuple of 2 arrays (mmd_distances, emd_distances) each of shape (B,)
     """
@@ -438,10 +451,10 @@ def batch_rowwise_distances(
     mmd_out = np.zeros(B_sz, dtype=float)
     emd_out = np.zeros(B_sz, dtype=float)
 
-    for b in tqdm(range(B_sz)):
+    for b in range(B_sz):
         m_list, w_list = [], [], []
 
-        for i in tqdm(range(G)):
+        for i in range(G):
             # Indices excluding the diagonal
             idx = np.arange(G) != i
 

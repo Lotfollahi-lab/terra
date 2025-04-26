@@ -29,7 +29,8 @@ from nichejepa.utils.embedding import (create_binary_selection_mask,
                                        compute_unmasked_rank_based_weights,
                                        collect_adata_from_folder,
                                        retrieve_gene_emb,
-                                       compute_count_mean_cosine_sim)
+                                       compute_count_mean_cosine_sim,
+                                       batch_rowwise_distances)
 from nichejepa.utils.logging import CSVLogger
 
 
