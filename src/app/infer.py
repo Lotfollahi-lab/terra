@@ -494,21 +494,19 @@ def infer(args: dict,
                 if return_cosine_sim:
                     for compute_cosine_with in compute_cosine_with_list:
                         if itr == 0:
-                            sum_cos_sim, count = compute_count_mean_cosine_sim(
+                            cos_sim_dict[compute_cosine_with] = compute_count_mean_cosine_sim(
                                 cell_embs, 
                                 cell_presence, 
                                 neb_occ_dict[compute_cosine_with][0], 
                                 neb_occ_dict[compute_cosine_with][1])
-                            cos_sim_dict[compute_cosine_with] =(sum_cos_sim, count)
                         else:
                             sum_cos_sim_temp, count_temp = compute_count_mean_cosine_sim(
                                 cell_embs, 
                                 cell_presence, 
                                 neb_occ_dict[compute_cosine_with][0],  
                                 neb_occ_dict[compute_cosine_with][1])
-                            sum_cos_sim.add_(sum_cos_sim_temp)
-                            count.add_(count_temp)
-                            cos_sim_dict[compute_cosine_with] =(sum_cos_sim, count)
+                            cos_sim_dict[compute_cosine_with][0].add_(sum_cos_sim_temp)
+                            cos_sim_dict[compute_cosine_with][1].add_(count_temp)
                 if returen_distance:
                     cos_sim_temp = []
                     for compute_cosine_with in compute_cosine_with_list:
@@ -562,9 +560,10 @@ def infer(args: dict,
                 all_neighborhood_gene_emb_dict[gene_id],
                 dim=0).cpu())
     if return_cosine_sim:
-        adata.uns['sum_cos_sim'] = sum_cos_sim.numpy()
-        adata.uns['count'] = count.numpy()
-        adata.uns['cos_sim'] = adata.uns['sum_cos_sim'] / adata.uns['count']
+        for compute_cosine_with in compute_cosine_with_list:
+            adata.uns[f"sum_cos_sim_{compute_cosine_with}"] = cos_sim_dict[compute_cosine_with][0].numpy()
+            adata.uns[f"count_{compute_cosine_with}"] = cos_sim_dict[compute_cosine_with][1].numpy()
+            adata.uns[f"cos_sim_{compute_cosine_with}"] = adata.uns[f"sum_cos_sim_{compute_cosine_with}"] / adata.uns[f"count_{compute_cosine_with}"]
     if returen_distance:
        adata.obsm['mmd_dist'] = np.concatenate(mmd_list, axis=0)
        adata.obsm['emd_dist'] = np.concatenate(emd_list, axis=0)
