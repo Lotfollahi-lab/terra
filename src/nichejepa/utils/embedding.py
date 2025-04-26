@@ -1,14 +1,13 @@
 
 import os
 from typing import List, Literal, Optional, Tuple
-
 import anndata as ad
 import numpy as np
 import pandas as pd
 import scanpy as sc
 import torch
 import torch.nn.functional as F
-
+from nichejepa.utils.metrics import compute_scalar_mmd, compute_emd
 
 def compute_running_mean_cosine_mult_occ(
         cell_embs: torch.Tensor,
@@ -416,6 +415,56 @@ def compute_count_mean_cosine_sim(
     total_count = occ_count_masked.sum(dim=0)    # (num_cell_genes, num_neb_genes)
     
     return total_cs, total_count
+
+def batch_rowwise_distances(
+    A: np.ndarray, 
+    B: np.ndarray
+) -> (np.ndarray, np.ndarray, np.ndarray):
+    """
+    For each sample in batch:
+      - For each row i:
+         * Extract non-zero, non-NaN values from A[b, i, :] (excluding diag)
+         * Extract non-zero, non-NaN values from B[b, i, :] (excluding diag)
+         * Compute distances between these two independently filtered vectors
+      - Average over all valid rows
+
+    Returns:
+        Tuple of 2 arrays (mmd_distances, emd_distances) each of shape (B,)
+    """
+    assert A.shape == B.shape
+    B_sz, G, G2 = A.shape
+    assert G == G2
+
+    mmd_out = np.zeros(B_sz, dtype=float)
+    emd_out = np.zeros(B_sz, dtype=float)
+
+    for b in tqdm(range(B_sz)):
+        m_list, w_list = [], [], []
+
+        for i in tqdm(range(G)):
+            # Indices excluding the diagonal
+            idx = np.arange(G) != i
+
+            ai = A[b, i, idx]
+            bi = B[b, i, idx]
+
+            # Filter non-zero and non-NaN separately for A and B
+            ai_valid = ai[~np.isnan(ai) & (ai != 0)][:, None]
+            bi_valid = bi[~np.isnan(bi) & (bi != 0)][:, None]
+
+            if ai_valid.shape[0] == 0 or bi_valid.shape[0] == 0:
+                continue  # Skip if either is empty
+
+            m_list.append(compute_scalar_mmd(ai_valid, bi_valid))
+            w_list.append(compute_emd(ai_valid, bi_valid))
+
+        if m_list:
+            mmd_out[b] = float(np.mean(m_list))
+            emd_out[b] = float(np.mean(w_list))
+        else:
+            energy_out[b] = mmd_out[b] = emd_out[b] = 0.0
+    return mmd_out, emd_out
+
 
 def collect_adata_from_folder(load_folder_path: str,
                               cell_ids: list,
