@@ -29,7 +29,9 @@ from nichejepa.utils.embedding import (create_binary_selection_mask,
                                        compute_unmasked_rank_based_weights,
                                        collect_adata_from_folder,
                                        retrieve_gene_emb,
-                                       compute_count_mean_cosine_sim)
+                                       compute_count_mean_cosine_sim,
+                                       compute_sum_and_nonzero_count)
+
 from nichejepa.utils.logging import CSVLogger
 
 
@@ -63,6 +65,7 @@ def infer(args: dict,
           return_gene: bool=True,
           return_cosine_sim: bool=False,
           compute_cosine_with: str='neighborhood',
+          return_gene_per_data: bool=False,
           ) -> ad.AnnData:
     """
     Use a trained model for inference. Run forward pass on a given
@@ -104,6 +107,8 @@ def infer(args: dict,
     compute_cosine_with:
        If set to 'neighborhood', it will compute the cosine similarity between each cell and its neighborhood. 
        If set to 'cell', it will compute the cosine similarity between cells itself.
+    return_gene_per_data:
+        If 'True' will return gene_embedding for each gene per dataset.
     Returns
     -----------
     adata:
@@ -310,7 +315,9 @@ def infer(args: dict,
     all_neighborhood_emb_list = []
     all_cell_gene_emb_dict = {}
     all_neighborhood_gene_emb_dict = {}
-
+    all_cell_gene_emb_per_data_dict = {}
+    all_neighborhood_gene_emb_per_data_dict = {}
+    
     for itr, (udata, _, _, masks_attention) in tqdm(enumerate(loader)):
         # Load gene tokens and segmentation label to the specified device
         tokens = udata[0].to(device, non_blocking=True)
@@ -462,6 +469,13 @@ def infer(args: dict,
                             all_cell_gene_emb_dict[gene_id] = [cell_embs[:, j, :]]
                         else:
                             all_cell_gene_emb_dict[gene_id].append(cell_embs[:, j, :])
+                    if return_gene_per_data:
+                        gene_sum, gene_count = compute_sum_and_nonzero_count(cell_embs[:, j, :])
+                        if itr == 0:
+                            all_cell_gene_emb_per_data_dict[gene_id] = (gene_sum, gene_count)
+                        else:
+                            all_cell_gene_emb_per_data_dict[gene_id][0] += cell_embs[:, j, :]
+                            all_cell_gene_emb_per_data_dict[gene_id][1] += cell_presence[:, j]
                 # Process neighborhood genes (multiple occurrences: compute cosine per occurrence)
                 for j, gene_id in enumerate(neighborhood_gene_ids):
                     gene_occ, occ_mask, gene_presence_local = retrieve_gene_emb(
@@ -483,6 +497,13 @@ def infer(args: dict,
                         else:
                             #all_neighborhood_gene_emb_dict[gene_id].append(gene_occ * occ_mask.unsqueeze(-1))
                             all_neighborhood_gene_emb_dict[gene_id].append(compute_mean_unmasked_emb(gene_occ,occ_mask))
+                    if return_gene_per_data:
+                        gene_sum, gene_count = compute_sum_and_nonzero_count(compute_mean_unmasked_emb(gene_occ,occ_mask))
+                        if itr == 0:
+                            all_neighborhood_gene_emb_per_data_dict[gene_id] = (gene_sum, gene_count)
+                        else:
+                            all_neighborhood_gene_emb_per_data_dict[gene_id][0] += gene_sum
+                            all_neighborhood_gene_emb_per_data_dict[gene_id][1] += gene_count
                 # Stack neighborhood gene occurrence tensors along gene dimension:
                 # Resulting shape: (N, num_neb_genes, max_occ, D) and mask: (N, num_neb_genes, max_occ)
                 if len(neighborhood_gene_ids) != 0 and return_cosine_sim:
