@@ -10,67 +10,47 @@ import torch
 import torch.nn.functional as F
 
 
-def compute_running_mean_cosine_mult_occ(
-        cell_embs: torch.Tensor,
-        cell_presence: torch.Tensor,
-        neb_occ: torch.Tensor,
-        neb_mask: torch.Tensor
-        ) -> tuple[torch.Tensor, torch.Tensor]:
+def compute_sum_and_nonzero_count(
+    mat: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """
-    Computes the total (summed) cosine similarity and the total count of
-    valid occurrence pairs between each cell gene (unique per sequence)
-    and each neighborhood gene (across max_occ occurrences). No
-    averaging per sequence is performed.
-    
+    Compute the sum of non-zero rows for each  2D tensor,
+    and the total number of rows that have at least one non-zero entry.
+
     Parameters
-    ----------
-    cell_embs:
-        Shape: (N, num_cell_genes, D) -- cell gene embeddings.
-    cell_presence:
-        Shape: (N, num_cell_genes) -- binary presence indicator.
-    neb_occ:
-        Shape: (N, num_neb_genes, max_occ, D) -- neighborhood gene
-        occurrence embeddings.
-    neb_mask:
-        Shape: (N, num_neb_genes, max_occ) -- binary mask indicating
-        valid occurrences.
+    -----------
+    mat:
+        A 2D tensor of shape (num_rows, feature_dim).
 
     Returns
-    -------
-    total_cs:
-        Shape: (num_cell_genes, num_neb_genes) -- total sum of cosine
-        similarities.
-    total_count:
-        Shape: (num_cell_genes, num_neb_genes) -- total count of valid
-        occurrence pairs.
+    -----------
+    col_nonzero_sum:
+        A 1D tensor of shape (feature_dim,) where each element is the sum
+        of the non-zero entries in that feature dimension.
+    nonzero_col_count:
+        A 0-dim tensor (scalar) equal to the count of rows in which
+        at least one element is non-zero.
+
+    Raises
+    -----------
+    ValueError:
+        If `mat` is not a 2D tensor.
     """
-    # Normalize embeddings along the last dimension.
-    cell_embs = F.normalize(cell_embs, p=2, dim=-1)
-    neb_occ = F.normalize(neb_occ, p=2, dim=-1)
+    # 1) Check that mat is 2D
+    if mat.dim() != 2:
+        raise ValueError(
+            f"Expected a 2D tensor for mat, but got {mat.dim()} dimensions."
+        )
 
-    # Compute cosine similarity between each cell gene and each
-    # neighborhood occurrence.
-    # Resulting shape: (N, num_cell_genes, num_neb_genes, max_occ)
-    cs = torch.einsum("ncd,njod->ncjo", cell_embs, neb_occ)
+    # 2) Build mask of nonzero entries
+    nonzero_mask = mat != 0
+    # 3) Sum nonzeros along the ROW dimension → gives one sum per COLUMN
+    row_nonzero_sum = mat.masked_fill(~nonzero_mask, 0.0).sum(dim=0)
 
-    # Expand neb_mask to match cs shape.
-    neb_mask_exp = neb_mask.unsqueeze(1) # (N, 1, num_neb_genes, max_occ)
-    cs_masked = cs * neb_mask_exp # zero out invalid occurrences
+    # 4) Count how many columns have at least one non-zero
+    nonzero_row_count = nonzero_mask.any(dim=1).sum()
 
-    # Sum cosine similarities over the occurrence dimension.
-    occ_sum = cs_masked.sum(dim=-1) # (N, num_cell_genes, num_neb_genes)
-    occ_count = neb_mask_exp.sum(dim=-1) # (N, num_cell_genes, num_neb_genes)
-
-    # Only count sequences where the cell gene is present.
-    cell_pres_exp = cell_presence.unsqueeze(-1) # (N, num_cell_genes, 1)
-    occ_sum_masked = occ_sum * cell_pres_exp
-    occ_count_masked = occ_count * cell_pres_exp
-
-    # Sum over all sequences.
-    total_cs = occ_sum_masked.sum(dim=0) # (num_cell_genes, num_neb_genes)
-    total_count = occ_count_masked.sum(dim=0) # (num_cell_genes, num_neb_genes)
-
-    return total_cs, total_count
+    return row_nonzero_sum, nonzero_row_count
 
 
 def compute_unmasked_rank_based_weights(tokens: torch.Tensor,
