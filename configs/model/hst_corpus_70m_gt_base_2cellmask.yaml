@@ -12,11 +12,11 @@ data:
   sample_subset: False
   split: 0
   stratify: False
-  seq_len_cell: 256 # 64, 128, 256
-  seq_len_neighborhood: 2560 # 384/640, 1536/2816
+  seq_len_cell: 256 # 128, 256
+  seq_len_neighborhood: 2560 # 1536 (6knn, 256t), 2560 (10knn, 256t), 
   n_segments: 11 # 7, 11; number of unique segment tokens (gene segments)
   sampling_strategy: null # null, 'rand_sampling', 'norm_count_rank_sampling', 'rand_sampling_rep', 'norm_count_rank_sampling_rep'
-  batch_size: 24 # 224 # 96 # 128 # 192 # 96 (norm, no bfloat), 128 (dyt, bfloat), 144 (norm, bfloat)
+  batch_size: 32 # 72 (mask ratio 0.4), 80 (mask ratio 0.6, 0.8)
   num_workers: 24
   pin_memory: True
 meta:
@@ -24,11 +24,11 @@ meta:
   gt_type: 'counts' # 'rank', 'counts'
   count_encoding: 'mlp' # 'value_bins', 'mlp'
   n_value_bins: 100
-  enc_depth: 32
-  enc_emb_dim: 1280
+  enc_depth: 12
+  enc_emb_dim: 768
   pred_depth: 12
   pred_emb_dim: 384
-  num_heads: 16
+  num_heads: 12
   special_tokens: [] # ['assay'] # ['batch'], ['assay', 'tissue', 'gene_panel', 'batch']
   pos_learnable: False
   seg_learnable: False
@@ -37,26 +37,26 @@ meta:
   use_layer_norm: True
 mask:
   n_contexts: 1 # 1
-  n_targets: 1 # 10, this is the number of blocks in block masking
-  block_masking: True # True, False
-  cell_masking: False # True, False
+  n_targets: 2 # 1 =, this is the number of blocks in block masking
+  block_masking: False # True, False
+  cell_masking: True # True, False
   targets_list: null
   context_mask_size: 200 # this doesn't have meaning in block masking.
   target_mask_size: 50 # this doesn't have meaning in block masking.
-  per_block_mask_ratio: 0.6 
+  per_block_mask_ratio: 0.6 # 0.2, 0.4, 0.6, 0.8
 optimization:
-  warmup: 3 # 1
-  epochs: 10 # 4
+  warmup: 3
+  epochs: 10
   ema:
-  - 0.9995
+  - 0.9995 # 0.9995, 0.9998
   - 1.0
   start_lr: 1.0e-06 # 2.0e-05
-  lr: 6.0e-05 # 1.0e-0.4, 0.000625
+  lr: 6.0e-05 # 6.0e-05, 0.000625
   final_lr: 1.0e-06
   weight_decay: 0.04
   final_weight_decay: 0.4
   ipe_scale: 1.25
-  clip_grad: 3.0
+  clip_grad: 2.0
 state:
   log_freq: 20
   checkpoint_freq: 1

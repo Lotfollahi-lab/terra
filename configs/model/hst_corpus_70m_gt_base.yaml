@@ -4,9 +4,11 @@ data:
   token_dict_folder_path: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/token_dictionary_homo_sapiens.pkl'
   tokenized_data_folder_path: '/lustre/scratch126/cellgen/team361/DATASETS/gold/cell-graph-tokenizer/hst_corpus_70m/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10.dataset'
   #precomputed_split: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_split_train.pkl'
-  #precomputed_n_nonzero_tokens: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10_n_nonzero_tokens_train.pkl'
-  precomputed_epoch_splits: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_split_30.pkl'
-  precomputed_epoch_n_nonzero_tokens: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_n_nonzero_tokens_30.pkl'
+  precomputed_n_nonzero_tokens: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10_n_nonzero_tokens_train.pkl'
+  #precomputed_epoch_splits: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_split_30.pkl'
+  #precomputed_epoch_n_nonzero_tokens: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_n_nonzero_tokens_30.pkl'
+  precomputed_epoch_splits: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_split_20.pkl'
+  precomputed_epoch_n_nonzero_tokens: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_n_nonzero_tokens_20.pkl'
   tokenizer_type: 'cell_graph'
   random_state: 0
   sample_subset: False
@@ -16,7 +18,7 @@ data:
   seq_len_neighborhood: 2560 # 1536 (6knn, 256t), 2560 (10knn, 256t), 
   n_segments: 11 # 7, 11; number of unique segment tokens (gene segments)
   sampling_strategy: null # null, 'rand_sampling', 'norm_count_rank_sampling', 'rand_sampling_rep', 'norm_count_rank_sampling_rep'
-  batch_size: 96 # 80, 96 (higher mask ratios) # 128 (10knn, 256t), 144 (6knn, 256t)
+  batch_size: 72 # 72 (mask ratio 0.4), 80 (mask ratio 0.6, 0.8)
   num_workers: 24
   pin_memory: True
 meta:
@@ -43,15 +45,15 @@ mask:
   targets_list: null
   context_mask_size: 200 # this doesn't have meaning in block masking.
   target_mask_size: 50 # this doesn't have meaning in block masking.
-  per_block_mask_ratio: 0.4 # 0.5, 0.6, 0.7
+  per_block_mask_ratio: 0.6 # 0.2, 0.4, 0.6, 0.8
 optimization:
-  warmup: 3 # 1
-  epochs: 30 # 4
+  warmup: 3
+  epochs: 10
   ema:
-  - 0.998 # 0.996
+  - 0.9995 # 0.9995, 0.9998
   - 1.0
   start_lr: 1.0e-06 # 2.0e-05
-  lr: 4.0e-05 # 1.0e-0.4, 0.000625
+  lr: 6.0e-05 # 6.0e-05, 0.000625
   final_lr: 1.0e-06
   weight_decay: 0.04
   final_weight_decay: 0.4
