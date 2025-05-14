@@ -367,8 +367,12 @@ def compute_count_mean_cosine_sim(
     -------
     total_cs : torch.Tensor
         Shape: (num_cell_genes, num_neb_genes) -- total sum of cosine similarities.
-    total_count : torch.Tensor
+    total_pair_count : torch.Tensor
         Shape: (num_cell_genes, num_neb_genes) -- total count of valid occurrence pairs.
+    total_cell_count : torch.Tensor
+        Shape: (num_cell_genes, num_neb_genes) -- total count of valid cell-neighborhood counts.
+        The difference between total_pair_count and total_cell_count is that total_cell_count returns just number of
+        occurrences in different cells, while total_pair_count returns the number of valid pairs.
     """
     # Normalize embeddings along the last dimension.
     cell_embs = F.normalize(cell_embs, p=2, dim=-1)
@@ -393,9 +397,10 @@ def compute_count_mean_cosine_sim(
     
     # Sum over all sequences.
     total_cs = occ_sum_masked.sum(dim=0)       # (num_cell_genes, num_neb_genes)
-    total_count = occ_count_masked.sum(dim=0)    # (num_cell_genes, num_neb_genes)
+    total_pair_count = occ_count_masked.sum(dim=0)    # (num_cell_genes, num_neb_genes)
+    total_cell_count = (total_pair_count!= 0).float()       # (num_cell_genes, num_neb_genes)
     
-    return total_cs, total_count
+    return total_cs, total_pair_count, total_cell_count
 
 def collect_adata_from_folder(load_folder_path: str,
                               cell_ids: list,

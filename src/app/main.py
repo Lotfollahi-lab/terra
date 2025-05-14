@@ -9,6 +9,7 @@ import argparse
 import logging
 import multiprocessing as mp
 import os
+import pickle
 import pprint
 import random
 import yaml
@@ -56,21 +57,62 @@ def process_main(rank, args, params, world_size, port, devices, logger, folder_p
     logger.info(f'Training mode: {is_training}')
 
     # Execute training or evaluation
+     # Execute training or evaluation
     if is_training:
         train_dataset, val_dataset, test_dataset = prepare_dataset(params)
         train(params, train_dataset, save_folder_path=folder_path)
     else:
-        train_dataset, test_dataset, val_dataset = prepare_dataset(params)
-        loss_val = train(params, val_dataset, resume_preempt=True, save_folder_path=folder_path)
-        params['data']['test_batch_ids'] = ['1000_batch11', '1000_batch19', '1000_batch32']
-        params['data']['split_val'] = 0.0
-        train_dataset, test_dataset, val_dataset = prepare_dataset(params)
-        #indices = list(range(len(test_dataset)))
-        #split_params = {'test_size': 0.25,
-        #                'random_state': 0}
-        #train_indices, test_indices = train_test_split(indices, **split_params)
-        #val_dataset = test_dataset.select(test_indices)
-        #train_data = infer(params, train_dataset, load_folder_path=folder_path)
+        
+        train_dataset, _, _ = prepare_dataset(params)
+        print(train_dataset)
+        with open("top_4250_genes.pkl", "rb") as f:
+            cell_gene_ids = pickle.load(f)
+            cell_gene_ids = cell_gene_ids[0:500]
+            #cell_gene_ids =[]
+        with open("top_4250_genes.pkl", "rb") as f:
+            neighborhood_gene_ids = pickle.load(f)
+            neighborhood_gene_ids = neighborhood_gene_ids[0:500]
+        params['state']['read_checkpoint'] = 'nichejepa-ep9.pth.tar'
+        #params['state']['read_checkpoint'] = 'nichejepa-ep5_0.pth.tar'
+        adata_test = infer(params, train_dataset,load_folder_path='/lustre/scratch126/cellgen/team361/sb75/nichejepa-reproducibility/artifacts/hst_corpus_70m/06052025_160815_325/', agg_type='avg',
+                           cell_gene_ids=cell_gene_ids, neighborhood_gene_ids=neighborhood_gene_ids, return_gene=False, return_cosine_sim=True,
+                           return_gene_per_data=False, dataset_ids=['1000'], compute_cosine_with='neighborhood', obs_cols=['cell_type','niche_type'])
+        adata_test.write("result_06052025_160815_325_cell.h5ad")
+        exit()
+        
+        params['data']['batch_size'] = 128
+        params['data']['tokenized_data_folder_path'] = '/lustre/scratch126/cellgen/team361/DATASETS/gold/cell-graph-tokenizer/hst_corpus_70m/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_6.dataset'
+        params['data']['precomputed_split'] = '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_6_precomputed_split_validation.pkl'
+        params['data']['precomputed_n_nonzero_tokens'] = '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_6_n_nonzero_tokens_validation.pkl'
+        params['data']['n_segments'] = 7
+        params['data']['seq_len_cell'] = 256
+        params['data']['seq_len_neighborhood'] = 1536  
+        params['meta']['n_value_bins'] = 100  
+        params['meta']['count_encoding'] = 'mlp'  
+        params['meta']['enc_depth'] = 12
+        params['meta']['num_heads'] = 12
+        params['meta']['enc_emb_dim'] = 768
+        params['meta']['pred_depth'] = 6
+        params['meta']['pred_emb_dim'] = 384
+        params['meta']['special_tokens'] = ['assay']
+        params['meta']['api_version'] = 'v2'
+
+        train_dataset, _, _ = prepare_dataset(params)
+        print(train_dataset)
+        with open("top_4250_genes.pkl", "rb") as f:
+            cell_gene_ids = pickle.load(f)
+            #cell_gene_ids = cell_gene_ids[0:500]
+            #cell_gene_ids =[]
+        with open("top_4250_genes.pkl", "rb") as f:
+            neighborhood_gene_ids = pickle.load(f)
+            #neighborhood_gene_ids = neighborhood_gene_ids[0:500]
+        params['state']['read_checkpoint'] = 'nichejepa-ep1_10.pth.tar'
+        adata_test = infer(params, train_dataset,load_folder_path='/lustre/scratch126/cellgen/team361/sb75/nichejepa-reproducibility/artifacts/hst_corpus_70m/21032025_125422_751', agg_type='avg',
+                          cell_gene_ids=cell_gene_ids, neighborhood_gene_ids=neighborhood_gene_ids, return_gene=False, return_cosine_sim=True,
+                           dataset_ids=['1000'], compute_cosine_with= 'cell', obs_cols=['cell_type','niche_type'])
+        adata_test.write("result_previous_cell.h5ad")
+        exit()
+    
         test_data = infer(params, test_dataset, load_folder_path=folder_path)
         #adata_combined = ad.concat(
         #    [train_data, test_data], axis=0) # concat along the obs (cells)

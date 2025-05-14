@@ -522,11 +522,12 @@ def infer(args: dict,
                 # Compute cosine similarity components using our function for multiple occurrences.
                 if return_cosine_sim:
                     if itr == 0:
-                        sum_cos_sim, count = compute_count_mean_cosine_sim(cell_embs, cell_presence, neb_occ_tensor, neb_occ_mask_tensor)
+                        sum_cos_sim, pair_count, cell_count = compute_count_mean_cosine_sim(cell_embs, cell_presence, neb_occ_tensor, neb_occ_mask_tensor)
                     else:
-                        sum_cos_sim_temp, count_temp = compute_count_mean_cosine_sim(cell_embs, cell_presence, neb_occ_tensor, neb_occ_mask_tensor)
+                        sum_cos_sim_temp, pair_count_temp, cell_count_temp = compute_count_mean_cosine_sim(cell_embs, cell_presence, neb_occ_tensor, neb_occ_mask_tensor)
                         sum_cos_sim.add_(sum_cos_sim_temp)
-                        count.add_(count_temp)
+                        pair_count.add_(pair_count_temp)
+                        cell_count.add_(cell_count_temp)
     # Add metadata
     adata = ad.AnnData(
         obs=pd.DataFrame({'cell_id': all_cell_ids},
@@ -568,8 +569,9 @@ def infer(args: dict,
                 dim=0).cpu())
     if return_cosine_sim:
         adata.uns['sum_cos_sim'] = sum_cos_sim.numpy()
-        adata.uns['count'] = count.numpy()
-        adata.uns['cos_sim'] = adata.uns['sum_cos_sim'] / adata.uns['count']
+        adata.uns['cos_sim_pair_count'] = pair_count.numpy()
+        adata.uns['cos_sim_cell_count'] = cell_count.numpy()
+        adata.uns['cos_sim'] = adata.uns['sum_cos_sim'] / adata.uns['cos_sim_pair_count']
     if return_gene_per_data:
         # Concatenate features for cell and neighborhood gene embeddings
         cell_gene_emb_features = []
