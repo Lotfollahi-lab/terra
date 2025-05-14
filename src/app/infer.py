@@ -584,15 +584,15 @@ def infer(args: dict,
             if gene_id in all_cell_gene_emb_per_data_dict.keys():
                 sum_emb = all_cell_gene_emb_per_data_dict[gene_id][0].numpy()
                 count_emb = all_cell_gene_emb_per_data_dict[gene_id][1].numpy()
-                cell_gene_emb_features.append(sum_emb / count_emb)
-                cell_gene_emb_counts.append(count_emb)
+                cell_gene_emb_features.append((sum_emb / count_emb).reshape(1, -1))
+                cell_gene_emb_counts.append(count_emb.reshape(1, -1))
 
         for gene_id in neighborhood_gene_ids:
             if gene_id in all_neighborhood_gene_emb_per_data_dict.keys():
                 sum_emb = all_neighborhood_gene_emb_per_data_dict[gene_id][0].numpy()
                 count_emb = all_neighborhood_gene_emb_per_data_dict[gene_id][1].numpy()
-                neighborhood_gene_emb_features.append(sum_emb / count_emb)
-                neighborhood_gene_emb_counts.append(count_emb)
+                neighborhood_gene_emb_features.append((sum_emb / count_emb).reshape(1, -1))
+                neighborhood_gene_emb_counts.append(count_emb.reshape(1, -1))
 
         # Concatenate all features, sums, and counts into single numpy arrays
         adata.uns['cell_gene_emb_average_per_data'] = np.concatenate(cell_gene_emb_features, axis=0)
