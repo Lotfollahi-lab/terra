@@ -476,9 +476,9 @@ def infer(args: dict,
                     cell_presence[:, j] = gene_presence_local.float()
                     if return_gene:
                         if itr == 0:
-                            all_cell_gene_emb_dict[gene_id] = [cell_embs[:, j, :]]
+                            all_cell_gene_emb_dict[gene_id] = [cell_embs[:, j, :].clone()]
                         else:
-                            all_cell_gene_emb_dict[gene_id].append(cell_embs[:, j, :])
+                            all_cell_gene_emb_dict[gene_id].append(cell_embs[:, j, :].clone())
                     if return_gene_per_data:
                         gene_sum, gene_count = compute_sum_and_nonzero_count(cell_embs[:, j, :])
                         if itr == 0:
