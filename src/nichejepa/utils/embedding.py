@@ -394,11 +394,11 @@ def compute_count_mean_cosine_sim(
     cell_pres_exp = cell_presence.unsqueeze(-1)  # (N, num_cell_genes, 1)
     occ_sum_masked = occ_sum * cell_pres_exp
     occ_count_masked = occ_count * cell_pres_exp
-    
+    total_cell_count = (occ_count_masked!= 0).float().sum(dim=0)       # (num_cell_genes, num_neb_genes)
+
     # Sum over all sequences.
     total_cs = occ_sum_masked.sum(dim=0)       # (num_cell_genes, num_neb_genes)
     total_pair_count = occ_count_masked.sum(dim=0)    # (num_cell_genes, num_neb_genes)
-    total_cell_count = (total_pair_count!= 0).float()       # (num_cell_genes, num_neb_genes)
     
     return total_cs, total_pair_count, total_cell_count
 
