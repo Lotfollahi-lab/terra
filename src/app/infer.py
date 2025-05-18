@@ -44,16 +44,6 @@ torch.backends.cudnn.benchmark = True
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logger = logging.getLogger()
 
-def find_differences(dict1, dict2):
-    """
-    Compare two dictionaries and return a list of keys where the values differ.
-    Only keys present in both dictionaries are compared.
-    """
-    differing_keys = []
-    for key in dict1:
-        if key in dict2 and dict1[key][1].item() != dict2[key][1].item():
-            differing_keys.append(key)
-    return differing_keys
 
 @torch.no_grad()
 def infer(args: dict,
