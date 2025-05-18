@@ -449,7 +449,7 @@ def infer(args: dict,
 
             # Store cell and neighborhood gene embeddings of last layer
             if i == (len(neighborhood_emb_list) - 1):
-                emb = n_emb
+                emb = c_emb
                 if len(cell_gene_ids) != 0 or len(neighborhood_gene_ids) != 0 :
                     if itr == 0 or itr == len(loader)-1:
                         cell_embs = torch.zeros((emb.shape[0], len(cell_gene_ids), emb.shape[-1]), device=emb.device)
@@ -487,6 +487,7 @@ def infer(args: dict,
                             all_cell_gene_emb_per_data_dict[gene_id][0].add_(gene_sum)
                             all_cell_gene_emb_per_data_dict[gene_id][1].add_(gene_count)
                 # Process neighborhood genes (multiple occurrences: compute cosine per occurrence)
+                emb = n_emb
                 for j, gene_id in enumerate(neighborhood_gene_ids):
                     gene_occ, occ_mask, gene_presence_local = retrieve_gene_emb(
                         ns_tokens=ns_tokens,
