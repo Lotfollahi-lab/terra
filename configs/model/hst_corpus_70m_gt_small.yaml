@@ -3,10 +3,10 @@ data:
   raw_data_folder_path: '/lustre/scratch126/cellgen/team361/DATASETS/silver/hst_corpus_70m'
   token_dict_folder_path: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/token_dictionary_homo_sapiens.pkl'
   tokenized_data_folder_path: '/lustre/scratch126/cellgen/team361/DATASETS/gold/cell-graph-tokenizer/hst_corpus_70m/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10.dataset'
-  precomputed_split: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_split_train.pkl'
+  #precomputed_split: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_split_train.pkl'
   precomputed_n_nonzero_tokens: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10_n_nonzero_tokens_train.pkl'
-  #precomputed_epoch_splits: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_split_30.pkl'
-  #precomputed_epoch_n_nonzero_tokens: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_n_nonzero_tokens_30.pkl'
+  precomputed_epoch_splits: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_split_30.pkl'
+  precomputed_epoch_n_nonzero_tokens: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_n_nonzero_tokens_30.pkl'
   #precomputed_epoch_splits: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_split_20.pkl'
   #precomputed_epoch_n_nonzero_tokens: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_n_nonzero_tokens_20.pkl'
   tokenizer_type: 'cell_graph'
@@ -31,7 +31,7 @@ meta:
   pred_depth: 12
   pred_emb_dim: 192 # 384
   num_heads: 6
-  special_tokens: [] # ['assay'] # ['batch'], ['assay', 'tissue', 'gene_panel', 'batch']
+  special_tokens: ['assay', 'batch'] # ['assay'] # ['batch'], ['assay', 'tissue', 'gene_panel', 'batch']
   pos_learnable: False
   seg_learnable: False
   use_bfloat16: True # True, False
@@ -48,7 +48,7 @@ mask:
   per_block_mask_ratio: 0.6 # 0.5, 0.6, 0.7, 0.8
 optimization:
   warmup: 1 # 3
-  epochs: 3 # 10
+  epochs: 10 # 10
   ema:
   - 0.9995 # 0.9995, 0.9998
   - 1.0

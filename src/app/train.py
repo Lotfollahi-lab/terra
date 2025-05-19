@@ -180,7 +180,7 @@ def train(args: dict,
     with open(token_dict_folder_path, 'rb') as file:
         token_dict = pickle.load(file)
     vocab_size = len(token_dict)
-    n_special_values = sum(1 for key in token_dict if "spv" in key)
+    n_special_values = sum(1 for key in token_dict if "spv" in key) # this only works now because of the dummy special values
     max_special_tokens = sum(1 for key in token_dict if "cls" in key) + sum(
             1 for key in token_dict if "spt" in key)
 
