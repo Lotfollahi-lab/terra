@@ -558,7 +558,7 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
                         :self.n_special_tokens] = 0
 
         if pad_neighborhood:
-            x[:, (self.n_special_tokens+self.seq_len_cell):] = 0
+            x[:, (self.n_special_tokens+self.seq_len_cell):, :] = 0
 
             masks_attention = masks_attention.expand(
                 masks_attention.shape[0],
@@ -785,14 +785,14 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
         # B, N, D = x.shape # B: BATCH_SIZE, N: SEQ_LEN, D: EMBED_DIM
 
         # Pad special tokens
-        #x[:, :self.n_special_tokens, :] = 0
-        #masks_attention[:,
-        #                :,
-        #                :,
-        #                :self.n_special_tokens] = 0
+        x[:, :self.n_special_tokens, :] = 0
+        masks_attention[:,
+                        :,
+                        :,
+                        :self.n_special_tokens] = 0
 
         if pad_neighborhood:
-            x[:, (self.n_special_tokens+self.seq_len_cell):] = 0
+            x[:, (self.n_special_tokens+self.seq_len_cell):, :] = 0
 
             masks_attention = masks_attention.expand(
                 masks_attention.shape[0],
@@ -936,7 +936,8 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
             # tokens
             z = torch.cat([
                 pred_tokens, # target gene tokens (incl. special tokens)
-                z # context gene tokens (incl. special tokens)
+                # z # context gene tokens (incl. special tokens)
+                z[:, self.n_special_tokens:, :] # context gene tokens (excl. special tokens)
                 ], dim=1)
 
             # Run forward prop
@@ -1075,7 +1076,8 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
         # Concatenate mask tokens and context embeddings of gene tokens
         z = torch.cat([
             pred_tokens, # target gene tokens (incl. special tokens)
-            z # context gene tokens (incl. special tokens)
+            #z # context gene tokens (incl. special tokens)
+            z[:, self.n_special_tokens:, :] # context gene tokens (excl. special tokens)
             ], dim=1)
 
         # Run forward prop

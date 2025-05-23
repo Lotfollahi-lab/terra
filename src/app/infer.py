@@ -388,7 +388,7 @@ def infer(args: dict,
                         pad_neighborhood=False).cpu()),
         
             if feature_norm and (emb_layers[-1] == enc_depth):
-                # Normalize last layer like in training
+                # Normalize last layer like in training # TO DO should this consider inference padding?
                 cell_emb_list[-1] = F.layer_norm(cell_emb_list[-1],
                                                  (cell_emb_list[-1].size(-1),))
                 neighborhood_emb_list[-1] = F.layer_norm(neighborhood_emb_list[-1],
