@@ -452,10 +452,8 @@ def train(args: dict,
             #        continue
             tokens = udata[0].to(device, non_blocking=True)
             segments = udata[1].to(device, non_blocking=True)
-            if gt_type == 'rank':
-                positions = udata[2].to(device, non_blocking=True)
-            elif gt_type == 'counts':
-                counts = udata[2].to(device, non_blocking=True)
+            positions = udata[2].to(device, non_blocking=True)
+            counts = udata[3].to(device, non_blocking=True)
             masks_enc = [u.to(device, non_blocking=True) for u in masks_enc]
             masks_pred = [u.to(device, non_blocking=True) for u in masks_pred]
             masks_attention = masks_attention.to(device, non_blocking=True)
@@ -474,18 +472,12 @@ def train(args: dict,
                         # no backward pass for target encoder
                         # Target encorder forward pass with output dim 
                         # (BATCH_SIZE, SEQ_LEN, EMBED_DIM)
-                        if gt_type == 'rank':
-                            h, _, _ = target_encoder(
-                                tokens=tokens,
-                                segments=segments,
-                                positions=positions,
-                                masks_attention=masks_attention)
-                        elif gt_type == 'counts':
-                            h, _ = target_encoder(
-                                tokens=tokens,
-                                segments=segments,
-                                counts=counts,
-                                masks_attention=masks_attention)
+                        h = target_encoder(
+                            tokens=tokens,
+                            segments=segments,
+                            positions=positions,
+                            counts=counts,
+                            masks_attention=masks_attention)
 
                         # Normalize over feature dim
                         h = F.layer_norm(h, (h.size(-1),))
@@ -505,40 +497,24 @@ def train(args: dict,
                     # Context encoder forward pass with output dim (BATCH_SIZE,
                     # MIN_CONTEXT_SIZE, EMB_DIM) where MIN_CONTEXT_SIZE is
                     # minmum context size in the batch after removal of
-                    # overlapping targets
-                    if gt_type == 'rank':
-                        z, pos_emb, token_emb = encoder(
-                            positions=positions,
-                            segments=segments,
-                            tokens=tokens,
-                            masks=masks_enc,
-                            masks_attention=None)                       
-                    elif gt_type == 'counts':
-                        z, token_emb = encoder(
-                            tokens=tokens,
-                            segments=segments,
-                            counts=counts,
-                            masks=masks_enc,
-                            masks_attention=None)
+                    # overlapping targets                     
+                    z = encoder(
+                        positions=positions,
+                        segments=segments,
+                        tokens=tokens,
+                        counts=counts,
+                        masks=masks_enc,
+                        masks_attention=None)
 
                     # Predictor forward pass with output dim (BATCH_SIZE *
                     # N_TARGETS * N_CONTEXTS, TARGET_MASK_SIZE, EMB_DIM)
-                    if gt_type == 'rank':
-                        z = predictor(z=z,
-                                      pos_embed=pos_emb,
-                                      segments=segments,
-                                      token_embed=token_emb,
-                                      masks_enc=masks_enc,
-                                      masks_pred=masks_pred,
-                                      masks_attention=None)
-                    elif gt_type == 'counts':
-                        z = predictor(z=z,
-                                      token_embed=token_emb,
-                                      segments=segments,
-                                      counts=counts,
-                                      masks_enc=masks_enc,
-                                      masks_pred=masks_pred,
-                                      masks_attention=None)
+                    z = predictor(z=z,
+                                  positions=positions,
+                                  segments=segments,
+                                  counts=counts,
+                                  masks_enc=masks_enc,
+                                  masks_pred=masks_pred,
+                                  masks_attention=None)
                     return z
 
                 def loss_fn(z, h, loss_exp=1.0):

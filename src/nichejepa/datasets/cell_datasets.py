@@ -77,11 +77,12 @@ class CellBaseDataset(Dataset):
                          item: int,
                          tokens: list[int],
                          segments: list[int],
-                         positions: list[int] | None = None,
-                         values: list[float] | None = None,
+                         positions: list[int],
+                         values: list[float],
                          ) -> tuple[list[int],
                                     list[int],
-                                    list[int | float]]:
+                                    list[int],
+                                    list[float]]:
         """
         Add special tokens to sequence and update positions/values and
         segments.
@@ -114,46 +115,28 @@ class CellBaseDataset(Dataset):
             Values with special values corresponding to special tokens.
         """
         if 'batch' in self.special_tokens:
-            if self.gt_type == 'rank':
-                tokens = item['batch_value_token'] + tokens
-            elif self.gt_type == 'counts':
-                tokens = item['batch_token'] + tokens
-                values = item['batch_value'] + values
+            tokens = item['batch_token'] + tokens
+            values = item['batch_value'] + values
         if 'gene_panel' in self.special_tokens:
-            if self.gt_type == 'rank':
-                tokens = item['gene_panel_value_token'] + tokens
-            elif self.gt_type == 'counts':
-                tokens = item['gene_panel_token'] + tokens
-                values = item['gene_panel_value'] + values
+            tokens = item['gene_panel_token'] + tokens
+            values = item['gene_panel_value'] + values
         if 'tissue' in self.special_tokens:
-            if self.gt_type == 'rank':
-                tokens = item['tissue_value_token'] + tokens
-            elif self.gt_type == 'counts':
-                tokens = item['tissue_token'] + tokens
-                values = item['tissue_value'] + values
+            tokens = item['tissue_token'] + tokens
+            values = item['tissue_value'] + values
         if 'species' in self.special_tokens:
-            if self.gt_type == 'rank':
-                tokens = item['species_value_token'] + tokens
-            elif self.gt_type == 'counts':
-                tokens = item['species_token'] + tokens
-                values = item['species_value'] + values
+            tokens = item['species_token'] + tokens
+            values = item['species_value'] + values
         if 'assay' in self.special_tokens:
-            if self.gt_type == 'rank':
-                tokens = item['assay_value_token'] + tokens
-            elif self.gt_type == 'counts':
-                tokens = item['assay_token'] + tokens
-                values = item['assay_value'] + values
+            tokens = item['assay_token'] + tokens
+            values = item['assay_value'] + values
             
         # Add special token segments
         segments = [0] * self.n_special_tokens + segments
-        if self.gt_type == 'rank':
-            # Add special token positions
-            positions = [0] * self.n_special_tokens + positions
+        
+        # Add special token positions
+        positions = [0] * self.n_special_tokens + positions
 
-        if self.gt_type == 'rank':
-            return tokens, segments, positions
-        elif self.gt_type == 'counts':
-            return tokens, segments, values
+        return tokens, segments, positions, values
 
     def _sample_seq(self,
                     tokens: list[int],
@@ -212,15 +195,11 @@ class CellBaseDataset(Dataset):
         # Sort sampled indices to preserve rank order
         sampled_indices = np.sort(sampled_indices)
         sampled_tokens = [tokens[i] for i in sampled_indices]
-        if self.gt_type == 'counts':
-            sampled_values = [values[i] for i in sampled_indices]
-        else:
-            sampled_values = None
+        sampled_values = [values[i] for i in sampled_indices]
 
         if size > n_nz_tokens:
             sampled_tokens.extend([0] * (size - len(sampled_tokens)))
-            if self.gt_type == 'counts':
-                sampled_values.extend([0.0] * (size - len(sampled_values)))
+            sampled_values.extend([0.0] * (size - len(sampled_values)))
 
         return sampled_tokens, sampled_values
          
@@ -267,11 +246,7 @@ class CellBaseDataset(Dataset):
             if segment != 1 and (self.sep_gene_tokens_neb):
                 segment_tokens = [token + self.vocab_size if token != 0 else token for token in segment_tokens]
 
-            if self.gt_type == 'counts':
-                segment_values = item['gene_expr'][
-                    segment_start_idx: segment_end_idx]
-            else:
-                segment_values = None
+            segment_values = item['gene_expr'][segment_start_idx: segment_end_idx]
 
             # Validate that segment length is specified correctly
             if (self.sampling_strategy is not None and 'rep' in
@@ -288,8 +263,7 @@ class CellBaseDataset(Dataset):
             # specified length
             if self.sampling_strategy is None:
                 segment_tokens = segment_tokens[:segment_seq_len]
-                if self.gt_type == 'counts':
-                    segment_values = segment_values[:segment_seq_len]
+                segment_values = segment_values[:segment_seq_len]
             # Otherwise, sample a subset of tokens based on the sampling
             # strategy
             else:
@@ -325,6 +299,7 @@ class CellGraphDataset(CellBaseDataset):
                     ) -> tuple[torch.Tensor,
                                torch.Tensor,
                                torch.Tensor,
+                               torch.Tensor,
                                list[int]]:
         # Retrieve Hugging Face item once
         item = self.dataset[item]
@@ -335,11 +310,8 @@ class CellGraphDataset(CellBaseDataset):
             item=item,
             segment=1, # index cell segment
             segment_seq_len=self.seq_len_cell)
-        if self.gt_type == 'rank':
-            positions = [position if tokens[i] != 0 else 0 for i, position in 
-                enumerate(list(range(1, len(tokens) + 1)))] 
-        elif self.gt_type == 'counts':
-            positions = None
+        positions = [position if tokens[i] != 0 else 0 for i, position in 
+            enumerate(list(range(1, len(tokens) + 1)))] 
 
         # Get non-padded segments for index cell segment
         segments = [1 if token != 0 else 0 for token in tokens]
@@ -357,12 +329,10 @@ class CellGraphDataset(CellBaseDataset):
                     item=item,
                     segment=segment,
                     segment_seq_len=self.seq_len_cell)
-                if self.gt_type == 'rank':   
-                    positions.extend([position if segment_tokens[i] != 0 else 0
-                        for i, position in enumerate(
-                            list(range(1, len(segment_tokens) + 1)))])
-                elif self.gt_type == 'counts':
-                    values.extend(segment_values)
+                positions.extend([position if segment_tokens[i] != 0 else 0
+                    for i, position in enumerate(
+                        list(range(1, len(segment_tokens) + 1)))])
+                values.extend(segment_values)
                 tokens.extend(segment_tokens)
                 segments.extend([segment if token != 0 else 0 for
                     token in segment_tokens])
@@ -370,11 +340,9 @@ class CellGraphDataset(CellBaseDataset):
         if len(tokens) > (self.seq_len_cell + self.seq_len_neighborhood):
             tokens = tokens[:self.seq_len_cell + self.seq_len_neighborhood]
             segments = segments[:self.seq_len_cell + self.seq_len_neighborhood]
-            if self.gt_type == 'rank':
-                positions = positions[
-                    :self.seq_len_cell + self.seq_len_neighborhood]
-            elif self.gt_type == 'counts':
-                values = values[:self.seq_len_cell + self.seq_len_neighborhood]
+            positions = positions[
+                :self.seq_len_cell + self.seq_len_neighborhood]
+            values = values[:self.seq_len_cell + self.seq_len_neighborhood]
 
         elif len(tokens) < (self.seq_len_cell + self.seq_len_neighborhood):
             tokens += [0] * (
@@ -382,37 +350,26 @@ class CellGraphDataset(CellBaseDataset):
             segments += [0] * (
                 (self.seq_len_cell + self.seq_len_neighborhood) - len(segments)
                 )
-            if self.gt_type == 'rank':
-                positions += [0] * (
-                    (self.seq_len_cell + self.seq_len_neighborhood) -
-                    len(positions))
-            elif self.gt_type == 'counts':
-                values += [0.0] * (
-                    (self.seq_len_cell + self.seq_len_neighborhood) -
-                    len(values))
+            positions += [0] * (
+                (self.seq_len_cell + self.seq_len_neighborhood) -
+                len(positions))
+            values += [0.0] * (
+                (self.seq_len_cell + self.seq_len_neighborhood) -
+                len(values))
 
         # Add special tokens
-        if self.gt_type == 'rank':
-            tokens, segments, positions = self._add_special_seq(
-                item=item,
-                tokens=tokens,
-                segments=segments,
-                positions=positions)            
-        elif self.gt_type == 'counts':
-            tokens, segments, values = self._add_special_seq(
-                item=item,
-                tokens=tokens,
-                segments=segments,
-                values=values)
+        tokens, segments, positions, values = self._add_special_seq(
+            item=item,
+            tokens=tokens,
+            segments=segments,
+            positions=positions,
+            values=values)
 
         tokens = torch.tensor(tokens)
         segments = torch.tensor(segments)
-        if self.gt_type == 'rank':
-            positions = torch.tensor(positions)
-            return tokens, segments, positions, item['cell_id']
-        elif self.gt_type == 'counts':
-            values = torch.tensor(values)
-            return tokens, segments, values, item['cell_id']
+        positions = torch.tensor(positions)
+        values = torch.tensor(values)
+        return tokens, segments, positions, values, item['cell_id']
 
 
 class CellNeighborhoodDataset(CellBaseDataset):

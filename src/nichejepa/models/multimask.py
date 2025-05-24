@@ -39,15 +39,17 @@ class EncoderMultiMaskWrapper(nn.Module):
             raise ValueError("encoder_type must be either 'counts' or 'rank'")
 
     def _forward_count(self,
-                       tokens: torch.Tensor,
+                       positions: torch.Tensor,
                        segments: torch.Tensor,
+                       tokens: torch.Tensor,
                        counts: torch.Tensor,
                        masks: torch.Tensor | list | None = None,
                        masks_attention: torch.Tensor | None = None
                        ) -> tuple[list[torch.Tensor], torch.Tensor]:
         if masks is None:
-            return self.backbone(tokens=tokens,
+            return self.backbone(positions=positions,
                                  segments=segments,
+                                 tokens=tokens,
                                  counts=counts,
                                  masks=None,
                                  masks_attention=masks_attention)
@@ -56,13 +58,14 @@ class EncoderMultiMaskWrapper(nn.Module):
             masks = [masks]
         outs = []
         for m in masks:
-            x, token_embed = self.backbone(tokens=tokens,
-                                           segments=segments,
-                                           counts=counts,
-                                           masks=m,
-                                           masks_attention=masks_attention)
+            x = self.backbone(positions=positions,
+                              segments=segments,
+                              tokens=tokens,
+                              counts=counts,
+                              masks=m,
+                              masks_attention=masks_attention)
             outs.append(x)
-        return outs, token_embed
+        return outs
 
     def _forward_rank(self,
                       positions: torch.Tensor,
@@ -121,7 +124,7 @@ class PredictorMultiMaskWrapper(nn.Module):
 
     def _forward_count(self,
                        z: torch.Tensor | list,
-                       token_embed: torch.Tensor,
+                       positions: torch.Tensor,
                        segments: torch.Tensor,
                        counts: torch.Tensor,
                        masks_enc: torch.Tensor | list,
@@ -139,7 +142,7 @@ class PredictorMultiMaskWrapper(nn.Module):
         for mp in masks_pred:
             outs += [
                 self.backbone(z=z[0],
-                              token_embed=token_embed,
+                              positions=positions,
                               segments=segments,
                               counts=counts,
                               masks_enc=masks_enc[0],

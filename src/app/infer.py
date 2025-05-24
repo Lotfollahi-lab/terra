@@ -322,10 +322,8 @@ def infer(args: dict,
         # Load gene tokens and segmentation label to the specified device
         tokens = udata[0].to(device, non_blocking=True)
         segments = udata[1].to(device, non_blocking=True)
-        if gt_type == 'rank':
-            positions = udata[2].to(device, non_blocking=True)
-        elif gt_type == 'counts':
-            counts = udata[2].to(device, non_blocking=True)
+        positions = udata[2].to(device, non_blocking=True)
+        counts = udata[3].to(device, non_blocking=True)
         masks_attention = masks_attention.to(device, non_blocking=True)
 
         # Collect cell IDs to join metadata
@@ -356,36 +354,22 @@ def infer(args: dict,
             cell_emb_list = []
             neighborhood_emb_list = []
             for emb_layer in emb_layers:
-                if gt_type == 'rank':
-                    cell_emb_list.append(return_layer_emb_fn(
-                        layer=emb_layer,
-                        positions=positions,
-                        segments=segments,
-                        tokens=tokens,
-                        masks_attention=masks_attention,
-                        pad_neighborhood=True).cpu()),
-                    neighborhood_emb_list.append(return_layer_emb_fn(
-                        layer=emb_layer,
-                        positions=positions,
-                        segments=segments,
-                        tokens=tokens,
-                        masks_attention=masks_attention,
-                        pad_neighborhood=False).cpu()),
-                elif gt_type == 'counts':
-                    cell_emb_list.append(return_layer_emb_fn(
-                        layer=emb_layer,
-                        tokens=tokens,
-                        segments=segments,
-                        counts=counts,
-                        masks_attention=masks_attention,
-                        pad_neighborhood=True).cpu()),
-                    neighborhood_emb_list.append(return_layer_emb_fn(
-                        layer=emb_layer,
-                        tokens=tokens,
-                        segments=segments,
-                        counts=counts,
-                        masks_attention=masks_attention,
-                        pad_neighborhood=False).cpu()),
+                cell_emb_list.append(return_layer_emb_fn(
+                    layer=emb_layer,
+                    positions=positions,
+                    segments=segments,
+                    tokens=tokens,
+                    counts=counts,
+                    masks_attention=masks_attention,
+                    pad_neighborhood=True).cpu())
+                neighborhood_emb_list.append(return_layer_emb_fn(
+                    layer=emb_layer,
+                    positions=positions,
+                    segments=segments,
+                    tokens=tokens,
+                    counts=counts,
+                    masks_attention=masks_attention,
+                    pad_neighborhood=False).cpu())
         
             if feature_norm and (emb_layers[-1] == enc_depth):
                 # Normalize last layer like in training # TO DO should this consider inference padding?

@@ -310,6 +310,21 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
         self.init_std = init_std
         self.api_version = api_version
 
+        # Initialize positional embeddings
+        self.pos_embed = nn.Embedding(self.seq_len + 1, # include <pad>
+                                      predictor_embed_dim,
+                                      padding_idx=0)
+
+        # Prevent gradient updates and initialize with sincos
+        # embedding
+        self.pos_embed.weight.requires_grad = False
+        pos_embed = get_1d_sincos_pos_embed(
+            embed_dim=predictor_embed_dim,
+            n_zero_pos=0,
+            n_sincos_pos=self.seq_len)
+        self.pos_embed.weight[1:].copy_(
+            torch.from_numpy(pos_embed).float())
+
         # Initialize segment embeddings
         self.seg_embed = nn.Embedding(
             1 + n_segments + (105 if api_version == 'v1' else 0), # include <pad>
@@ -609,12 +624,29 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
                  n_special_values: int,
                  count_encoding: Literal['value_bins', 'mlp'] = 'mlp',
                  n_value_bins: int | None = 100,
+                 pos_learnable: bool = False,
                  **base_encoder_kwargs
                  ):
         super().__init__(**base_encoder_kwargs)
         self.n_special_values = n_special_values
         self.count_encoding = count_encoding
         self.n_value_bins = n_value_bins
+
+        # Initialize positional embeddings
+        self.pos_embed = nn.Embedding(self.seq_len + 1, # include <pad>
+                                      self.embed_dim,
+                                      padding_idx=0)
+
+        if not pos_learnable:
+            # Prevent gradient updates and initialize with sincos
+            # embedding
+            self.pos_embed.weight.requires_grad = False
+            pos_embed = get_1d_sincos_pos_embed(
+                embed_dim=self.embed_dim,
+                n_zero_pos=0,
+                n_sincos_pos=self.seq_len)
+            self.pos_embed.weight[1:].copy_(
+                torch.from_numpy(pos_embed).float())
 
         # Initialize value embeddings and value embedding weight
         # projection layer
@@ -637,8 +669,9 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
                 act_layer=nn.GELU)
 
     def forward(self,
-                tokens: torch.Tensor,
+                positions: torch.Tensor,
                 segments: torch.Tensor,
+                tokens: torch.Tensor,
                 counts: torch.Tensor,
                 masks: list[torch.Tensor] | torch.Tensor | None = None,
                 masks_attention: torch.Tensor | None = None
@@ -681,8 +714,9 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
                 masks = [masks]
 
         # Get embeddings for sequence of gene tokens and segments
-        token_emb = self.token_embed(tokens)
+        pos_emb = self.pos_embed(positions)
         seg_emb = self.seg_embed(segments)
+        token_emb = self.token_embed(tokens)
 
         # Get value embeddings
         if self.count_encoding == 'value_bins':
@@ -698,7 +732,7 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
             value_emb = self.value_embed(counts.unsqueeze(dim=-1))           
 
         # Add gene token and segment embeddings to value embeddings
-        x = token_emb + seg_emb + value_emb
+        x = pos_emb + seg_emb + token_emb + value_emb
         # B, N, D = x.shape # B: BATCH_SIZE, N: SEQ_LEN, D: EMBED_DIM
 
         # Mask token embeddings if masks are provided
@@ -711,14 +745,15 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
         if self.norm is not None:
             x = self.norm(x)
 
-        return x, token_emb
+        return x
 
     @torch.no_grad()
     def return_layer_emb(
             self,
             layer: int,
-            tokens: torch.Tensor,
+            positions: torch.Tensor,
             segments: torch.Tensor,
+            tokens: torch.Tensor,
             counts: torch.Tensor,
             masks: list[torch.Tensor] | torch.Tensor | None = None,
             masks_attention: torch.Tensor | None = None,
@@ -764,8 +799,9 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
                 masks = [masks]
 
         # Get embeddings for sequence of gene tokens and segments
-        token_emb = self.token_embed(tokens)
+        pos_emb = self.pos_embed(positions)
         seg_emb = self.seg_embed(segments)
+        token_emb = self.token_embed(tokens)
 
         # Get value embeddings
         if self.count_encoding == 'value_bins':
@@ -781,7 +817,7 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
             value_emb = self.value_embed(counts.unsqueeze(dim=-1))  
 
         # Add gene token and segment embeddings to value embeddings
-        x = token_emb + seg_emb + value_emb
+        x = pos_emb + seg_emb + token_emb + value_emb
         # B, N, D = x.shape # B: BATCH_SIZE, N: SEQ_LEN, D: EMBED_DIM
 
         # Pad special tokens
@@ -984,7 +1020,7 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
     def forward(
         self,
         z: torch.Tensor,
-        token_embed: torch.Tensor,
+        positions: torch.Tensor,
         segments: torch.Tensor,
         counts: torch.Tensor,
         masks_enc: list[torch.Tensor] | torch.Tensor,
@@ -1039,7 +1075,8 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
 
         # MLP projection layer
         z = self.predictor_embed(z)
-        token_embed = self.token_embed_projection(token_embed)
+
+        pos_embed = self.pos_embed(positions)
 
         # Get segment and special value embeddings
         seg_embed = self.seg_embed(segments)
@@ -1049,7 +1086,7 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
         # Add positional embeddings to tokens from context masks (only
         # keep context mask indices and sum positional and segment
         # embeddings without token embeddings)
-        z += apply_masks(token_embed, masks_enc)
+        z += apply_masks(pos_embed, masks_enc)
         z += apply_masks(seg_embed, masks_enc)
         _, N_ctxt, D = z.shape # N_ctxt: CONTEXT_MASK_SIZE, D: EMBED_DIM
 
@@ -1057,18 +1094,18 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
         # (only keep target mask indices and sum token and segment
         # embeddings without value embeddings; the latter are to be
         # predicted)
-        token_embs = apply_masks(token_embed, masks_pred)
+        pos_embs = apply_masks(pos_embed, masks_pred)
         seg_embs = apply_masks(seg_embed, masks_pred)
 
         # Repeat mask token for all batches, masks and "positions" from
         # predictor masks
         pred_tokens = self.mask_token.repeat(
-            token_embs.size(0), # BATCH_SIZE * N_TARGET_MASKS
-            token_embs.size(1), # TARGET_MASK_SIZE
+            pos_embs.size(0), # BATCH_SIZE * N_TARGET_MASKS
+            pos_embs.size(1), # TARGET_MASK_SIZE
             1)
 
         # Add gene and segment embeddings to mask tokens                  
-        pred_tokens += token_embs + seg_embs
+        pred_tokens += pos_embs + seg_embs 
 
         # Repeat context embeddings for all target masks
         z = z.repeat(len(masks_pred), 1, 1)
@@ -1083,7 +1120,6 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
         # Run forward prop
         for blk in self.predictor_blocks:
             z = blk(z, masks=masks_attention)
-
         z = self.predictor_norm(z)
 
         # Return predictions for (target) mask tokens
