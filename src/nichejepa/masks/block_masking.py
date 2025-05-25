@@ -105,6 +105,10 @@ class BlockMaskCollator:
         # division
         block_length = max(1, total_nz_ns // self.n_targets)
 
+        # Sample random value between 0 and 1 to determine whether special
+        # token is included in context or target
+        random_number = torch.rand(1).item()
+
         for i in range(self.n_targets):
             # Determine the range of indices for the current block
             start_idx = i * block_length
@@ -129,10 +133,13 @@ class BlockMaskCollator:
                 # Set masked indices to 0 in the context mask
                 context_mask[target_mask] = 0
 
-                # Add special tokens to mask indices
-                target_mask = torch.cat((
-                    torch.arange(self.n_special_tokens),
-                    torch.tensor(target_mask)))
+                if random_number > 0.5:
+                    # Add special tokens to mask indices
+                    target_mask = torch.cat((
+                        torch.arange(self.n_special_tokens),
+                        torch.tensor(target_mask)))
+                else:
+                    target_mask = torch.tensor(target_mask)
 
                 # Append masked indices
                 target_masks.append(target_mask)
@@ -165,9 +172,12 @@ class BlockMaskCollator:
                 torch.randperm(len(context_block_mask))]
 
             # Add special tokens to context block mask
-            context_block_mask = torch.cat((
-                torch.arange(self.n_special_tokens),
-                context_block_mask))
+            if random_number <= 0.5:
+                context_block_mask = torch.cat((
+                    torch.arange(self.n_special_tokens),
+                    context_block_mask))
+            else:
+                pass
 
             context_masks.append(context_block_mask)
 
