@@ -1113,8 +1113,8 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
         # Concatenate mask tokens and context embeddings of gene tokens
         z = torch.cat([
             pred_tokens, # target gene tokens (excl. special tokens)
-            z # context gene tokens (incl. special tokens)
-            #z[:, self.n_special_tokens:, :] # context gene tokens (excl. special tokens)
+            #z # context gene tokens (incl. special tokens)
+            z[:, self.n_special_tokens:, :] # context gene tokens (excl. special tokens)
             ], dim=1)
 
         # Run forward prop
