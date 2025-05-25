@@ -129,13 +129,8 @@ class BlockMaskCollator:
                 # Set masked indices to 0 in the context mask
                 context_mask[target_mask] = 0
 
-                # Add special tokens to mask indices
-                target_mask = torch.cat((
-                    torch.arange(self.n_special_tokens),
-                    torch.tensor(target_mask)))
-
                 # Append masked indices
-                target_masks.append(target_mask)
+                target_masks.append(torch.tensor(target_mask))
             else:
                 # No elements to mask
                 target_masks.append(torch.tensor([]))
