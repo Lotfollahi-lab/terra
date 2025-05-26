@@ -16,7 +16,7 @@ data:
   seq_len_neighborhood: 1536
   n_segments: 7
   sampling_strategy: null
-  batch_size: 192 # 128 (80GB GPU)
+  batch_size: 192 # 192 # 128 (80GB GPU)
   num_workers: 24 
   pin_memory: True
 meta:
@@ -24,11 +24,11 @@ meta:
   gt_type: 'counts' # 'rank', 'counts'
   count_encoding: 'mlp' # 'value_bins', 'mlp'
   n_value_bins: 100
-  enc_depth: 6 # 3
+  enc_depth: 3 # 3
   enc_emb_dim: 768
-  pred_depth: 2 # 1
+  pred_depth: 1 # 1
   pred_emb_dim: 384 # 768
-  special_tokens: [] # ['batch'] # ['batch', 'assay'] # ['batch']
+  special_tokens: ['batch', 'assay'] # [], ['batch'], ['batch', 'assay']
   pos_learnable: False
   seg_learnable: False
   use_bfloat16: True
@@ -45,7 +45,7 @@ mask:
   per_block_mask_ratio: 0.6 # 0.2, 0.4, 0.6, 0.8
 optimization:
   warmup: 3
-  epochs: 300
+  epochs: 500
   ema:
   - 0.9995 # 0.7
   - 1.0

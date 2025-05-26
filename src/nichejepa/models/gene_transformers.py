@@ -1088,8 +1088,9 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
 
         # Retrieve special token embedding
         x_special = (
-            token_embed[:, :self.n_special_tokens] +
+            pos_embed[:, :self.n_special_tokens] +
             seg_embed[:, :self.n_special_tokens] +
+            #token_embed[:, :self.n_special_tokens] +
             sp_value_embed)
 
         # Remove special tokens
