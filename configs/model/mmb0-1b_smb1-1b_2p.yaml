@@ -28,7 +28,7 @@ meta:
   enc_emb_dim: 768
   pred_depth: 2 # 1
   pred_emb_dim: 384 # 768
-  special_tokens: ['batch', 'assay'] # ['batch'] # ['batch', 'assay'] # ['batch']
+  special_tokens: [] # ['batch'] # ['batch', 'assay'] # ['batch']
   pos_learnable: False
   seg_learnable: False
   use_bfloat16: True
@@ -45,7 +45,7 @@ mask:
   per_block_mask_ratio: 0.6 # 0.2, 0.4, 0.6, 0.8
 optimization:
   warmup: 3
-  epochs: 500
+  epochs: 300
   ema:
   - 0.9995 # 0.7
   - 1.0
