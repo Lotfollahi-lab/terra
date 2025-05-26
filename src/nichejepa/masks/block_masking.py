@@ -93,13 +93,12 @@ class BlockMaskCollator:
 
         # Get non-zero indices and segments excluding special tokens
         ns_tokens = tokens[self.n_special_tokens:]
-        nz_ns_indices = torch.nonzero(ns_tokens).add_(
-            self.n_special_tokens).squeeze()
+        nz_ns_indices = torch.nonzero(ns_tokens).squeeze()
         total_nz_ns = len(nz_ns_indices)
     
         # Initialize masks
         target_masks = []
-        context_mask = torch.zeros(len(tokens), dtype=torch.int32)
+        context_mask = torch.zeros(len(ns_tokens), dtype=torch.int32)
 
         # Compute block length based on number of blocks; avoid zero
         # division
@@ -158,11 +157,6 @@ class BlockMaskCollator:
             context_block_mask = context_mask[start:end]
             context_block_mask = context_block_mask[
                 torch.randperm(len(context_block_mask))]
-
-            # Add special tokens to context block mask
-            context_block_mask = torch.cat((
-                torch.arange(self.n_special_tokens),
-                context_block_mask))
 
             context_masks.append(context_block_mask)
 
@@ -234,7 +228,7 @@ class BlockMaskCollator:
             # collated lists
             collated_target_masks.append(target_masks)
             collated_context_masks.append(context_masks)
-            collated_masks_attention.append((batch[i][0] != 0).int())
+            collated_masks_attention.append((batch[i][0][self.n_special_tokens:] != 0).int())
 
         # Trim masks to the minimum size across the batch and collate
         # them
