@@ -16,7 +16,7 @@ data:
   seq_len_neighborhood: 1536
   n_segments: 7
   sampling_strategy: null
-  batch_size: 192 # 192 # 128 (80GB GPU)
+  batch_size: 160 # 192 # 192 # 128 (80GB GPU)
   num_workers: 24 
   pin_memory: True
 meta:
