@@ -132,20 +132,7 @@ def sweep_func(args):
 
     port = random.randint(40000, 50000)
 
-    # Run the process_main function in a single or multi-GPU setting
-    if args.test:
-        process_main(0, args, params, num_gpus, port, args.devices, logger, folder_path)
-    else:
-
-        for rank in range(num_gpus):
-            p = mp.Process(target=process_main,
-                           args=(rank, args, params, num_gpus, port, args.devices, logger, folder_path))
-            p.start()
-            processes.append(p)
-
-        for p in processes:
-            p.join()  
-    processes = []
+    # Run the process_main function in a single GPU setting
     if args.test:
        process_main(0, args, params, 1, port, [args.devices[0]], logger, folder_path, is_training=False)
     else:
