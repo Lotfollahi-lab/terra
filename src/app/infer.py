@@ -336,10 +336,10 @@ def infer(args: dict,
         # Exclude masked tokens from aggregation
         if masked_tokens is not None:
             mask_indices = torch.isin(
-                tokens,
-                torch.tensor(masked_tokens, device=tokens.device)
+                ns_tokens,
+                torch.tensor(masked_tokens, device=ns_tokens.device)
                 ).unsqueeze(1).unsqueeze(1).expand(
-                    -1,-1, tokens.shape[-1], -1)
+                    -1,-1, ns_tokens.shape[-1], -1)
             masks_attention = masks_attention.expand(
                 masks_attention.shape[0],
                 masks_attention.shape[1],
