@@ -216,7 +216,7 @@ def finetune(args: dict,
         return_layer_emb_fn = target_encoder.backbone.return_layer_emb
 
     # Initialize train and test datasets, dataloaders and samplers
-    cell_dataset = make_cell_dataset(
+    cell_dataset = init_cell_dataset(
         dataset=dataset,
         vocab_size=vocab_size,
         seq_len_cell=seq_len_cell,

@@ -36,7 +36,7 @@ from torch.nn.parallel import DistributedDataParallel
 from tqdm import tqdm
 
 from app.helper import init_model, init_opt, load_checkpoint
-from nichejepa.datasets.cell_datasets import make_cell_dataset
+from nichejepa.datasets.cell_datasets import init_cell_dataset
 from nichejepa.datasets.dataloaders import init_dataloader_and_sampler
 from nichejepa.masks.block_masking  import BlockMaskCollator
 from nichejepa.masks.cell_masking import CellMaskCollator
@@ -296,7 +296,7 @@ def train(args: dict,
     if isinstance(train_dataset, list):
         train_cell_datasets = []
         for d, nz in zip(train_dataset, epoch_n_nonzero_tokens):
-            cell_d = make_cell_dataset(
+            cell_d = init_cell_dataset(
                 dataset=d,
                 vocab_size=vocab_size,
                 seq_len_cell=seq_len_cell,
@@ -310,7 +310,7 @@ def train(args: dict,
             train_cell_datasets.append(cell_d)
 
     else:
-        train_cell_dataset = make_cell_dataset(
+        train_cell_dataset = init_cell_dataset(
             dataset=train_dataset,
             vocab_size=vocab_size,
             seq_len_cell=seq_len_cell,

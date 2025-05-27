@@ -19,7 +19,7 @@ from tqdm import tqdm
 from pyensembl import EnsemblRelease
 
 from app.helper import init_model, load_checkpoint
-from nichejepa.datasets.cell_datasets import CellBaseDataset, make_cell_dataset
+from nichejepa.datasets.cell_datasets import CellBaseDataset, init_cell_dataset
 from nichejepa.datasets.dataloaders import init_dataloader_and_sampler
 from nichejepa.masks.block_masking  import BlockMaskCollator
 from nichejepa.masks.cell_masking import CellMaskCollator
@@ -276,7 +276,7 @@ def infer(args: dict,
             targets_list=targets_list)
 
     # Initialize train and test datasets, dataloaders and samplers
-    cell_dataset = make_cell_dataset(
+    cell_dataset = init_cell_dataset(
         dataset=dataset,
         vocab_size=vocab_size,
         seq_len_cell=seq_len_cell,
@@ -810,7 +810,7 @@ def embed_dataset(dataset: Dataset,
         per_block_mask_ratio=model_config['mask']['per_block_mask_ratio'])
         
     # Create torch dataset
-    cell_dataset = make_cell_dataset(
+    cell_dataset = init_cell_dataset(
         dataset=dataset,
         vocab_size=vocab_size,
         seq_len_cell=model_config['data']['seq_len_cell'],

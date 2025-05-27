@@ -149,7 +149,7 @@ def load_checkpoint(device: str,
     return encoder, predictor, target_encoder, opt, scaler, epoch, iter_number
 
 
-def init_model(gt_type: Literal['rank', 'count'],
+def init_model(gt_type: Literal['rank', 'count', 'combined'],
                count_encoding: Literal['value_bins', 'mlp'],
                n_value_bins: int,
                device: str,

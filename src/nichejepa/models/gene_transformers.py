@@ -1418,8 +1418,7 @@ class GeneTransformerCombinedPredictor(GeneTransformerBasePredictor):
         positions:
             Tensor containing positions with shape (BATCH_SIZE, SEQ_LEN).
         segments:
-            Tensor containing segment labels with shape (BATCH_SIZE,
-            SEQ_LEN).
+            Tensor containing segment labels with shape (BATCH_SIZE, SEQ_LEN).
         counts:
             Tensor containing counts with shape (BATCH_SIZE, SEQ_LEN).
         masks_enc:
