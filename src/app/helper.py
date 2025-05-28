@@ -227,7 +227,7 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
         api_version=api_version,
         sep_gene_tokens_neb=sep_gene_tokens_neb)
     if api_version == 'v3':
-        encoder = EncoderMultiMaskWrapper(encoder, encoder_type=gt_type)
+        encoder = EncoderMultiMaskWrapper(encoder)
     predictor = gt.__dict__["init_gt_predictor"](
         predictor_type=gt_type,
         n_special_values=n_special_values,
@@ -242,7 +242,7 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
         use_layer_norm=use_layer_norm,
         api_version=api_version)
     if api_version == 'v3':
-        predictor = PredictorMultiMaskWrapper(predictor, predictor_type=gt_type)
+        predictor = PredictorMultiMaskWrapper(predictor)
 
     def init_weights(m):
         if isinstance(m, torch.nn.Linear):
