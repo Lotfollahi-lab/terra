@@ -94,7 +94,8 @@ class CellBaseDataset(Dataset):
         """
         for spc_tk in self.special_tokens:
             item_dict['tokens'] = item[f'{spc_tk}_token'] + item_dict['tokens']
-            item_dict['values'] = item[f'{spc_tk}_value'] + item_dict['values']
+            if self.gt_type != 'rank':
+                item_dict['values'] = item[f'{spc_tk}_value'] + item_dict['values']
             
         if self.gt_type != 'counts':
             # Add special token positions
@@ -290,9 +291,10 @@ class CellGraphDataset(CellBaseDataset):
             segment_seq_len=self.seq_len_cell)
         if self.gt_type != 'counts':
             item_dict['positions'] = [
-                position if tokens[i] != 0 else 0 for i, position in 
-                enumerate(list(range(1, len(tokens) + 1)))]
-        item_dict['segments'] = [1 if token != 0 else 0 for token in tokens]
+                position if item_dict['tokens'][i] != 0 else 0 for i, position in 
+                enumerate(list(range(1, len(item_dict['tokens']) + 1)))]
+        item_dict['segments'] = [
+            1 if token != 0 else 0 for token in item_dict['tokens']]
 
         # Get (sampled) gene tokens, positions, segments and values for
         # neighbor cell segments
@@ -312,13 +314,13 @@ class CellGraphDataset(CellBaseDataset):
                         [position if segment_tokens[i] != 0 else 0
                         for i, position in enumerate(
                             list(range(1, len(segment_tokens) + 1)))])
-                elif self.gt_type != 'rank':
+                if self.gt_type != 'rank':
                     item_dict['values'].extend(segment_values)
                 item_dict['tokens'].extend(segment_tokens)
                 item_dict['segments'].extend([segment if token != 0 else 0 for
                     token in segment_tokens])
 
-        if len(tokens) > (self.seq_len_cell + self.seq_len_neighborhood):
+        if len(item_dict['tokens']) > (self.seq_len_cell + self.seq_len_neighborhood):
             item_dict['tokens'] = item_dict['tokens'][
                 :self.seq_len_cell + self.seq_len_neighborhood]
             item_dict['segments'] = item_dict['segments'][
@@ -326,31 +328,38 @@ class CellGraphDataset(CellBaseDataset):
             if self.gt_type != 'counts':
                 item_dict['positions'] = item_dict['positions'][
                     :self.seq_len_cell + self.seq_len_neighborhood]
-            elif self.gt_type != 'rank':
+            if self.gt_type != 'rank':
                 item_dict['values'] = item_dict['values'][
                     :self.seq_len_cell + self.seq_len_neighborhood]
 
-        elif len(tokens) < (self.seq_len_cell + self.seq_len_neighborhood):
+        elif len(item_dict['tokens']) < (self.seq_len_cell + self.seq_len_neighborhood):
             item_dict['tokens'] += [0] * (
-                (self.seq_len_cell + self.seq_len_neighborhood) - len(tokens))
+                (self.seq_len_cell + self.seq_len_neighborhood) - len(item_dict['tokens']))
             item_dict['segments'] += [0] * (
-                (self.seq_len_cell + self.seq_len_neighborhood) - len(segments)
+                (self.seq_len_cell + self.seq_len_neighborhood) - len(item_dict['segments'])
                 )
             if self.gt_type != 'counts':
                 item_dict['positions'] += [0] * (
                     (self.seq_len_cell + self.seq_len_neighborhood) -
-                    len(positions))
-            elif self.gt_type != 'rank':
+                    len(item_dict['positions']))
+            if self.gt_type != 'rank':
                 item_dict['values'] += [0.0] * (
                     (self.seq_len_cell + self.seq_len_neighborhood) -
-                    len(values))
+                    len(item_dict['values']))
 
         # Add special tokens
         item_dict = self._add_special_seq(item=item,
                                           item_dict=item_dict)
 
+        none_keys = []
         for key in item_dict.keys():
-            item_dict[key] = torch.tensor(item_dict[key])
+            if item_dict[key] is not None:
+                item_dict[key] = torch.tensor(item_dict[key])
+            else:
+                none_keys.append(key)
+
+        for key in none_keys:
+            del(item_dict[key])
 
         item_dict['cell_id'] = item['cell_id']
         
@@ -398,17 +407,24 @@ class CellNeighborhoodDataset(CellBaseDataset):
                 range(1, len(gene_tokens_cell) + 1)) + list(
                 range(1, len(gene_tokens_neigh) + 1))
             item_dict['positions'] = [
-                position if tokens[i] != 0 else 0 for i, position in 
-                enumerate(positions)]
-        elif self.gt_type != 'rank':
+                position if item_dict['tokens'][i] != 0 else 0 for i, position in 
+                enumerate(item_dict['positions'])]
+        if self.gt_type != 'rank':
             item_dict['values'] = values_cell + values_neigh
 
         # Add special tokens
         item_dict = self._add_special_seq(item=item,
-                                            item_dict=item_dict)
+                                          item_dict=item_dict)
 
+        none_keys = []
         for key in item_dict.keys():
-            item_dict[key] = torch.tensor(item_dict[key])
+            if item_dict[key] is not None:
+                item_dict[key] = torch.tensor(item_dict[key])
+            else:
+                none_keys.append(key)
+
+        for key in none_keys:
+            del(item_dict[key])
 
         item_dict['cell_id'] = item['cell_id']
         

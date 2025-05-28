@@ -171,11 +171,7 @@ class BlockMaskCollator:
         return target_masks, context_masks
 
     def __call__(self,
-                 batch: tuple[torch.Tensor,
-                              torch.Tensor,
-                              torch.Tensor,
-                              torch.Tensor,
-                              list[str]],
+                 batch: list[dict],
                  ) -> tuple[torch.Tensor,
                             torch.Tensor,
                             torch.Tensor,
@@ -187,13 +183,13 @@ class BlockMaskCollator:
         Parameters
         ----------
         batch:
-            Tuple containing the input batch including gene tokens,
-            segments, positions, counts and cell IDs.
+            List containing the input batch dictionaries including positions,
+            segments, gene tokens, counts and cell IDs.
 
         Returns
         ----------
         collated_batch:
-            Input gene tokens, segments, positions, counts and cell IDs
+            Input positions, segments, gene tokens, counts and cell IDs
             collated by batch.
         collated_context_masks:
             Sampled context masks collated by batch.
@@ -221,8 +217,8 @@ class BlockMaskCollator:
             # Sample target and context masks for the current
             # observation
             target_masks, context_masks = self._sample_gene_mask(
-                tokens=batch[i][0],
-                segments=batch[i][1])
+                tokens=batch[i]['tokens'],
+                segments=batch[i]['segments'])
 
             keep_tokens_target = min(
                 keep_tokens_target, min(mask.size(0) for mask in target_masks))
@@ -234,7 +230,7 @@ class BlockMaskCollator:
             # collated lists
             collated_target_masks.append(target_masks)
             collated_context_masks.append(context_masks)
-            collated_masks_attention.append((batch[i][0] != 0).int())
+            collated_masks_attention.append((batch[i]['tokens'] != 0).int())
 
         # Trim masks to the minimum size across the batch and collate
         # them

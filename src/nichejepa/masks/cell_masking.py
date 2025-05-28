@@ -195,11 +195,7 @@ class CellMaskCollator:
                keep_tokens_context
 
     def __call__(self,
-                 batch: tuple[torch.Tensor,
-                              torch.Tensor,
-                              torch.Tensor,
-                              torch.Tensor,
-                              list[str]],
+                 batch: list[dict],
                  ) -> tuple[torch.Tensor,
                             torch.Tensor,
                             torch.Tensor,
@@ -210,7 +206,7 @@ class CellMaskCollator:
         Parameters
         ----------
         batch:
-            Tuple containing gene tokens, segments, positions, counts,
+            Tuple containing positions, segments, gene tokens, counts,
             and cell IDs.
 
         Returns
@@ -238,7 +234,7 @@ class CellMaskCollator:
             target_masks, \
             context_masks, \
             min_target_len, \
-            min_context_len = self._sample_gene_mask(tokens=batch[i][0])
+            min_context_len = self._sample_gene_mask(tokens=batch[i]['tokens'])
 
             keep_tokens_target = min(keep_tokens_target, min_target_len)
             keep_tokens_context = min(keep_tokens_context, min_context_len)
@@ -247,7 +243,7 @@ class CellMaskCollator:
             collated_context_masks.append(context_masks)
 
             collated_masks_attention.append(
-                (batch[i][0][self.n_special_tokens:] != 0).int())
+                (batch[i]['tokens'][self.n_special_tokens:] != 0).int())
 
         # Trim all target masks to minimum size across batch
         collated_target_masks = [

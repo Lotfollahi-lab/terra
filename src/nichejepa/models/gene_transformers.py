@@ -683,15 +683,15 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
         # Get value embeddings
         if self.count_encoding == 'value_bins':
             value_emb_weights = self.value_emb_weights_projection(
-                udata['counts'].unsqueeze(dim=-1))
+                udata['values'].unsqueeze(dim=-1))
             value_emb = torch.matmul(
                 value_emb_weights, self.value_embed.weight)
-            zero_counts_mask = udata['counts'] == 0.0 # assign pad to 0 counts
+            zero_counts_mask = udata['values'] == 0.0 # assign pad to 0 counts
             zero_value_embed = self.special_value_embed(
                 torch.tensor(0, device=tokens.device)).to(value_emb.dtype)
             value_emb[zero_counts_mask] = zero_value_embed
         elif self.count_encoding == 'mlp':
-            value_emb = self.value_embed(udata['counts'].unsqueeze(dim=-1))           
+            value_emb = self.value_embed(udata['values'].unsqueeze(dim=-1))           
 
         # Add gene token and segment embeddings to value embeddings
         x = token_emb + seg_emb + value_emb
@@ -766,15 +766,15 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
         # Get value embeddings
         if self.count_encoding == 'value_bins':
             value_emb_weights = self.value_emb_weights_projection(
-                udata['counts'].unsqueeze(dim=-1))
+                udata['values'].unsqueeze(dim=-1))
             value_emb = torch.matmul(
                 value_emb_weights, self.value_embed.weight)
-            zero_counts_mask = udata['counts'] == 0.0 # assign padding to 0 counts
+            zero_counts_mask = udata['values'] == 0.0 # assign padding to 0 counts
             zero_value_embed = self.special_value_embed(
                 torch.tensor(0, device=tokens.device)).to(value_emb.dtype)
             value_emb[zero_counts_mask] = zero_value_embed
         elif self.count_encoding == 'mlp':
-            value_emb = self.value_embed(udata['counts'].unsqueeze(dim=-1))  
+            value_emb = self.value_embed(udata['values'].unsqueeze(dim=-1))  
 
         # Add gene token and segment embeddings to value embeddings
         x = token_emb + seg_emb + value_emb
@@ -933,15 +933,15 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
         # Get value embeddings
         if self.count_encoding == 'value_bins':
             value_emb_weights = self.value_emb_weights_projection(
-                udata['counts'].unsqueeze(dim=-1))
+                udata['values'].unsqueeze(dim=-1))
             value_emb = torch.matmul(
                 value_emb_weights, self.value_embed.weight)
-            zero_counts_mask = udata['counts'] == 0.0 # assign padding to 0 counts
+            zero_counts_mask = udata['values'] == 0.0 # assign padding to 0 counts
             zero_value_embed = self.special_value_embed(
                 torch.tensor(0, device=tokens.device)).to(value_emb.dtype)
             value_emb[zero_counts_mask] = zero_value_embed
         elif self.count_encoding == 'mlp':
-            value_emb = self.value_embed(udata['counts'].unsqueeze(dim=-1))         
+            value_emb = self.value_embed(udata['values'].unsqueeze(dim=-1))       
 
         # Add positional, segment, and gene embeddings to value embeddings
         x = pos_emb + seg_emb + token_emb + value_emb
@@ -1016,15 +1016,15 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
         # Get value embeddings
         if self.count_encoding == 'value_bins':
             value_emb_weights = self.value_emb_weights_projection(
-                udata['counts'].unsqueeze(dim=-1))
+                udata['values'].unsqueeze(dim=-1))
             value_emb = torch.matmul(
                 value_emb_weights, self.value_embed.weight)
-            zero_counts_mask = udata['counts'] == 0.0 # assign padding to 0 counts
+            zero_counts_mask = udata['values'] == 0.0 # assign padding to 0 counts
             zero_value_embed = self.special_value_embed(
                 torch.tensor(0, device=tokens.device)).to(value_emb.dtype)
             value_emb[zero_counts_mask] = zero_value_embed
         elif self.count_encoding == 'mlp':
-            value_emb = self.value_embed(udata['counts'].unsqueeze(dim=-1))  
+            value_emb = self.value_embed(udata['values'].unsqueeze(dim=-1))  
 
         # Add positional, segment, and gene embeddings to value embeddings
         x = pos_emb + seg_emb + token_emb + value_emb

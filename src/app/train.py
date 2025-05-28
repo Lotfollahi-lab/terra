@@ -448,7 +448,8 @@ def train(args: dict,
 
         for itr, (udata, masks_enc, masks_pred, masks_attention) in enumerate(train_loader):
             for key in udata.keys():
-                udata[key] = udata[key].to(device, non_blocking=True)
+                if key != 'cell_id':
+                    udata[key] = udata[key].to(device, non_blocking=True)
             masks_enc = [u.to(device, non_blocking=True) for u in masks_enc]
             masks_pred = [u.to(device, non_blocking=True) for u in masks_pred]
             masks_attention = masks_attention.to(device, non_blocking=True)
@@ -462,7 +463,7 @@ def train(args: dict,
                 _new_lr = scheduler.step()
                 _new_wd = wd_scheduler.step()
 
-                def forward_target():
+                def forward_target(udata):
                     with torch.no_grad(): 
                         # no backward pass for target encoder
                         # Target encorder forward pass with output dim 
@@ -485,15 +486,14 @@ def train(args: dict,
 
                         return h
 
-                def forward_context():
+                def forward_context(udata):
                     # Context encoder forward pass with output dim (BATCH_SIZE,
                     # MIN_CONTEXT_SIZE, EMB_DIM) where MIN_CONTEXT_SIZE is
                     # minmum context size in the batch after removal of
                     # overlapping targets                     
-                    z, udata = encoder(
-                        udata=udata,
-                        masks=masks_enc,
-                        masks_attention=None)
+                    z, udata = encoder(udata=udata,
+                                       masks=masks_enc,
+                                       masks_attention=None)
 
                     # Predictor forward pass with output dim (BATCH_SIZE *
                     # N_TARGETS * N_CONTEXTS, TARGET_MASK_SIZE, EMB_DIM)
@@ -522,8 +522,8 @@ def train(args: dict,
                 # Step 1: forward pass
                 with torch.cuda.amp.autocast(dtype=torch.bfloat16,
                                              enabled=use_bfloat16):
-                    h = forward_target()
-                    z = forward_context()
+                    h = forward_target(udata)
+                    z = forward_context(udata)
                     loss = loss_fn(z, h)
 
                 # Step 2: backward pass and step

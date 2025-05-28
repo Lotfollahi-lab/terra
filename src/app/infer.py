@@ -319,27 +319,25 @@ def infer(args: dict,
     all_neighborhood_gene_emb_dict = {}
 
     for itr, (udata, _, _, masks_attention) in tqdm(enumerate(loader)):
-        # Load gene tokens and segmentation label to the specified device
-        tokens = udata[0].to(device, non_blocking=True)
-        segments = udata[1].to(device, non_blocking=True)
-        positions = udata[2].to(device, non_blocking=True)
-        counts = udata[3].to(device, non_blocking=True)
+        for key in udata.keys():
+            if key != 'cell_id':
+                udata[key] = udata[key].to(device, non_blocking=True)
         masks_attention = masks_attention.to(device, non_blocking=True)
 
         # Collect cell IDs to join metadata
-        all_cell_ids.extend(udata[-1])
+        all_cell_ids.extend(udata['cell_id'])
 
         # Aggregate gene embeddings into cell and neighborhood
         # embeddings
-        ns_tokens = tokens[:, n_special_tokens:]
+        ns_tokens = udata['tokens'][:, n_special_tokens:]
 
         # Exclude masked tokens from aggregation
         if masked_tokens is not None:
             mask_indices = torch.isin(
-                tokens,
-                torch.tensor(masked_tokens, device=tokens.device)
+                udata['tokens'],
+                torch.tensor(masked_tokens, device=udata['tokens'].device)
                 ).unsqueeze(1).unsqueeze(1).expand(
-                    -1,-1, tokens.shape[-1], -1)
+                    -1,-1, udata['tokens'].shape[-1], -1)
             masks_attention = masks_attention.expand(
                 masks_attention.shape[0],
                 masks_attention.shape[1],
@@ -356,18 +354,12 @@ def infer(args: dict,
             for emb_layer in emb_layers:
                 cell_emb_list.append(return_layer_emb_fn(
                     layer=emb_layer,
-                    positions=positions,
-                    segments=segments,
-                    tokens=tokens,
-                    counts=counts,
+                    udata=udata,
                     masks_attention=masks_attention,
                     pad_neighborhood=True).cpu())
                 neighborhood_emb_list.append(return_layer_emb_fn(
                     layer=emb_layer,
-                    positions=positions,
-                    segments=segments,
-                    tokens=tokens,
-                    counts=counts,
+                    udata=udata,
                     masks_attention=masks_attention,
                     pad_neighborhood=False).cpu())
         
