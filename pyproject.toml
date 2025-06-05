@@ -31,7 +31,8 @@ dependencies = [
     "datasets",
     # for debug logging (referenced from the issue template)
     "session-info",
-    "wandb"
+    "wandb",
+    "peft"
 ]
 
 [project.optional-dependencies]

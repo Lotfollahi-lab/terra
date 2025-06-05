@@ -14,27 +14,28 @@ data:
   sample_subset: False
   split: 0
   stratify: False
-  seq_len_cell: 256 # 128, 256
-  seq_len_neighborhood: 2560 # 1536 (6knn, 256t), 2560 (10knn, 256t), 
+  seq_len_cell: 256 # 64, 128, 256
+  seq_len_neighborhood: 2560 # 384/640, 1536/2816
   n_segments: 11 # 7, 11; number of unique segment tokens (gene segments)
   sampling_strategy: null # null, 'rand_sampling', 'norm_count_rank_sampling', 'rand_sampling_rep', 'norm_count_rank_sampling_rep'
-  batch_size: 72 # 72 (mask ratio 0.4), 80 (mask ratio 0.6, 0.8)
+  batch_size: 120 # 104 # 224 no bfloat16 # 384, 448
   num_workers: 24
   pin_memory: True
+  sep_gene_tokens_neb: True
 meta:
   add_cls: False
   gt_type: 'counts' # 'rank', 'counts'
   count_encoding: 'mlp' # 'value_bins', 'mlp'
   n_value_bins: 100
   enc_depth: 12
-  enc_emb_dim: 768
+  enc_emb_dim: 384
   pred_depth: 12
-  pred_emb_dim: 384
-  num_heads: 12
-  special_tokens: ['assay', 'batch'] # ['assay'] # ['batch'], ['assay', 'tissue', 'gene_panel', 'batch']
+  pred_emb_dim: 192 # 384
+  num_heads: 6
+  special_tokens: [] # ['assay'] # ['batch'], ['assay', 'tissue', 'gene_panel', 'batch']
   pos_learnable: False
   seg_learnable: False
-  use_bfloat16: True
+  use_bfloat16: True # True, False
   use_flash_attention: True
   use_layer_norm: True
 mask:
@@ -45,10 +46,10 @@ mask:
   targets_list: null
   context_mask_size: 200 # this doesn't have meaning in block masking.
   target_mask_size: 50 # this doesn't have meaning in block masking.
-  per_block_mask_ratio: 0.6 # 0.2, 0.4, 0.6, 0.8
+  per_block_mask_ratio: 0.6 # 0.5, 0.6, 0.7, 0.8
 optimization:
-  warmup: 3
-  epochs: 10
+  warmup: 3 # 3
+  epochs: 10 # 10
   ema:
   - 0.9995 # 0.9995, 0.9998
   - 1.0

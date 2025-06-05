@@ -6,6 +6,8 @@ https://github.com/facebookresearch/ijepa/blob/main/src/models/vision_transforme
 (05.06.2024).
 """
 
+from typing import Literal
+
 import torch
 import torch.nn as nn
 from torch.nn.attention import SDPBackend, sdpa_kernel
@@ -205,6 +207,68 @@ class Block(nn.Module):
         x = x + self.mlp(self.norm2(x))
 
         return x
+
+
+class ClassificationModel(nn.Module):
+    """
+    Add a classification head to a base model. Adds a fully connected layer or a multi-layer perceptron (MLP)
+    for classification based on the output of a base model.
+    """
+
+    def __init__(self,
+                 base_model: nn.Module,
+                 gt_type: Literal['rank', 'counts'],
+                 num_classes: int, use_mlp: bool = False, hidden_dim: int = 512):
+        """
+        Initialize the classification head.
+
+        Parameters
+        -----------
+        base_model:
+            The base model whose output is used for classification.
+        num_classes:
+            The number of output classes for classification.
+        use_mlp:
+            Whether to use an MLP head (default is False, which uses a simple linear layer).
+        hidden_dim:
+            The dimension of the hidden layer in the MLP (default is 512).
+        """
+        super(ClassificationModel, self).__init__()
+
+        self.base_model = base_model
+        self.gt_type = gt_type
+
+        if use_mlp:
+            # Using MLP with one hidden layer
+            self.classification_head = nn.Sequential(
+                nn.Linear(base_model.output_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, num_classes)
+            )
+        else:
+            # Using a simple linear layer
+            self.classification_head = nn.Linear(base_model.output_dim, num_classes)
+
+    def forward(self, **base_model_kwargs) -> torch.Tensor:
+        """
+        Forward pass through the classification head.
+
+        Parameters:
+        - x (Tensor): The input tensor (feature vector) from the base model.
+
+        Returns:
+        - Tensor: The class logits.
+        """
+        if self.gt_type == 'rank':
+            h, _, _ = self.base_model(**base_model_kwargs)
+        elif self.gt_type == 'counts':
+            h, _ = self.base_model(**base_model_kwargs)
+
+        # Normalize over feature dim
+        h = F.layer_norm(h, (h.size(-1),))
+        
+        logits = self.classification_head(h)
+        return logits
 
 
 class DyT(nn.Module):

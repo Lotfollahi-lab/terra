@@ -11,6 +11,7 @@ import sys
 from typing import Literal
 
 import torch
+#from peft import get_peft_model, LoraConfig
 
 import nichejepa.models.gene_transformers as gt
 from nichejepa.models.multimask import (EncoderMultiMaskWrapper,
@@ -23,6 +24,13 @@ from nichejepa.utils.schedulers import (CosineWDSchedule,
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logger = logging.getLogger()
 
+"""
+def apply_peft(model, peft_method='lora', rank=8):
+    if peft_method == 'lora':
+        peft_config = LoraConfig(r=rank)
+        model = get_peft_model(model, peft_config)
+    return model
+"""
 
 def load_checkpoint(device: str,
                     r_path: str,
@@ -83,8 +91,17 @@ def load_checkpoint(device: str,
     try:
         checkpoint = torch.load(
             r_path, map_location=torch.device(device))
+        
+        if ('zero_epoch_tracking' in checkpoint.keys()) and not ('iter_number' in checkpoint.keys()):
+            epoch = checkpoint['epoch'] + 1
+        else: # just for backwards compatibility
+            epoch = checkpoint['epoch']
 
-        epoch = checkpoint['epoch']
+        # TO DO: Update
+        if 'iter_number' in checkpoint.keys():
+            iter_number = checkpoint['iter_number']
+        else:
+            iter_number = None
 
         # Load state into context encoder
         if encoder is not None:
@@ -127,8 +144,9 @@ def load_checkpoint(device: str,
     except Exception as e:
         logger.info(f'Encountered exception when loading checkpoint: {e}.')
         epoch = 0
+        iter_number = None
 
-    return encoder, predictor, target_encoder, opt, scaler, epoch
+    return encoder, predictor, target_encoder, opt, scaler, epoch, iter_number
 
 
 def init_model(gt_type: Literal['rank', 'count'],
@@ -149,6 +167,7 @@ def init_model(gt_type: Literal['rank', 'count'],
                use_flash_attention: bool = True,
                use_layer_norm: bool = True,
                api_version: Literal['v1', 'v2', 'v3'] = 'v3',
+               sep_gene_tokens_neb: bool = False,
                ) -> tuple[gt.GeneTransformerBaseEncoder,
                           gt.GeneTransformerBasePredictor]:
     """
@@ -205,9 +224,10 @@ def init_model(gt_type: Literal['rank', 'count'],
         mlp_ratio=mlp_ratio,
         use_flash_attention=use_flash_attention,
         use_layer_norm=use_layer_norm,
-        api_version=api_version)
+        api_version=api_version,
+        sep_gene_tokens_neb=sep_gene_tokens_neb)
     if api_version == 'v3':
-        encoder = EncoderMultiMaskWrapper(encoder)
+        encoder = EncoderMultiMaskWrapper(encoder, encoder_type=gt_type)
     predictor = gt.__dict__["init_gt_predictor"](
         predictor_type=gt_type,
         n_special_values=n_special_values,
@@ -222,7 +242,7 @@ def init_model(gt_type: Literal['rank', 'count'],
         use_layer_norm=use_layer_norm,
         api_version=api_version)
     if api_version == 'v3':
-        predictor = PredictorMultiMaskWrapper(predictor)
+        predictor = PredictorMultiMaskWrapper(predictor, predictor_type=gt_type)
 
     def init_weights(m):
         if isinstance(m, torch.nn.Linear):

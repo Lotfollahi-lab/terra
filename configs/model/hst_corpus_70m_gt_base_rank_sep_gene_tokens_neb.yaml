@@ -23,7 +23,7 @@ data:
   pin_memory: True
 meta:
   add_cls: False
-  gt_type: 'counts' # 'rank', 'counts'
+  gt_type: 'rank' # 'rank', 'counts'
   count_encoding: 'mlp' # 'value_bins', 'mlp'
   n_value_bins: 100
   enc_depth: 12
@@ -31,7 +31,7 @@ meta:
   pred_depth: 12
   pred_emb_dim: 384
   num_heads: 12
-  special_tokens: ['assay', 'batch'] # ['assay'] # ['batch'], ['assay', 'tissue', 'gene_panel', 'batch']
+  special_tokens: ['assay'] # ['assay'] # ['batch'], ['assay', 'tissue', 'gene_panel', 'batch']
   pos_learnable: False
   seg_learnable: False
   use_bfloat16: True
@@ -48,7 +48,7 @@ mask:
   per_block_mask_ratio: 0.6 # 0.2, 0.4, 0.6, 0.8
 optimization:
   warmup: 3
-  epochs: 10
+  epochs: 30
   ema:
   - 0.9995 # 0.9995, 0.9998
   - 1.0

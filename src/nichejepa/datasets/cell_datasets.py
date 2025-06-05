@@ -23,6 +23,7 @@ class CellBaseDataset(Dataset):
                                             'rand_sampling',
                                             'rand_sampling_rep'] | None = None,
                  n_nonzero_tokens_list: list[int] | None = None,
+                 sep_gene_tokens_neb: bool = False,
                  ):
         """
         Torch CellBaseDataset class.
@@ -45,6 +46,8 @@ class CellBaseDataset(Dataset):
             Token sampling strategy.
         n_nonzero_tokens_list:
             List of number of nonzero tokens.
+        sep_gene_tokens_neb:
+            If `True` use separate gene tokens in neighborhood.
         """
         if gt_type not in ['rank', 'counts']:
             raise ValueError(f'Invalid "gt_type": {gt_type}.')
@@ -61,11 +64,11 @@ class CellBaseDataset(Dataset):
                         seq_len_neighborhood +
                         self.n_special_tokens)
         self.sampling_strategy = sampling_strategy
-
         if n_nonzero_tokens_list:
             self.n_nz_tokens = n_nonzero_tokens_list
         else:
             self.n_nz_tokens = self.dataset['n_nonzero_tokens']
+        self.sep_gene_tokens_neb = sep_gene_tokens_neb
 
     def __len__(self) -> int:
         return self.len
@@ -260,6 +263,10 @@ class CellBaseDataset(Dataset):
             
             segment_tokens = item['gene_tokens'][
                 segment_start_idx: segment_end_idx]
+
+            if segment != 1 and (self.sep_gene_tokens_neb):
+                segment_tokens = [token + self.vocab_size if token != 0 else token for token in segment_tokens]
+
             if self.gt_type == 'counts':
                 segment_values = item['gene_expr'][
                     segment_start_idx: segment_end_idx]

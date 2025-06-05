@@ -118,8 +118,8 @@ def main():
         print(params)
         if params['state']['folder_path'] is None:
             folder_path = os.path.join(artifact_folder_path,
-                        params['data']['dataset_name'],
-                        current_timestamp)
+                                       params['data']['dataset_name'],
+                                       current_timestamp)
         else:
             folder_path = params['state']['folder_path']
     else:

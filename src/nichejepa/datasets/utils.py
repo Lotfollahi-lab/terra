@@ -52,7 +52,7 @@ def get_ensembl_ids(gene_names: list[str],
 
 def prepare_dataset(
         args: dict
-        ) -> tuple[datasets.Dataset, datasets.Dataset] | datasets.Dataset:
+        ) -> tuple[datasets.Dataset, datasets.Dataset] | datasets.Dataset | list[datasets.Dataset]:
     """
     Prepare dataset by loading it, determining sample size, and
     splitting it into training and test sets based on `split_dataset`.
@@ -85,7 +85,13 @@ def prepare_dataset(
     data_path = args['data']['tokenized_data_folder_path']
     dataset = load_from_disk(data_path)
 
-    if args['data']['precomputed_split']:
+    if 'precomputed_epoch_splits' in args['data'].keys():
+        # Load precomputed epoch-wise splits if specified
+        with open(args['data']['precomputed_epoch_splits'], 'rb') as f: 
+            epoch_indices = pickle.load(f)
+        datasets = [dataset.select(indices) for indices in epoch_indices]
+        return datasets, None, None
+    elif args['data']['precomputed_split']:
         # Load precomputed data split if specified
         with open(args['data']['precomputed_split'], 'rb') as f: 
             indices = pickle.load(f)

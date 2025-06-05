@@ -219,7 +219,7 @@ def create_binary_selection_mask(ns_tokens: torch.Tensor,
             # Exclude other excluded tokens
             selection_mask[torch.isin(
                 ns_tokens,
-                torch.tensor(excluded_tokens).to(tokens.device))] = False
+                torch.tensor(excluded_tokens).to(ns_tokens.device))] = False
         if top_k:
             # Exclude tokens beyond the top_k positions in the cell
             # segment
@@ -232,7 +232,7 @@ def create_binary_selection_mask(ns_tokens: torch.Tensor,
             # Exclude other excluded tokens
             selection_mask[torch.isin(
                 ns_tokens,
-                torch.tensor(excluded_tokens).to(tokens.device))] = False
+                torch.tensor(excluded_tokens).to(ns_tokens.device))] = False
         if top_k:
             # Exclude tokens beyond the top_k positions in the
             # neighborhood segments
@@ -246,7 +246,7 @@ def create_binary_selection_mask(ns_tokens: torch.Tensor,
             # Exclude other excluded tokens
             selection_mask[torch.isin(
                 ns_tokens,
-                torch.tensor(excluded_tokens).to(tokens.device))] = False
+                torch.tensor(excluded_tokens).to(ns_tokens.device))] = False
         if top_k:
             # Exclude tokens beyond the top_k positions in all segments
             for i in range(n_segments - 1):
