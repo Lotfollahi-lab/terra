@@ -34,6 +34,8 @@ class BlockMaskCollator:
         Ratio of elements to be masked in each block. A list with min
         and max ratio can be provided, in which case a value between the
         min and max will be sampled for each batch.
+    sample_segments:
+        If 'True', sample number of neighbors in each batch. 
     """
     def __init__(self,
                  n_targets: int,
@@ -42,7 +44,8 @@ class BlockMaskCollator:
                  seq_len_cell: int,
                  seq_len_neighborhood: int,
                  n_special_tokens: int,
-                 per_block_mask_ratio: float = 0.5):
+                 per_block_mask_ratio: float = 0.5,
+                 sample_segments: bool = False):
         self.n_targets = n_targets
         self.n_contexts = n_contexts
         self.n_segments = n_segments
@@ -51,6 +54,7 @@ class BlockMaskCollator:
         self.seq_len_genes = self.seq_len_cell + self.seq_len_neighborhood
         self.n_special_tokens = n_special_tokens
         self.per_block_mask_ratio = per_block_mask_ratio
+        self.sample_segments = sample_segments
 
     def _sample_gene_mask(self,
                           tokens: torch.Tensor,
@@ -199,6 +203,22 @@ class BlockMaskCollator:
             Attention masks collated by batch.
         """
         B = len(batch)
+
+        # If specified, sample number of neighbors for current batch and
+        # pad rest
+        if self.sample_segments:
+            if 'positions' in batch[0].keys(): # self.gt_type != 'counts'
+                pad_positions = True
+            if 'values' in batch[0].keys(): # self.gt_type != 'rank'
+                pad_values = True
+            k = torch.randint(low=1, high=self.n_segments, size=(1,)).item()
+            for i in range(B):
+                batch[i]['tokens'][self.seq_len_cell * k:] = 0
+                batch[i]['segments'][self.seq_len_cell * k:] = 0
+                if pad_positions:
+                    batch[i]['positions'][self.seq_len_cell * k:] = 0
+                if pad_values:
+                    batch[i]['values'][self.seq_len_cell * k:] = 0.0
 
         # Collate the batch
         collated_batch = torch.utils.data.default_collate(batch)

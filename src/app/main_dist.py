@@ -113,7 +113,7 @@ def main():
     logger.info(f'Params: {params}.')
     if WORLD_RANK==0:
         wandb.init(
-            project='nichejepa-sweep',
+            project='nichejepa-pretraining',
             id=run_id,
             resume="allow",
             group="multi_node_training",

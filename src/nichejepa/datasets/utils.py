@@ -84,6 +84,7 @@ def prepare_dataset(
     # Load dataset from the specified path
     data_path = args['data']['tokenized_data_folder_path']
     dataset = load_from_disk(data_path)
+    #dataset.set_format('torch')
 
     if 'precomputed_epoch_splits' in args['data'].keys():
         # Load precomputed epoch-wise splits if specified

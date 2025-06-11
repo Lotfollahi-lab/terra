@@ -1,0 +1,70 @@
+data:
+  dataset_name: 'hst_corpus_80m'
+  raw_data_folder_path: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/silver/hst_corpus_80m'
+  token_dict_folder_path: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/tokenizer/token_dictionary_homo_sapiens.pkl'
+  tokenized_data_folder_path: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/gold/cell-graph-tokenizer/hst_corpus_80m/hst_corpus_80m_32_None_None_None_None_None_shifted_log_knn_10.dataset'
+  precomputed_split: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/tokenizer/hst_corpus_80m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_split_train.pkl'
+  precomputed_n_nonzero_tokens: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/tokenizer/hst_corpus_80m_32_None_None_None_None_None_shifted_log_knn_10_n_nonzero_tokens_train.pkl'
+  #precomputed_epoch_splits: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/tokenizer/hst_corpus_80m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_split_30.pkl'
+  #precomputed_epoch_n_nonzero_tokens: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/tokenizer/hst_corpus_80m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_n_nonzero_tokens_30.pkl'
+  tokenizer_type: 'cell_graph'
+  random_state: 0
+  sample_subset: False
+  split: 0
+  stratify: False
+  seq_len_cell: 256 # 64, 128, 256
+  seq_len_neighborhood: 2560 # 384/640, 1536/2816
+  n_segments: 11 # 7, 11; number of unique segment tokens (gene segments)
+  sampling_strategy: null # null, 'rand_sampling', 'norm_count_rank_sampling', 'rand_sampling_rep', 'norm_count_rank_sampling_rep'
+  batch_size: 144 # 104 # 224 no bfloat16 # 384, 448
+  num_workers: 24
+  pin_memory: True
+meta:
+  add_cls: False
+  gt_type: 'combined' # 'rank', 'counts'
+  count_encoding: 'mlp' # 'value_bins', 'mlp'
+  n_value_bins: 100
+  enc_depth: 12
+  enc_emb_dim: 384
+  pred_depth: 12
+  pred_emb_dim: 192 # 384
+  num_heads: 6
+  special_tokens: [] # ['assay'] # ['batch'], ['assay', 'tissue', 'gene_panel', 'batch']
+  pos_learnable: False
+  seg_learnable: False
+  use_bfloat16: True # True, False
+  use_flash_attention: True
+  use_layer_norm: True
+mask:
+  n_contexts: 1 # 1
+  n_targets: 1 # 1 =, this is the number of blocks in block masking
+  block_masking: True # True, False
+  cell_masking: False # True, False
+  targets_list: null
+  context_mask_size: 200 # this doesn't have meaning in block masking.
+  target_mask_size: 50 # this doesn't have meaning in block masking.
+  per_block_mask_ratio: 0.6 # 0.5, 0.6, 0.7, 0.8
+  sample_segments: True
+optimization:
+  warmup: 1 # 3
+  epochs: 10 # 10
+  ema:
+  - 0.9995 # 0.9995, 0.9998
+  - 1.0
+  start_lr: 1.0e-06 # 2.0e-05
+  lr: 6.0e-05 # 6.0e-05, 0.000625
+  final_lr: 1.0e-06
+  weight_decay: 0.04
+  final_weight_decay: 0.4
+  ipe_scale: 1.25
+  clip_grad: 2.0
+state:
+  log_freq: 20
+  checkpoint_freq: 1
+  write_tag: nichejepa
+  read_timestamp: ''
+  folder_path: null
+  load_checkpoint: False # true, false
+  read_checkpoint: null # null, 'nichejepa-ep5.pth.tar'
+  checkpoint_freq_iter: 5000
+

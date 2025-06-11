@@ -30,6 +30,8 @@ class AverageMeter(object):
         """
         Update the average and current value.
         """
+        if isinstance(val, torch.Tensor):
+                val = val.item()
         self.val = val
         try:
             self.max = max(val, self.max)
@@ -66,19 +68,19 @@ class CSVLogger(object):
                 print(tv[0] % tv[1], end=end, file=f)
 
 
-def gpu_timer(closure, log_timings: bool = True):
+def gpu_timer(closure, *args, log_timings=True):
     """
     Helper to time gpu-time to execute closure().
     """
     log_timings = log_timings and torch.cuda.is_available()
-
     elapsed_time = -1.
+
     if log_timings:
         start = torch.cuda.Event(enable_timing=True)
         end = torch.cuda.Event(enable_timing=True)
         start.record()
 
-    result = closure()
+    result = closure(*args)
 
     if log_timings:
         end.record()
@@ -106,14 +108,17 @@ def grad_logger(named_params: list[tuple[str, torch.Tensor]],
     stats = AverageMeter()
     stats.first_layer = None
     stats.last_layer = None
+
     for n, p in named_params:
-        if (p.grad is not None) and not (n.endswith('.bias') or len(p.shape) == 1):
-            grad_norm = float(torch.norm(p.grad.data))
+        if p.grad is not None and not (n.endswith('.bias') or len(p.shape) == 1):
+            grad_norm = p.grad.detach().norm().item()
             stats.update(grad_norm)
             if 'qkv' in n:
                 stats.last_layer = grad_norm
                 if stats.first_layer is None:
                     stats.first_layer = grad_norm
+
     if stats.first_layer is None or stats.last_layer is None:
-        stats.first_layer = stats.last_layer = 0.
+        stats.first_layer = stats.last_layer = 0.0
+
     return stats
