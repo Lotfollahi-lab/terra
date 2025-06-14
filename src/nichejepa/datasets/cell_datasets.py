@@ -222,10 +222,12 @@ class CellBaseDataset(Dataset):
                 sampled_rel_y_coords.extend([0] * (
                     size - len(sampled_rel_y_coords)))
 
-        return sampled_tokens, /
-               sampled_values, /
-               sampled_rel_x_coords, /
-               sampled_rel_y_coords
+        return (
+            sampled_tokens,
+            sampled_values,
+            sampled_rel_x_coords,
+            sampled_rel_y_coords,
+        )
          
     def _get_segment_seq(self, 
                          item: int,
