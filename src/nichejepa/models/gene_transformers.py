@@ -17,6 +17,7 @@ import torch.nn as nn
 
 from .modules import Attention, Block, ValueEmbWeightsProjection, MLP
 from .utils import (get_1d_sincos_pos_embed,
+                    get_1d_sincos_pos_embed_from_pos,
                     repeat_interleave_batch,
                     trunc_normal_)
 from ..masks.utils import apply_masks
@@ -78,6 +79,7 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                  seq_len: int,
                  n_special_tokens: int,
                  n_segments: int,
+                 cell_pos_enc: Literal['segment', 'coord'],
                  embed_dim: int = 768,
                  depth: int = 12,
                  predictor_embed_dim: int = 384,
@@ -101,6 +103,7 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         self.n_segments = n_segments
         self.n_special_tokens = n_special_tokens
         self.seq_len_cell = (seq_len - n_special_tokens)//n_segments
+        self.cell_pos_enc = cell_pos_enc
         self.embed_dim = embed_dim
         self.num_heads = num_heads
         self.init_std = init_std
@@ -114,19 +117,20 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
             padding_idx=0)
 
         # Initialize segment embeddings
-        self.seg_embed = nn.Embedding(
-            1 + n_segments + (105 if api_version == 'v1' else 0), # include <pad>
-            embed_dim,
-            padding_idx=0)
+        if self.cell_pos_enc == 'segment':
+            self.seg_embed = nn.Embedding(
+                1 + n_segments + (105 if api_version == 'v1' else 0), # include <pad>
+                embed_dim,
+                padding_idx=0)
         
-        # Prevent gradient updates and initialize with sincos embedding,
-        # including special segments
-        self.seg_embed.weight.requires_grad = False
-        seg_embed = get_1d_sincos_pos_embed(
-            embed_dim=embed_dim,
-            n_zero_pos=0,
-            n_sincos_pos=n_segments + (105 if api_version == 'v1' else 0))
-        self.seg_embed.weight[1:].copy_(torch.from_numpy(seg_embed).float())
+            # Prevent gradient updates and initialize with sincos embedding,
+            # including special segments
+            self.seg_embed.weight.requires_grad = False
+            seg_embed = get_1d_sincos_pos_embed(
+                embed_dim=embed_dim,
+                n_zero_pos=0,
+                n_sincos_pos=n_segments + (105 if api_version == 'v1' else 0))
+            self.seg_embed.weight[1:].copy_(torch.from_numpy(seg_embed).float())
 
         # Initialize encoder blocks and norm layer
         self.blocks = nn.ModuleList([
@@ -311,19 +315,20 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
         self.api_version = api_version
 
         # Initialize segment embeddings
-        self.seg_embed = nn.Embedding(
-            1 + n_segments + (105 if api_version == 'v1' else 0), # include <pad>
-            predictor_embed_dim,
-            padding_idx=0)
-        
-        # Prevent gradient updates and initialize with sincos embedding,
-        # including special segments
-        self.seg_embed.weight.requires_grad = False
-        seg_embed = get_1d_sincos_pos_embed(
-            embed_dim=predictor_embed_dim,
-            n_zero_pos=0,
-            n_sincos_pos=n_segments + (105 if api_version == 'v1' else 0))
-        self.seg_embed.weight[1:].copy_(torch.from_numpy(seg_embed).float())
+        if self.cell_pos_enc == 'segment':
+            self.seg_embed = nn.Embedding(
+                1 + n_segments + (105 if api_version == 'v1' else 0), # include <pad>
+                predictor_embed_dim,
+                padding_idx=0)
+            
+            # Prevent gradient updates and initialize with sincos embedding,
+            # including special segments
+            self.seg_embed.weight.requires_grad = False
+            seg_embed = get_1d_sincos_pos_embed(
+                embed_dim=predictor_embed_dim,
+                n_zero_pos=0,
+                n_sincos_pos=n_segments + (105 if api_version == 'v1' else 0))
+            self.seg_embed.weight[1:].copy_(torch.from_numpy(seg_embed).float())
 
         # Initialize layer to project from enc to pred embed dim
         self.predictor_embed = nn.Linear(embed_dim,
@@ -927,7 +932,18 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
 
         # Get embeddings for positions, segments and gene tokens
         pos_emb = self.pos_embed(udata['positions'])
-        seg_emb = self.seg_embed(udata['segments'])
+        if self.cell_pos_enc = 'segment':
+            seg_emb = self.seg_embed(udata['segments'])
+        elif self.cell_pos_enc = 'coord':
+            rel_x_coord_emb = get_1d_sincos_pos_embed_from_pos(
+                embed_dim=self.embed_dim // 2,
+                udata['rel_x_coords'])
+            rel_y_coord_emb = get_1d_sincos_pos_embed_from_pos(
+                embed_dim=self.embed_dim // 2,
+                udata['rel_y_coords'])
+            seg_emb = torch.cat(
+                [rel_x_coord_emb, rel_y_coord_emb], dim=-1)
+
         token_emb = self.token_embed(udata['tokens'])
 
         # Get value embeddings
@@ -1404,7 +1420,17 @@ class GeneTransformerCombinedPredictor(GeneTransformerBasePredictor):
 
         # Get positional and segment embeddings
         pos_embed = self.pos_embed(udata['positions'])
-        seg_embed = self.seg_embed(udata['segments'])
+        if self.cell_pos_enc = 'segment':
+            seg_emb = self.seg_embed(udata['segments'])
+        elif self.cell_pos_enc = 'coord':
+            rel_x_coord_emb = get_1d_sincos_pos_embed_from_pos(
+                embed_dim=self.predictor_embed_dim // 2,
+                udata['rel_x_coords'])
+            rel_y_coord_emb = get_1d_sincos_pos_embed_from_pos(
+                embed_dim=self.predictor_embed_dim // 2,
+                udata['rel_y_coords'])
+            seg_emb = torch.cat(
+                [rel_x_coord_emb, rel_y_coord_emb], dim=-1)
 
         # Add positional embeddings to tokens from context masks (only
         # keep context mask indices and sum positional and segment

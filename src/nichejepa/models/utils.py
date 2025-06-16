@@ -37,7 +37,7 @@ def get_1d_sincos_pos_embed(embed_dim: int,
         embed_dim).
     """
     sincos_pos = np.arange(n_sincos_pos, dtype=float)
-    pos_embed = _get_1d_sincos_pos_embed_from_pos(embed_dim, sincos_pos)
+    pos_embed = get_1d_sincos_pos_embed_from_pos(embed_dim, sincos_pos)
     if n_zero_pos > 0:
         pos_embed = np.concatenate(
             [np.zeros([n_zero_pos, embed_dim]), pos_embed],
@@ -106,7 +106,7 @@ def trunc_normal_(tensor: torch.Tensor,
     return _no_grad_trunc_normal_(tensor, mean, std, a, b)
 
 
-def _get_1d_sincos_pos_embed_from_pos(embed_dim: int,
+def get_1d_sincos_pos_embed_from_pos(embed_dim: int,
                                       pos: np.ndarray,
                                       ) -> np.ndarray:
     """

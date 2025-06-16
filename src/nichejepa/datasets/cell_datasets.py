@@ -127,10 +127,10 @@ class CellBaseDataset(Dataset):
         # Add special token coords
         if self.cell_pos_enc == 'coord':
             item_dict['rel_x_coords'] = torch.cat(
-                [torch.full((self.n_special_tokens,), -1.0, dtype=torch.float),
+                [torch.full((self.n_special_tokens,), float(-'inf'), dtype=torch.float),
                 item_dict['rel_x_coords']])   
             item_dict['rel_y_coords'] = torch.cat(
-                [torch.full((self.n_special_tokens,), -1.0, dtype=torch.float),
+                [torch.full((self.n_special_tokens,), float(-'inf'), dtype=torch.float),
                 item_dict['rel_y_coords']])
 
         return item_dict
@@ -216,10 +216,10 @@ class CellBaseDataset(Dataset):
             if values is not None:
                 sampled_values.extend([0.0] * (size - len(sampled_values)))
             if sampled_rel_x_coords is not None:
-                sampled_rel_x_coords.extend([0] * (
+                sampled_rel_x_coords.extend([float('-inf')] * (
                     size - len(sampled_rel_x_coords)))
             if sampled_rel_y_coords is not None:
-                sampled_rel_y_coords.extend([0] * (
+                sampled_rel_y_coords.extend([float('-inf')] * (
                     size - len(sampled_rel_y_coords)))
 
         return (
@@ -383,11 +383,11 @@ class CellGraphDataset(CellBaseDataset):
         item_dict['rel_x_coords'] = torch.where(
             item_dict['tokens'] != 0,
             item_dict['rel_x_coords'],
-            torch.tensor(-1.0, dtype=torch.float))
+            torch.tensor(float('-inf'), dtype=torch.float))
         item_dict['rel_y_coords'] = torch.where(
             item_dict['tokens'] != 0,
             item_dict['rel_y_coords'],
-            torch.tensor(-1.0, dtype=torch.float))
+            torch.tensor(float('-inf'), dtype=torch.float))
 
         # Get (sampled) gene tokens, positions, segments and values for
         # neighbor cell segments
@@ -430,11 +430,11 @@ class CellGraphDataset(CellBaseDataset):
                     masked_rel_x_coords = torch.where(
                         segment_tokens != 0,
                         segment_rel_x_coords,
-                        torch.tensor(-1.0, dtype=torch.float))
+                        torch.tensor(float('-inf'), dtype=torch.float))
                     masked_rel_y_coords = torch.where(
                         segment_tokens != 0,
                         segment_rel_x_coords,
-                        torch.tensor(-1.0, dtype=torch.float))                   
+                        torch.tensor(float('-inf'), dtype=torch.float))                   
                     item_dict['rel_x_coords'] = torch.cat(
                     [item_dict['rel_x_coords'], masked_rel_x_coords], dim=0)
                     item_dict['rel_y_coords'] = torch.cat(
@@ -475,9 +475,9 @@ class CellGraphDataset(CellBaseDataset):
                         item_dict['values'], (0, pad_len), value=0.0)
                 if self.cell_pos_enc == 'coord':
                     item_dict['rel_x_coords'] = F.pad(
-                        item_dict['rel_x_coords'], (0, pad_len), value=-1.0)
+                        item_dict['rel_x_coords'], (float('-inf'), pad_len), value=-1.0)
                     item_dict['rel_y_coords'] = F.pad(
-                        item_dict['rel_y_coords'], (0, pad_len), value=-1.0)                     
+                        item_dict['rel_y_coords'], (float('-inf'), pad_len), value=-1.0)                     
 
         # Add special tokens
         item_dict = self._add_special_seq(item=item,
