@@ -106,6 +106,12 @@ def prepare_dataset(
         columns=columns,
         output_all_columns=True)
 
+    # TODO: remove repeat interleave after it has been added to tokenization
+    dataset['rel_x_coord'] = dataset['rel_x_coord'].repeat_interleave(
+        args['data']['seq_len_cell'], dim=1)
+    dataset['rel_y_coord'] = dataset['rel_y_coord'].repeat_interleave(
+        args['data']['seq_len_cell'], dim=1)
+
     if 'precomputed_epoch_splits' in args['data'].keys():
         # Load precomputed epoch-wise splits if specified
         with open(args['data']['precomputed_epoch_splits'], 'rb') as f: 

@@ -259,12 +259,6 @@ class CellBaseDataset(Dataset):
                 item['seg_tokens'] - 104,
                 item['seg_tokens'])
 
-            # TODO: Fix repeating coordinates which is not done during tokenization
-            item['rel_x_coord'] = torch.repeat_interleave(
-                item['rel_x_coord'], self.seq_len_cell)
-            item['rel_y_coord'] = torch.repeat_interleave(
-                item['rel_y_coord'], self.seq_len_cell)
-
             # Only keep gene tokens and values in specified segment
             mask_segment = seg_tokens == segment
             segment_start_idx = torch.nonzero(
@@ -446,7 +440,6 @@ class CellGraphDataset(CellBaseDataset):
                     item_dict['rel_y_coords'] = torch.cat(
                     [item_dict['rel_y_coords'], masked_rel_y_coords], dim=0)
 
-
         if item_dict['tokens'].size(0) > (self.seq_len_cell + self.seq_len_neighborhood):
             item_dict['tokens'] = item_dict['tokens'][
                 :self.seq_len_cell + self.seq_len_neighborhood]
@@ -518,7 +511,7 @@ class CellNeighborhoodDataset(CellBaseDataset):
 
         # Retrieve Hugging Face item once
         item = self.dataset[item]
-
+        
         # Get (sampled) gene tokens, positions, segments, and values
         gene_tokens_cell, \
         values_cell, \
