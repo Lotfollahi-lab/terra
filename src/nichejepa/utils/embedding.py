@@ -407,7 +407,8 @@ def compute_count_mean_cosine_sim(
     cell_embs: torch.Tensor,
     cell_presence: torch.Tensor,
     neb_occ: torch.Tensor,
-    neb_mask: torch.Tensor
+    neb_mask: torch.Tensor,
+    return_per_cell: bool=False
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Computes the total (summed) cosine similarity and the total count of valid occurrence pairs
@@ -424,6 +425,8 @@ def compute_count_mean_cosine_sim(
         Shape: (N, num_neb_genes, max_occ, D) -- neighborhood gene occurrence embeddings.
     neb_mask : torch.Tensor
         Shape: (N, num_neb_genes, max_occ) -- binary mask indicating valid occurrences.
+    return_per_cell: bool
+        If set to True, it will return the cosine_sim(score) for each cell.
 
     Returns
     -------
@@ -456,6 +459,8 @@ def compute_count_mean_cosine_sim(
     cell_pres_exp = cell_presence.unsqueeze(-1)  # (N, num_cell_genes, 1)
     occ_sum_masked = occ_sum * cell_pres_exp
     occ_count_masked = occ_count * cell_pres_exp
+    if return_per_cell:
+        return occ_sum_masked.squeeze(1), occ_count_masked.squeeze(1), (occ_count_masked!= 0).float().squeeze(1) 
     total_cell_count = (occ_count_masked!= 0).float().sum(dim=0)       # (num_cell_genes, num_neb_genes)
 
     # Sum over all sequences.

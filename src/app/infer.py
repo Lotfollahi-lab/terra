@@ -65,7 +65,7 @@ def infer(args: dict,
           return_cosine_sim: bool=False,
           compute_cosine_with: str='neighborhood',
           return_gene_per_data: bool=False,
-
+          return_gene_marker_score: bool=False
           ) -> ad.AnnData:
     """
     Use a trained model for inference. Run forward pass on a given
@@ -109,6 +109,8 @@ def infer(args: dict,
        If set to 'cell', it will compute the cosine similarity between cells itself.
     return_gene_per_data:
         If 'True' will return gene_embedding for each gene per dataset.
+    return_gene_marker_score:
+        If 'True' will compute and return gene marker scores.
     Returns
     -----------
     adata:
@@ -325,6 +327,8 @@ def infer(args: dict,
     all_neighborhood_gene_emb_dict = {}
     all_cell_gene_emb_per_data_dict = {}
     all_neighborhood_gene_emb_per_data_dict = {}
+    all_cell_gene_marker_stats = {'score': [], 'pair_count': [], 'cell_count': []}
+    all_neb_gene_marker_stats = {'score': [], 'pair_count': [], 'cell_count': []}
 
     for itr, (udata, _, _, masks_attention) in tqdm(enumerate(loader)):
         for key in udata.keys():
@@ -496,7 +500,7 @@ def infer(args: dict,
                             all_neighborhood_gene_emb_per_data_dict[gene_id][1].add_(gene_count)
                 # Stack neighborhood gene occurrence tensors along gene dimension:
                 # Resulting shape: (N, num_neb_genes, max_occ, D) and mask: (N, num_neb_genes, max_occ)
-                if len(neighborhood_gene_ids) != 0 and return_cosine_sim:
+                if len(neighborhood_gene_ids) != 0 and (return_cosine_sim or return_gene_marker_score):
                     neb_occ_tensor = torch.stack(neb_occ_list, dim=1)
                     neb_occ_mask_tensor = torch.stack(neb_occ_mask_list, dim=1)
                 # Compute cosine similarity components using our function for multiple occurrences.
@@ -508,6 +512,27 @@ def infer(args: dict,
                         sum_cos_sim.add_(sum_cos_sim_temp)
                         pair_count.add_(pair_count_temp)
                         cell_count.add_(cell_count_temp)
+                # --- Begin: gene marker score computation ---
+                if return_gene_marker_score:
+                    # Cell marker score
+                    #sum_cos_sim, pair_count, cell_count = compute_count_mean_cosine_sim(cell_emb.unsqueeze(1), torch.ones(cell_emb.shape[0], 1), cell_embs.unsqueeze(2),cell_presence.unsqueeze(2))
+                    #sum_cos_sim, pair_count, cell_count = compute_count_mean_cosine_sim(neighborhood_emb.unsqueeze(1), torch.ones(cell_emb.shape[0], 1), neb_occ_tensor, neb_occ_mask_tensor)
+                    gene_score_cell, gene_score_pair_count, gene_score_cell_count = compute_count_mean_cosine_sim(
+                        cell_emb.unsqueeze(1), torch.ones(cell_emb.shape[0], 1), cell_embs.unsqueeze(2), cell_presence.unsqueeze(2),
+                        return_per_cell=True
+                    )
+                    all_cell_gene_marker_stats['score'].append(gene_score_cell.cpu())
+                    all_cell_gene_marker_stats['pair_count'].append(gene_score_pair_count.cpu())
+                    all_cell_gene_marker_stats['cell_count'].append(gene_score_cell_count.cpu())
+                    # Neighborhood marker score
+                    gene_score_neb, gene_score_pair_count_neb, gene_score_cell_count_neb = compute_count_mean_cosine_sim(
+                        neighborhood_emb.unsqueeze(1), torch.ones(cell_emb.shape[0], 1), neb_occ_tensor, neb_occ_mask_tensor,
+                        return_per_cell=True
+                    )
+                    all_neb_gene_marker_stats['score'].append(gene_score_neb.cpu())
+                    all_neb_gene_marker_stats['pair_count'].append(gene_score_pair_count_neb.cpu())
+                    all_neb_gene_marker_stats['cell_count'].append(gene_score_cell_count_neb.cpu())
+                # --- End: gene marker score computation ---
     # Add metadata
     adata = ad.AnnData(
         obs=pd.DataFrame({'cell_id': all_cell_ids},
@@ -584,6 +609,17 @@ def infer(args: dict,
         adata.uns['cell_gene_ids']=np.array(cell_gene_ids)
     if len(neighborhood_gene_ids) != 0:
         adata.uns['neighborhood_gene_ids']=np.array(neighborhood_gene_ids)
+    # --- Begin: store gene marker score in obsm ---
+    if return_gene_marker_score:
+        if all_cell_gene_marker_stats['score']:
+            adata.obsm['gene_marker_score_cell'] = np.array(torch.cat(all_cell_gene_marker_stats['score'], dim=0).cpu())
+            adata.obsm['gene_marker_pair_count_cell'] = np.array(torch.cat(all_cell_gene_marker_stats['pair_count'], dim=0).cpu())
+            adata.obsm['gene_marker_cell_count_cell'] = np.array(torch.cat(all_cell_gene_marker_stats['cell_count'], dim=0).cpu())
+        if all_neb_gene_marker_stats['score']:
+            adata.obsm['gene_marker_score_neb'] = np.array(torch.cat(all_neb_gene_marker_stats['score'], dim=0).cpu())
+            adata.obsm['gene_marker_pair_count_neb'] = np.array(torch.cat(all_neb_gene_marker_stats['pair_count'], dim=0).cpu())
+            adata.obsm['gene_marker_cell_count_neb'] = np.array(torch.cat(all_neb_gene_marker_stats['cell_count'], dim=0).cpu())
+    # --- End: store gene marker score in obsm ---
 
     return adata
 
