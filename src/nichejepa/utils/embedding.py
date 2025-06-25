@@ -8,6 +8,7 @@ import pandas as pd
 import scanpy as sc
 import torch
 import torch.nn.functional as F
+from nichejepa.utils.evaluation import compute_scalar_mmd, compute_emd
 
 
 def compute_sum_and_nonzero_count(
@@ -460,7 +461,7 @@ def compute_count_mean_cosine_sim(
     occ_sum_masked = occ_sum * cell_pres_exp
     occ_count_masked = occ_count * cell_pres_exp
     if return_per_cell:
-        return occ_sum_masked.squeeze(1), occ_count_masked.squeeze(1), (occ_count_masked!= 0).float().squeeze(1) 
+        return occ_sum_masked, occ_count_masked, 0
     total_cell_count = (occ_count_masked!= 0).float().sum(dim=0)       # (num_cell_genes, num_neb_genes)
 
     # Sum over all sequences.
@@ -468,6 +469,60 @@ def compute_count_mean_cosine_sim(
     total_pair_count = occ_count_masked.sum(dim=0)    # (num_cell_genes, num_neb_genes)
     
     return total_cs, total_pair_count, total_cell_count
+
+def batch_rowwise_distances(
+    A: torch.Tensor, 
+    B: torch.Tensor
+) -> (np.ndarray, np.ndarray, np.ndarray):
+    """
+    For each sample in batch:
+      - For each row i:
+         * Extract non-zero, non-NaN values from A[b, i, :] (excluding diag)
+         * Extract non-zero, non-NaN values from B[b, i, :] (excluding diag)
+         * Compute distances between these two independently filtered vectors
+      - Average over all valid rows
+    Parameters
+    ----------
+        A: First matrix
+        B: Second matrix
+    Returns:
+        Tuple of 2 arrays (mmd_distances, emd_distances) each of shape (B,)
+    """
+    A = A.numpy()
+    B = B.numpy()
+
+    assert A.shape == B.shape
+    B_sz, G, G2 = A.shape
+    assert G == G2
+
+    mmd_out = np.zeros(B_sz, dtype=float)
+    emd_out = np.zeros(B_sz, dtype=float)
+
+    for b in range(B_sz):
+        m_list, w_list = [], []
+
+        for i in range(G):
+            # Indices excluding the diagonal
+            idx = np.arange(G) != i
+
+            ai = A[b, i, idx]
+            bi = B[b, i, idx]
+
+            # Filter non-zero and non-NaN separately for A and B
+            ai_valid = ai[~np.isnan(ai) & (ai != 0)][:, None]
+            bi_valid = bi[~np.isnan(bi) & (bi != 0)][:, None]
+
+            if ai_valid.shape[0] < 20 or bi_valid.shape[0] < 20:
+                continue  # Skip if either is empty
+            #m_list.append(compute_scalar_mmd(ai_valid, bi_valid))
+            w_list.append(compute_emd(ai_valid, bi_valid))
+
+        if w_list:
+            #mmd_out[b] = float(np.mean(m_list))
+            emd_out[b] = float(np.mean(w_list))
+        else:
+            mmd_out[b] = emd_out[b] = 0.0
+    return mmd_out, emd_out
 
 
 def collect_adata_from_folder(load_folder_path: str,
