@@ -739,9 +739,7 @@ def harmonize_adata(adata: ad.AnnData,
 
 
 def tokenize_adata(adata: ad.AnnData,
-                   model_folder_path: str,
-                   gene_perturb_df: pd.DataFrame | None = None,
-                   cell_perturb_df: pd.DataFrame | None = None,                   
+                   model_folder_path: str,             
                    nproc: int = 4,
                    processing_mode: Literal['sequential',
                                             'parallel'] = 'parallel'
@@ -757,27 +755,7 @@ def tokenize_adata(adata: ad.AnnData,
         AnnData object to be tokenized.
     model_folder_path:
         Path to the folder containing the model config, token dictionary, and
-        normalization factors.
-    gene_perturb_df:
-        DataFrame with gene perturbation data, e.g.
-        ```
-        gene_perturb_df =  pd.DataFrame({
-            'ensembl_id': ['ENSG00000169194', 'ENSG00000131724'],
-            'target': ['neighborhood', 'cell'],
-            'perturbation_type': ['foldchange', 'knockout'],
-            'foldchange': [0.5, np.nan]
-        })
-        ```.
-    cell_perturb_df:
-        DataFrame with cell perturbation data, e.g.
-        ```
-        cell_perturb_df =  pd.DataFrame({
-            'selection_col': ['cell_type', 'cell_type'],
-            'selected_vals': ['epithelial', 'endothelial'],
-            'perturbation_type': ['replace', 'knockout'],
-            'replace_vals': ['endothelial', np.nan]
-        })
-        ```.        
+        normalization factors.     
     n_proc:
         Number of processes used.
     processing_mode:
@@ -800,13 +778,7 @@ def tokenize_adata(adata: ad.AnnData,
         model_config = yaml.safe_load(file)
 
     print('==================================================')
-    if not isinstance(gene_perturb_df, pd.DataFrame):
-        if gene_perturb_df is None:
-            print('STEP 2: TOKENIZING ANNDATA OBJECT...')
-        else:
-            raise ValueError('`gene_perturb_df` must be a pd.DataFrame.')
-    else:
-        print('STEP 2: TOKENIZING ANNDATA OBJECT AND APPLYING PERTURBATIONS...')
+    print('STEP 2: TOKENIZING ANNDATA OBJECT...')
     print('==================================================')
     # Tokenize adata
     if model_config['data']['tokenizer_type'] == 'cell_neighborhood':
@@ -828,9 +800,7 @@ def tokenize_adata(adata: ad.AnnData,
         count_count_norm_method=model_config['data']['count_count_norm_method'],
         norm_factor_file_path=norm_factor_file_path,
         token_dictionary_file_path=token_dictionary_file_path)
-    dataset_dict = tk._tokenize_adata(adata=adata,
-                                      gene_perturb_df=gene_perturb_df,
-                                      cell_perturb_df=cell_perturb_df)
+    dataset_dict = tk._tokenize_adata(adata=adata)
     dataset = tk._create_dataset(
         dataset_dict=dataset_dict,
         use_generator=False,
@@ -1115,6 +1085,12 @@ def embed_dataset(dataset: Dataset,
     return output_embed
 
 
+def perturb_dataset(dataset: Dataset,
+                    gene_perturb_df: pd.DataFrame,
+                    cell_perturb_df: pd.DataFrame) -> Dataset:
+    return dataset
+
+
 @torch.no_grad()
 def harmonize_tokenize_embed_pipeline(
         adata: ad.AnnData,
@@ -1195,8 +1171,7 @@ def harmonize_tokenize_embed_pipeline(
     print('====================================================================================================')  
     dataset = tokenize_adata(
         adata=adata,
-        model_folder_path=model_folder_path,
-        gene_perturb_df=gene_perturb_df,                   
+        model_folder_path=model_folder_path,             
         nproc=nproc,
         processing_mode=processing_mode)
 
