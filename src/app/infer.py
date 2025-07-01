@@ -772,8 +772,8 @@ def tokenize_adata(adata: ad.AnnData,
         DataFrame with cell perturbation data, e.g.
         ```
         cell_perturb_df =  pd.DataFrame({
-            'selection_col': ['cell_type'],
-            'selection_vals': ['epithelial', 'endothelial'],
+            'selection_col': ['cell_type', 'cell_type'],
+            'selected_vals': ['epithelial', 'endothelial'],
             'perturbation_type': ['replace', 'knockout'],
             'replace_vals': ['endothelial', np.nan]
         })
@@ -829,7 +829,8 @@ def tokenize_adata(adata: ad.AnnData,
         norm_factor_file_path=norm_factor_file_path,
         token_dictionary_file_path=token_dictionary_file_path)
     dataset_dict = tk._tokenize_adata(adata=adata,
-                                      gene_perturb_df=gene_perturb_df)
+                                      gene_perturb_df=gene_perturb_df,
+                                      cell_perturb_df=cell_perturb_df)
     dataset = tk._create_dataset(
         dataset_dict=dataset_dict,
         use_generator=False,
