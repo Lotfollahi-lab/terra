@@ -15,6 +15,7 @@ import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
 from datasets import Dataset
+from functools import partial
 from tqdm import tqdm
 from pyensembl import EnsemblRelease
 
@@ -1086,9 +1087,84 @@ def embed_dataset(dataset: Dataset,
 
 
 def perturb_dataset(dataset: Dataset,
-                    gene_perturb_df: pd.DataFrame,
-                    cell_perturb_df: pd.DataFrame) -> Dataset:
-    return dataset
+                    perturb_df: pd.DataFrame,
+                    model_folder_path: str,
+                    seq_len_cell: int = 256,
+                    nproc: int = 4,
+                    keep_in_memory: bool = False,) -> Dataset:
+
+    def _perturb_example(example,
+                        perturb_df: pd.DataFrame,
+                        seq_len_cell: int = 256) -> dict:
+        example_cell_ids = list(dict.fromkeys(example['cell_ids']))
+        
+        if not any(cell_id in perturb_df['perturbed_cell_id'].values.tolist() for cell_id in example_cell_ids):
+            # No perturbation applied
+            return example
+            
+        for idx, row in perturb_df.iterrows():
+            
+            perturbed_cell_id = row['perturbed_cell_id']
+            
+            if row['perturbation_target'] == 'cell':
+                if not perturbed_cell_id == example_cell_ids[0]:
+                    continue
+                else:
+                    #print(f"Perturb index cell with ID {example['cell_id']}:")
+                    if row['perturbed_gene_token'] == 'all':
+                        perturbed_token_idx = torch.arange(0, seq_len_cell)
+                    else:
+                        perturbed_token_idx = (example['gene_tokens'][:seq_len_cell] == row['perturbed_gene_token']).nonzero(as_tuple=True)[0]
+                    if row['perturbation_type'] == 'knockout':
+                        example['gene_tokens'][perturbed_token_idx] = 0
+                        example['gene_expr'][perturbed_token_idx] = 0.0
+                    elif row['perturbation_type'] == 'foldchange':
+                        example['gene_expr'][perturbed_token_idx] = example['gene_expr'][perturbed_token_idx] * row['foldchange']                    
+                    else:
+                        raise ValueError(f'Invalid perturbation type {row["perturbation_type"]}.')
+                                            
+            elif row['perturbation_target'] == 'neighborhood':
+                if not perturbed_cell_id in example_cell_ids[1:]:
+                    continue
+                else:
+                    #print(f"Perturb neighborhood of index cell with ID {example['cell_id']}:")
+                    if row['perturbed_gene_token'] == 'all':
+                        perturbed_token_idx = torch.arange(seq_len_cell, len(example['gene_tokens']))
+                    else:
+                        perturbed_token_idx = (example['gene_tokens'][seq_len_cell:] == row['perturbed_gene_token']).nonzero(as_tuple=True)[0]
+                    if row['perturbation_type'] == 'knockout':
+                        example['gene_tokens'][perturbed_token_idx] = 0
+                        example['gene_expr'][perturbed_token_idx] = 0.0
+                    elif row['perturbation_type'] == 'foldchange':
+                        example['gene_expr'][perturbed_token_idx] = example['gene_expr'][perturbed_token_idx] * row['foldchange']                    
+                    else:
+                        raise ValueError(f'Invalid perturbation type {row["perturbation_type"]}.')           
+            else:
+                raise ValueError(f'Invalid perturbation target {row["perturbation_target"]}.')
+        
+        # Perturbation applied
+        return example
+
+
+    # Load token dictionary
+    token_dictionary_file_path = Path(model_folder_path) / 'token_dictionary.pkl'
+    with open(token_dictionary_file_path, 'rb') as f:
+        token_dict = pickle.load(f)
+    
+    perturb_df['perturbed_gene_token'] = perturb_df['perturbed_ensembl_id'].apply(lambda x: x if x == 'all' else token_dict[x])
+
+    perturb_func = partial(
+        _perturb_example,
+        perturb_df=perturb_df,
+        seq_len_cell=seq_len_cell)
+    
+    # Apply perturbation example-wise
+    perturbed_dataset = dataset.map(
+        perturb_func,
+        num_proc=nproc,
+        keep_in_memory=keep_in_memory)    
+    
+    return perturbed_dataset
 
 
 @torch.no_grad()
