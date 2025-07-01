@@ -741,7 +741,7 @@ class CellGraphTokenizer(CellBaseTokenizer):
 
         # Add cell IDs for cell identification when applying perturbations
         adata_dict['cell_ids'] = [
-            [cell_id] for cell_id in adata.obs['cell_id'].values.tolist()]
+            [cell_id] * self.seq_len_cell for cell_id in adata.obs['cell_id'].values.tolist()]
 
         n_cells = len(adata)
 
