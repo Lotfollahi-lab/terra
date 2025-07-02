@@ -38,6 +38,9 @@ source ../nichejepa_env/bin/activate
 export MASTER_ADDR=$(scontrol show hostname $SLURM_NODELIST | head -n 1)
 export MASTER_PORT=12345 
 
+export EXPERIMENT_NAME="hst_corpus_80m"
+export RUN_NAME="gtsmall_aws_test1"
+
 echo "[+] SLURM_JOB_GPUS: $SLURM_JOB_GPUS"
 echo "[+] CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 echo "[+] SLURM_LOCALID: $SLURM_LOCALID"
