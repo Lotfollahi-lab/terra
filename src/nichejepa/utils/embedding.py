@@ -8,6 +8,7 @@ import pandas as pd
 import scanpy as sc
 import torch
 import torch.nn.functional as F
+from nichejepa.utils.evaluation import compute_scalar_mmd, compute_emd
 
 
 def compute_sum_and_nonzero_count(
@@ -407,7 +408,8 @@ def compute_count_mean_cosine_sim(
     cell_embs: torch.Tensor,
     cell_presence: torch.Tensor,
     neb_occ: torch.Tensor,
-    neb_mask: torch.Tensor
+    neb_mask: torch.Tensor,
+    return_per_cell: bool=False
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Computes the total (summed) cosine similarity and the total count of valid occurrence pairs
@@ -424,13 +426,19 @@ def compute_count_mean_cosine_sim(
         Shape: (N, num_neb_genes, max_occ, D) -- neighborhood gene occurrence embeddings.
     neb_mask : torch.Tensor
         Shape: (N, num_neb_genes, max_occ) -- binary mask indicating valid occurrences.
+    return_per_cell: bool
+        If set to True, it will return the cosine_sim(score) for each cell.
 
     Returns
     -------
     total_cs : torch.Tensor
         Shape: (num_cell_genes, num_neb_genes) -- total sum of cosine similarities.
-    total_count : torch.Tensor
+    total_pair_count : torch.Tensor
         Shape: (num_cell_genes, num_neb_genes) -- total count of valid occurrence pairs.
+    total_cell_count : torch.Tensor
+        Shape: (num_cell_genes, num_neb_genes) -- total count of valid cell-neighborhood counts.
+        The difference between total_pair_count and total_cell_count is that total_cell_count returns just number of
+        occurrences in different cells, while total_pair_count returns the number of valid pairs.
     """
     # Normalize embeddings along the last dimension.
     cell_embs = F.normalize(cell_embs, p=2, dim=-1)
@@ -452,12 +460,69 @@ def compute_count_mean_cosine_sim(
     cell_pres_exp = cell_presence.unsqueeze(-1)  # (N, num_cell_genes, 1)
     occ_sum_masked = occ_sum * cell_pres_exp
     occ_count_masked = occ_count * cell_pres_exp
-    
+    if return_per_cell:
+        return occ_sum_masked, occ_count_masked, (occ_count_masked!= 0).float()
+    total_cell_count = (occ_count_masked!= 0).float().sum(dim=0)       # (num_cell_genes, num_neb_genes)
+
     # Sum over all sequences.
     total_cs = occ_sum_masked.sum(dim=0)       # (num_cell_genes, num_neb_genes)
-    total_count = occ_count_masked.sum(dim=0)    # (num_cell_genes, num_neb_genes)
+    total_pair_count = occ_count_masked.sum(dim=0)    # (num_cell_genes, num_neb_genes)
     
-    return total_cs, total_count
+    return total_cs, total_pair_count, total_cell_count
+
+def batch_rowwise_distances(
+    A: torch.Tensor, 
+    B: torch.Tensor
+) -> (np.ndarray, np.ndarray, np.ndarray):
+    """
+    For each sample in batch:
+      - For each row i:
+         * Extract non-zero, non-NaN values from A[b, i, :] (excluding diag)
+         * Extract non-zero, non-NaN values from B[b, i, :] (excluding diag)
+         * Compute distances between these two independently filtered vectors
+      - Average over all valid rows
+    Parameters
+    ----------
+        A: First matrix
+        B: Second matrix
+    Returns:
+        Tuple of 2 arrays (mmd_distances, emd_distances) each of shape (B,)
+    """
+    A = A.numpy()
+    B = B.numpy()
+    assert A.shape == B.shape
+    B_sz, G, G2 = A.shape
+    assert G == G2
+
+    mmd_out = np.zeros(B_sz, dtype=float)
+    emd_out = np.zeros(B_sz, dtype=float)
+
+    for b in range(B_sz):
+        m_list, w_list = [], []
+
+        for i in range(G):
+            # Indices excluding the diagonal
+            idx = np.arange(G) != i
+
+            ai = A[b, i, idx]
+            bi = B[b, i, idx]
+
+            # Filter non-zero and non-NaN separately for A and B
+            ai_valid = ai[~np.isnan(ai) & (ai != 0)][:, None]
+            bi_valid = bi[~np.isnan(bi) & (bi != 0)][:, None]
+
+            if ai_valid.shape[0] < 20 or bi_valid.shape[0] < 20:
+                continue  # Skip if either is empty
+            #m_list.append(compute_scalar_mmd(ai_valid, bi_valid))
+            w_list.append(compute_emd(ai_valid, bi_valid))
+
+        if w_list:
+            #mmd_out[b] = float(np.mean(m_list))
+            emd_out[b] = float(np.mean(w_list))
+        else:
+            mmd_out[b] = emd_out[b] = 0.0
+    return mmd_out, emd_out
+
 
 def collect_adata_from_folder(load_folder_path: str,
                               cell_ids: list,

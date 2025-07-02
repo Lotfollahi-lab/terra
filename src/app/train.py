@@ -146,6 +146,7 @@ def train(args: dict,
           resume_preempt: bool=False,
           save_folder_path: str | None = None,
           LOCAL_RANK: int | None = None,
+          WORLD_RANK: int | None = None,
           ):
     """
     Train model.
@@ -609,7 +610,7 @@ def train(args: dict,
             #                grad_stats.max))
 
             #log_stats()
-            if LOCAL_RANK == 0:
+            if WORLD_RANK == 0:
                 wandb.log({
                     "loss": float(loss),
                     "lr": float(_new_lr),

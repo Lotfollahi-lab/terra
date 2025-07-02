@@ -15,6 +15,7 @@ import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
 from datasets import Dataset
+from functools import partial
 from tqdm import tqdm
 from pyensembl import EnsemblRelease
 
@@ -30,7 +31,8 @@ from nichejepa.utils.embedding import (create_binary_selection_mask,
                                        collect_adata_from_folder,
                                        retrieve_gene_emb,
                                        compute_count_mean_cosine_sim,
-                                       compute_sum_and_nonzero_count)
+                                       compute_sum_and_nonzero_count,
+                                       batch_rowwise_distances)
 from nichejepa.utils.logging import CSVLogger
 
 
@@ -63,9 +65,10 @@ def infer(args: dict,
           top_k: int | None = None,
           return_gene: bool=True,
           return_cosine_sim: bool=False,
-          compute_cosine_with: str='neighborhood',
+          compute_cosine_with_list:  list[str] = [],
           return_gene_per_data: bool=False,
-
+          return_gene_marker_score: bool=False,
+          returen_distance: bool=False,
           ) -> ad.AnnData:
     """
     Use a trained model for inference. Run forward pass on a given
@@ -104,11 +107,17 @@ def infer(args: dict,
         If 'True' will return gene_embedding.
     return_cosine_sim: 
         If 'True' will compute and return cosine_sim matrix.
-    compute_cosine_with:
-       If set to 'neighborhood', it will compute the cosine similarity between each cell and its neighborhood. 
-       If set to 'cell', it will compute the cosine similarity between cells itself.
+    compute_cosine_with_list:
+       A list that defines the items with which we want to compute cosine similarity.
+       it could have value of 'cell' or/and 'neighborhood'.
     return_gene_per_data:
         If 'True' will return gene_embedding for each gene per dataset.
+    return_gene_marker_score:
+        If 'True' will compute and return gene marker scores.
+    returen_distance:
+        If 'True' will compute and return distance between cosine sim of cell_neb 
+        and cell_cell matrix.
+
     Returns
     -----------
     adata:
@@ -331,6 +340,11 @@ def infer(args: dict,
     all_neighborhood_gene_emb_dict = {}
     all_cell_gene_emb_per_data_dict = {}
     all_neighborhood_gene_emb_per_data_dict = {}
+    all_cell_gene_marker_stats = {'score': [], 'pair_count': [], 'cell_count': []}
+    all_neb_gene_marker_stats = {'score': [], 'pair_count': [], 'cell_count': []}
+    cos_sim_dict = {}
+    emd_list = []
+
 
     for itr, (udata, _, _, masks_attention) in tqdm(enumerate(loader)):
         for key in udata.keys():
@@ -472,48 +486,99 @@ def infer(args: dict,
                             all_cell_gene_emb_per_data_dict[gene_id][0].add_(gene_sum)
                             all_cell_gene_emb_per_data_dict[gene_id][1].add_(gene_count)
                 # Process neighborhood genes (multiple occurrences: compute cosine per occurrence)
-                emb = n_emb
-                for j, gene_id in enumerate(neighborhood_gene_ids):
-                    gene_occ, occ_mask, gene_presence_local = retrieve_gene_emb(
-                        ns_tokens=ns_tokens,
-                        seq_len_cell=seq_len_cell,
-                        gene_type=compute_cosine_with,
-                        gene_id=gene_id,
-                        emb=emb,
-                        aggregate_multiple=True,
-                        max_occ=MAX_OCC
-                    )
-                    neb_occ_list.append(gene_occ)       # gene_occ: (N, max_occ, D)
-                    neb_occ_mask_list.append(occ_mask)    # occ_mask: (N, max_occ)
-                    if return_gene:
-                        if itr == 0:
-                            #all_neighborhood_gene_emb_dict[gene_id] = [gene_occ * occ_mask.unsqueeze(-1)]
-                            all_neighborhood_gene_emb_dict[gene_id] = [compute_mean_unmasked_emb(gene_occ,occ_mask)]
+                neb_occ_dict = {}
+                for compute_cosine_with in compute_cosine_with_list:
+                    if compute_cosine_with=='neighborhood':
+                        emb = n_emb
+                    neb_occ_list = []
+                    neb_occ_mask_list = []
+                    for j, gene_id in enumerate(neighborhood_gene_ids):
+                        gene_occ, occ_mask, gene_presence_local = retrieve_gene_emb(
+                            ns_tokens=ns_tokens,
+                            seq_len_cell=seq_len_cell,
+                            gene_type=compute_cosine_with,
+                            gene_id=gene_id,
+                            emb=emb,
+                            aggregate_multiple=True,
+                            max_occ=MAX_OCC
+                        )
+                        neb_occ_list.append(gene_occ)       # gene_occ: (N, max_occ, D)
+                        neb_occ_mask_list.append(occ_mask)    # occ_mask: (N, max_occ)
+                        if return_gene and compute_cosine_with=='neighborhood':
+                            if itr == 0:
+                                #all_neighborhood_gene_emb_dict[gene_id] = [gene_occ * occ_mask.unsqueeze(-1)]
+                                all_neighborhood_gene_emb_dict[gene_id] = [compute_mean_unmasked_emb(gene_occ,occ_mask)]
 
-                        else:
-                            #all_neighborhood_gene_emb_dict[gene_id].append(gene_occ * occ_mask.unsqueeze(-1))
-                            all_neighborhood_gene_emb_dict[gene_id].append(compute_mean_unmasked_emb(gene_occ,occ_mask))
-                    if return_gene_per_data:
-                        gene_sum, gene_count = compute_sum_and_nonzero_count(compute_mean_unmasked_emb(gene_occ,occ_mask))
-                        if itr == 0:
-                            all_neighborhood_gene_emb_per_data_dict[gene_id] = (gene_sum, gene_count)
-                        else:
-                            all_neighborhood_gene_emb_per_data_dict[gene_id][0].add_(gene_sum)
-                            all_neighborhood_gene_emb_per_data_dict[gene_id][1].add_(gene_count)
-                # Stack neighborhood gene occurrence tensors along gene dimension:
-                # Resulting shape: (N, num_neb_genes, max_occ, D) and mask: (N, num_neb_genes, max_occ)
-                if len(neighborhood_gene_ids) != 0 and return_cosine_sim:
-                    neb_occ_tensor = torch.stack(neb_occ_list, dim=1)
-                    neb_occ_mask_tensor = torch.stack(neb_occ_mask_list, dim=1)
+                            else:
+                                #all_neighborhood_gene_emb_dict[gene_id].append(gene_occ * occ_mask.unsqueeze(-1))
+                                all_neighborhood_gene_emb_dict[gene_id].append(compute_mean_unmasked_emb(gene_occ,occ_mask))
+                        if return_gene_per_data and compute_cosine_with=='neighborhood':
+                            gene_sum, gene_count = compute_sum_and_nonzero_count(compute_mean_unmasked_emb(gene_occ,occ_mask))
+                            if itr == 0:
+                                all_neighborhood_gene_emb_per_data_dict[gene_id] = (gene_sum, gene_count)
+                            else:
+                                all_neighborhood_gene_emb_per_data_dict[gene_id][0].add_(gene_sum)
+                                all_neighborhood_gene_emb_per_data_dict[gene_id][1].add_(gene_count)
+                    # Stack neighborhood gene occurrence tensors along gene dimension:
+                    # Resulting shape: (N, num_neb_genes, max_occ, D) and mask: (N, num_neb_genes, max_occ)
+                    if len(neighborhood_gene_ids) != 0 and (return_cosine_sim or return_gene_marker_score or returen_distance):
+                        neb_occ_dict[compute_cosine_with] = (torch.stack(neb_occ_list, dim=1), torch.stack(neb_occ_mask_list, dim=1))
+
                 # Compute cosine similarity components using our function for multiple occurrences.
                 if return_cosine_sim:
-                    if itr == 0:
-                        sum_cos_sim, pair_count, cell_count = compute_count_mean_cosine_sim(cell_embs, cell_presence, neb_occ_tensor, neb_occ_mask_tensor)
-                    else:
-                        sum_cos_sim_temp, pair_count_temp, cell_count_temp = compute_count_mean_cosine_sim(cell_embs, cell_presence, neb_occ_tensor, neb_occ_mask_tensor)
-                        sum_cos_sim.add_(sum_cos_sim_temp)
-                        pair_count.add_(pair_count_temp)
-                        cell_count.add_(cell_count_temp)
+                    for compute_cosine_with in compute_cosine_with_list:
+                        
+                        if itr == 0:
+                            cos_sim_dict[compute_cosine_with] = compute_count_mean_cosine_sim(cell_embs,
+                                                                                               cell_presence, 
+                                                                                               neb_occ_dict[compute_cosine_with][0], 
+                                                                                               neb_occ_dict[compute_cosine_with][1])
+                        else:
+                            sum_cos_sim_temp, pair_count_temp, cell_count_temp = compute_count_mean_cosine_sim(cell_embs,
+                                                                                                                cell_presence,                                
+                                                                                                                neb_occ_dict[compute_cosine_with][0],  
+                                                                                                                neb_occ_dict[compute_cosine_with][1])
+                            sum_cos_sim, pair_count, cell_count = cos_sim_dict[compute_cosine_with]
+                            cos_sim_dict[compute_cosine_with] = (
+                                sum_cos_sim + sum_cos_sim_temp,
+                                pair_count + pair_count_temp,
+                                cell_count + cell_count_temp
+                            )
+                if returen_distance:
+                    cos_sim_temp = []
+                    for compute_cosine_with in compute_cosine_with_list:
+                        sum_cos_sim, pair_count, _ = compute_count_mean_cosine_sim(
+                        cell_embs, 
+                        cell_presence,
+                        neb_occ_dict[compute_cosine_with][0], 
+                        neb_occ_dict[compute_cosine_with][1],
+                        return_per_cell=True
+                        )
+                        cos_sim_temp.append(sum_cos_sim/pair_count)
+                    _, emd_out = batch_rowwise_distances(cos_sim_temp[0], cos_sim_temp[1])
+                    emd_list.append(emd_out)
+
+                # --- Begin: gene marker score computation ---
+                if return_gene_marker_score:
+                    # Cell marker score
+                    #sum_cos_sim, pair_count, cell_count = compute_count_mean_cosine_sim(cell_emb.unsqueeze(1), torch.ones(cell_emb.shape[0], 1), cell_embs.unsqueeze(2),cell_presence.unsqueeze(2))
+                    #sum_cos_sim, pair_count, cell_count = compute_count_mean_cosine_sim(neighborhood_emb.unsqueeze(1), torch.ones(cell_emb.shape[0], 1), neb_occ_tensor, neb_occ_mask_tensor)
+                    gene_score_cell, gene_score_pair_count, gene_score_cell_count = compute_count_mean_cosine_sim(
+                        cell_emb.unsqueeze(1), torch.ones(cell_emb.shape[0], 1), cell_embs.unsqueeze(2), cell_presence.unsqueeze(2),
+                        return_per_cell=True
+                    )
+                    all_cell_gene_marker_stats['score'].append(gene_score_cell.squeeze(1).cpu())
+                    all_cell_gene_marker_stats['pair_count'].append(gene_score_pair_count.squeeze(1).cpu())
+                    all_cell_gene_marker_stats['cell_count'].append(gene_score_cell_count.squeeze(1).cpu())
+                    # Neighborhood marker score
+                    gene_score_neb, gene_score_pair_count_neb, gene_score_cell_count_neb = compute_count_mean_cosine_sim(
+                        neighborhood_emb.unsqueeze(1), torch.ones(neighborhood_emb.shape[0], 1),  neb_occ_dict['neighborhood'][0],
+                        neb_occ_dict['neighborhood'][1], return_per_cell=True
+                    )
+                    all_neb_gene_marker_stats['score'].append(gene_score_neb.squeeze(1).cpu())
+                    all_neb_gene_marker_stats['pair_count'].append(gene_score_pair_count_neb.squeeze(1).cpu())
+                    all_neb_gene_marker_stats['cell_count'].append(gene_score_cell_count_neb.squeeze(1).cpu())
+                # --- End: gene marker score computation ---
     # Add metadata
     adata = ad.AnnData(
         obs=pd.DataFrame({'cell_id': all_cell_ids},
@@ -554,10 +619,11 @@ def infer(args: dict,
                 all_neighborhood_gene_emb_dict[gene_id],
                 dim=0).cpu())
     if return_cosine_sim:
-        adata.uns['sum_cos_sim'] = sum_cos_sim.numpy()
-        adata.uns['cos_sim_pair_count'] = pair_count.numpy()
-        adata.uns['cos_sim_cell_count'] = cell_count.numpy()
-        adata.uns['cos_sim'] = adata.uns['sum_cos_sim'] / adata.uns['cos_sim_pair_count']
+        for compute_cosine_with in compute_cosine_with_list:
+            adata.uns[f"sum_cos_sim_{compute_cosine_with}"] = cos_sim_dict[compute_cosine_with][0].numpy()
+            adata.uns[f"pair_count_{compute_cosine_with}"] = cos_sim_dict[compute_cosine_with][1].numpy()
+            adata.uns[f"cell_count_{compute_cosine_with}"] = cos_sim_dict[compute_cosine_with][2].numpy()
+            adata.uns[f"cos_sim_{compute_cosine_with}"] = adata.uns[f"sum_cos_sim_{compute_cosine_with}"] / adata.uns[f"pair_count_{compute_cosine_with}"]
     if return_gene_per_data:
         # Concatenate features for cell and neighborhood gene embeddings
         cell_gene_emb_features = []
@@ -590,11 +656,26 @@ def infer(args: dict,
         adata.uns['cell_gene_ids']=np.array(cell_gene_ids)
     if len(neighborhood_gene_ids) != 0:
         adata.uns['neighborhood_gene_ids']=np.array(neighborhood_gene_ids)
+    # --- Begin: store gene marker score in obsm ---
+    if return_gene_marker_score:
+        if all_cell_gene_marker_stats['score']:
+            adata.obsm['gene_marker_score_cell'] = np.array(torch.cat(all_cell_gene_marker_stats['score'], dim=0).cpu())
+            adata.obsm['gene_marker_pair_count_cell'] = np.array(torch.cat(all_cell_gene_marker_stats['pair_count'], dim=0).cpu())
+            adata.obsm['gene_marker_cell_count_cell'] = np.array(torch.cat(all_cell_gene_marker_stats['cell_count'], dim=0).cpu())
+        if all_neb_gene_marker_stats['score']:
+            adata.obsm['gene_marker_score_neb'] = np.array(torch.cat(all_neb_gene_marker_stats['score'], dim=0).cpu())
+            adata.obsm['gene_marker_pair_count_neb'] = np.array(torch.cat(all_neb_gene_marker_stats['pair_count'], dim=0).cpu())
+            adata.obsm['gene_marker_cell_count_neb'] = np.array(torch.cat(all_neb_gene_marker_stats['cell_count'], dim=0).cpu())
+    # --- End: store gene marker score in obsm ---
+    if returen_distance:
+       adata.obsm['emd_dist'] = np.concatenate(emd_list, axis=0)
 
     return adata
 
 
-def harmonize_adata(adata: ad.AnnData) -> ad.AnnData:
+def harmonize_adata(adata: ad.AnnData,
+                    ensembl_release: int=110, # 111
+                    ) -> ad.AnnData:
     """
     Harmonize an AnnData object prior to tokenization.
 
@@ -611,9 +692,9 @@ def harmonize_adata(adata: ad.AnnData) -> ad.AnnData:
     print('==================================================')
     print('STEP 1: ADDING ENSEMBL IDS...')
     print('==================================================')
-    print('Adding ensembl IDs from release 111...')
+    print(f'Adding ensembl IDs from release {ensembl_release}...')
     # Extract ensembl IDs of protein coding and miRNA mouse genes
-    ensembl = EnsemblRelease(release=111, species='human')
+    ensembl = EnsemblRelease(release=ensembl_release, species='human')
     ensembl.download()
     ensembl.index()
     all_genes = ensembl.genes()
@@ -665,8 +746,7 @@ def harmonize_adata(adata: ad.AnnData) -> ad.AnnData:
 
 
 def tokenize_adata(adata: ad.AnnData,
-                   model_folder_path: str,
-                   perturb_df: pd.DataFrame | None = None,                   
+                   model_folder_path: str,             
                    nproc: int = 4,
                    processing_mode: Literal['sequential',
                                             'parallel'] = 'parallel'
@@ -682,17 +762,7 @@ def tokenize_adata(adata: ad.AnnData,
         AnnData object to be tokenized.
     model_folder_path:
         Path to the folder containing the model config, token dictionary, and
-        normalization factors.
-    perturb_df:
-        DataFrame with perturbation data, e.g.
-        ```
-        perturb_df =  pd.DataFrame({
-            'ensembl_id': ['ENSG00000169194', 'ENSG00000131724'],
-            'target': ['neighborhood', 'cell'],
-            'perturbation_type': ['foldchange', 'knockout'],
-            'foldchange': [0.5, np.nan]
-        })
-        ```.
+        normalization factors.     
     n_proc:
         Number of processes used.
     processing_mode:
@@ -715,13 +785,7 @@ def tokenize_adata(adata: ad.AnnData,
         model_config = yaml.safe_load(file)
 
     print('==================================================')
-    if not isinstance(perturb_df, pd.DataFrame):
-        if perturb_df is None:
-            print('STEP 2: TOKENIZING ANNDATA OBJECT...')
-        else:
-            raise ValueError('`perturb_df` must be a pd.DataFrame.')
-    else:
-        print('STEP 2: TOKENIZING ANNDATA OBJECT AND APPLYING PERTURBATIONS...')
+    print('STEP 2: TOKENIZING ANNDATA OBJECT...')
     print('==================================================')
     # Tokenize adata
     if model_config['data']['tokenizer_type'] == 'cell_neighborhood':
@@ -743,13 +807,19 @@ def tokenize_adata(adata: ad.AnnData,
         count_count_norm_method=model_config['data']['count_count_norm_method'],
         norm_factor_file_path=norm_factor_file_path,
         token_dictionary_file_path=token_dictionary_file_path)
-    dataset_dict = tk._tokenize_adata(adata=adata,
-                                      perturb_df=perturb_df)
+    dataset_dict = tk._tokenize_adata(adata=adata)
     dataset = tk._create_dataset(
         dataset_dict=dataset_dict,
         use_generator=False,
         cache_directory_path=None,
         keep_in_memory=False)
+
+    columns = list(dataset.features.keys())
+    columns.remove("cell_id")
+    dataset.set_format(
+        type="torch",
+        columns=columns,
+        output_all_columns=True)
     
     return dataset
 
@@ -840,6 +910,8 @@ def embed_dataset(dataset: Dataset,
     # Initialize encoder, predictor, and target encoder
     target_encoder, _ = init_model(
         gt_type=model_config['meta']['gt_type'],
+        count_encoding=model_config['meta']['count_encoding'],
+        n_value_bins=model_config['meta']['n_value_bins'],
         device=device,
         vocab_size=vocab_size,
         seq_len=seq_len,
@@ -851,8 +923,15 @@ def embed_dataset(dataset: Dataset,
         pred_emb_dim=model_config['meta']['pred_emb_dim'],
         pred_depth=model_config['meta']['pred_depth'],
         num_heads=model_config['meta']['num_heads'],
+        mlp_ratio=model_config['meta']['mlp_ratio'],
         use_flash_attention=model_config['meta']['use_flash_attention'],
+        api_version=model_config['meta']['api_version'],
         sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'])
+
+    if model_config['meta']['api_version'] != 'v3':
+        return_layer_emb_fn = target_encoder.return_layer_emb
+    else:
+        return_layer_emb_fn = target_encoder.backbone.return_layer_emb
 
     # Create mask collator
     mask_collator = BlockMaskCollator(
@@ -870,7 +949,6 @@ def embed_dataset(dataset: Dataset,
         vocab_size=vocab_size,
         seq_len_cell=model_config['data']['seq_len_cell'],
         seq_len_neighborhood=model_config['data']['seq_len_neighborhood'],
-        max_special_tokens=max_special_tokens,
         tokenizer_type=model_config['data']['tokenizer_type'],
         gt_type=model_config['meta']['gt_type'],
         cell_pos_enc=model_config['meta']['cell_pos_enc'],
@@ -901,7 +979,8 @@ def embed_dataset(dataset: Dataset,
             predictor=None,
             target_encoder=target_encoder,
             opt=None,
-            scaler=None)
+            scaler=None,
+            is_training=False)
     target_encoder.eval()
 
     # Retrieve embeddings
@@ -911,37 +990,29 @@ def embed_dataset(dataset: Dataset,
     all_neighborhood_gene_emb_dict = {}
 
     for itr, (udata, _, _, masks_attention) in tqdm(enumerate(loader)):
-        # Load gene tokens and segmentation label to the specified device
-        tokens = udata[0].to(device, non_blocking=True)
-        segments = udata[1].to(device, non_blocking=True)
-        if model_config['meta']['gt_type'] == 'rank':
-            positions = udata[2].to(device, non_blocking=True)
-        elif model_config['meta']['gt_type'] == 'counts':
-            counts = udata[2].to(device, non_blocking=True)
+        for key in udata.keys():
+            if key != 'cell_id':
+                udata[key] = udata[key].to(device, non_blocking=True)
         masks_attention = masks_attention.to(device, non_blocking=True)
 
         # Aggregate gene embeddings into cell and neighborhood embeddings
-        ns_tokens = tokens[:, n_special_tokens:]
+        ns_tokens = udata['tokens'][:, n_special_tokens:]
 
         # Retrieve gene embeddings from different layers
         with torch.cuda.amp.autocast(
             dtype=torch.bfloat16,
             enabled=model_config['meta']['use_bfloat16']):
 
-            if model_config['meta']['gt_type'] == 'rank':
-                emb = target_encoder.return_layer_emb(
-                    layer=emb_layer,
-                    positions=positions,
-                    segments=segments,
-                    tokens=tokens,
-                    masks_attention=masks_attention).cpu()
-            elif model_config['meta']['gt_type'] == 'counts':
-                emb = target_encoder.return_layer_emb(
-                    layer=emb_layer,
-                    tokens=tokens,
-                    segments=segments,
-                    counts=counts,
-                    masks_attention=masks_attention).cpu()
+            c_emb = return_layer_emb_fn(
+                layer=emb_layer,
+                udata=udata,
+                masks_attention=masks_attention,
+                pad_neighborhood=True).cpu()
+            n_emb = return_layer_emb_fn(
+                layer=emb_layer,
+                udata=udata,
+                masks_attention=masks_attention,
+                pad_neighborhood=False).cpu()
         
         # Create mask for index cell genes
         cell_mask = create_binary_selection_mask(
@@ -969,8 +1040,8 @@ def embed_dataset(dataset: Dataset,
                 n_segments=model_config['data']['n_segments']).cpu()
 
         # Average gene embeddings into cell and neighborhood embedding                    
-        cell_emb = compute_mean_unmasked_emb(emb, cell_mask)
-        neighborhood_emb = compute_mean_unmasked_emb(emb, neighborhood_mask)
+        cell_emb = compute_mean_unmasked_emb(c_emb, cell_mask)
+        neighborhood_emb = compute_mean_unmasked_emb(n_emb, neighborhood_mask)
 
         all_cell_emb_list.append(cell_emb)
         all_neighborhood_emb_list.append(neighborhood_emb)
@@ -978,24 +1049,22 @@ def embed_dataset(dataset: Dataset,
         # Store cell and neighborhood gene embeddings
         for gene_id in cell_gene_ids:
             gene_emb = retrieve_gene_emb(
-                tokens=tokens,
-                emb=emb,
+                ns_tokens=ns_tokens,
+                emb=c_emb,
                 gene_id=gene_id,
                 gene_type="cell",
-                seq_len_cell=seq_len_cell,
-                n_special_tokens=n_special_tokens)
+                seq_len_cell=seq_len_cell)
             if itr == 0:
                 all_cell_gene_emb_dict[gene_id] = [gene_emb]
             else:
                 all_cell_gene_emb_dict[gene_id].append(gene_emb)
         for gene_id in neighborhood_gene_ids:
             gene_emb = retrieve_gene_emb(
-                tokens=tokens,
-                emb=emb,
+                ns_tokens=ns_tokens,
+                emb=n_emb,
                 gene_id=gene_id,
                 gene_type="neighborhood",
-                seq_len_cell=seq_len_cell,
-                n_special_tokens=n_special_tokens)
+                seq_len_cell=seq_len_cell)
             if itr == 0:
                 all_neighborhood_gene_emb_dict[gene_id] = [gene_emb]
             else:
@@ -1024,11 +1093,92 @@ def embed_dataset(dataset: Dataset,
     return output_embed
 
 
+def perturb_dataset(dataset: Dataset,
+                    perturb_df: pd.DataFrame,
+                    model_folder_path: str,
+                    seq_len_cell: int = 256,
+                    nproc: int = 4,
+                    keep_in_memory: bool = False,) -> Dataset:
+
+    def _perturb_example(example,
+                        perturb_df: pd.DataFrame,
+                        seq_len_cell: int = 256) -> dict:
+        example_cell_ids = list(dict.fromkeys(example['cell_ids']))
+        
+        if not any(cell_id in perturb_df['perturbed_cell_id'].values.tolist() for cell_id in example_cell_ids):
+            # No perturbation applied
+            return example
+            
+        for idx, row in perturb_df.iterrows():
+            
+            perturbed_cell_id = row['perturbed_cell_id']
+            
+            if row['perturbation_target'] == 'cell':
+                if not perturbed_cell_id == example_cell_ids[0]:
+                    continue
+                else:
+                    #print(f"Perturb index cell with ID {example['cell_id']}:")
+                    if row['perturbed_gene_token'] == 'all':
+                        perturbed_token_idx = torch.arange(0, seq_len_cell)
+                    else:
+                        perturbed_token_idx = (example['gene_tokens'][:seq_len_cell] == row['perturbed_gene_token']).nonzero(as_tuple=True)[0]
+                    if row['perturbation_type'] == 'knockout':
+                        example['gene_tokens'][perturbed_token_idx] = 0
+                        example['gene_expr'][perturbed_token_idx] = 0.0
+                    elif row['perturbation_type'] == 'foldchange':
+                        example['gene_expr'][perturbed_token_idx] = example['gene_expr'][perturbed_token_idx] * row['foldchange']                    
+                    else:
+                        raise ValueError(f'Invalid perturbation type {row["perturbation_type"]}.')
+                                            
+            elif row['perturbation_target'] == 'neighborhood':
+                if not perturbed_cell_id in example_cell_ids[1:]:
+                    continue
+                else:
+                    #print(f"Perturb neighborhood of index cell with ID {example['cell_id']}:")
+                    if row['perturbed_gene_token'] == 'all':
+                        perturbed_token_idx = torch.arange(seq_len_cell, len(example['gene_tokens']))
+                    else:
+                        perturbed_token_idx = (example['gene_tokens'][seq_len_cell:] == row['perturbed_gene_token']).nonzero(as_tuple=True)[0]
+                    if row['perturbation_type'] == 'knockout':
+                        example['gene_tokens'][perturbed_token_idx] = 0
+                        example['gene_expr'][perturbed_token_idx] = 0.0
+                    elif row['perturbation_type'] == 'foldchange':
+                        example['gene_expr'][perturbed_token_idx] = example['gene_expr'][perturbed_token_idx] * row['foldchange']                    
+                    else:
+                        raise ValueError(f'Invalid perturbation type {row["perturbation_type"]}.')           
+            else:
+                raise ValueError(f'Invalid perturbation target {row["perturbation_target"]}.')
+        
+        # Perturbation applied
+        return example
+
+
+    # Load token dictionary
+    token_dictionary_file_path = Path(model_folder_path) / 'token_dictionary.pkl'
+    with open(token_dictionary_file_path, 'rb') as f:
+        token_dict = pickle.load(f)
+    
+    perturb_df['perturbed_gene_token'] = perturb_df['perturbed_ensembl_id'].apply(lambda x: x if x == 'all' else token_dict[x])
+
+    perturb_func = partial(
+        _perturb_example,
+        perturb_df=perturb_df,
+        seq_len_cell=seq_len_cell)
+    
+    # Apply perturbation example-wise
+    perturbed_dataset = dataset.map(
+        perturb_func,
+        num_proc=nproc,
+        keep_in_memory=keep_in_memory)    
+    
+    return perturbed_dataset
+
+
 @torch.no_grad()
 def harmonize_tokenize_embed_pipeline(
         adata: ad.AnnData,
         model_folder_path: str,
-        perturb_df: pd.DataFrame | None = None,               
+        gene_perturb_df: pd.DataFrame | None = None,               
         nproc: int = 4,
         processing_mode: Literal['sequential',
                                  'parallel'] = 'parallel',
@@ -1053,10 +1203,10 @@ def harmonize_tokenize_embed_pipeline(
     model_folder_path:
         Path to the folder containing the model config, token dictionary, and
         normalization factors.
-    perturb_df:
+    gene_perturb_df:
         DataFrame with perturbation data, e.g.
         ```
-        perturb_df =  pd.DataFrame({
+        gene_perturb_df =  pd.DataFrame({
             'ensembl_id': ['ENSG00000169194', 'ENSG00000131724'],
             'target': ['neighborhood', 'cell'],
             'perturbation_type': ['foldchange', 'knockout'],
@@ -1104,8 +1254,7 @@ def harmonize_tokenize_embed_pipeline(
     print('====================================================================================================')  
     dataset = tokenize_adata(
         adata=adata,
-        model_folder_path=model_folder_path,
-        perturb_df=perturb_df,                   
+        model_folder_path=model_folder_path,             
         nproc=nproc,
         processing_mode=processing_mode)
 

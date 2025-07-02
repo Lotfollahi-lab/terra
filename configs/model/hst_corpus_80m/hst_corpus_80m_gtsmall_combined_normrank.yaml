@@ -24,7 +24,6 @@ meta:
   gt_type: 'combined' # 'rank', 'counts'
   count_encoding: 'mlp' # 'value_bins', 'mlp'
   n_value_bins: 100
-  cell_pos_enc: 'coord'
   enc_depth: 12
   enc_emb_dim: 384
   pred_depth: 12
@@ -45,7 +44,7 @@ mask:
   context_mask_size: 200 # this doesn't have meaning in block masking.
   target_mask_size: 50 # this doesn't have meaning in block masking.
   per_block_mask_ratio: 0.6 # 0.5, 0.6, 0.7, 0.8
-  sample_segments: False
+  sample_segments: True
 optimization:
   warmup: 3 # 3
   epochs: 10 # 30

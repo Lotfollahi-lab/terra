@@ -155,7 +155,8 @@ def main():
           train_dataset,
           test_dataset,
           save_folder_path=folder_path,
-          LOCAL_RANK=LOCAL_RANK)
+          LOCAL_RANK=LOCAL_RANK,
+          WORLD_RANK=WORLD_RANK)
 
 
 if __name__ == "__main__":
