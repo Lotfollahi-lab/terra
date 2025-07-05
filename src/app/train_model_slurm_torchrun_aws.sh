@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=nemo-test               # sets the name of the job shown in the job queue (via `squeue`)
-#SBATCH --nodes=4                        # requests 2 nodes (each will typically run one process)
+#SBATCH --job-name=nemo-test             # sets the name of the job shown in the job queue (via `squeue`)
+#SBATCH --nodes=1                        # requests 2 nodes (each will typically run one process)
 #SBATCH --ntasks-per-node=1              # runs one task (process) per node and aligns with DDP across nodes
 #SBATCH --gpus-per-node=1                # requests 1 GPU on each node
 #SBATCH --cpus-per-task=1                # allocates 1 CPU cores per task
-#SBATCH --mem=16G                        # allocates 16 GB of RAM memory per node
+#SBATCH --mem=128G                        # allocates 16 GB of RAM memory per node
 #SBATCH --partition=g6e-8xlarge          # specifies the partition (queue) to submit the job to (use `sinfo` to see avaialble)
-#SBATCH --time=00:10:00                  # sets the max wall time (runtime) for the job (HH:MM:SS)
+#SBATCH --time=01:0:00                   # sets the max wall time (runtime) for the job (HH:MM:SS)
 #SBATCH --output=logs/%j.out             # stdout file (%j is replaced with the job ID)
 #SBATCH --error=logs/%j.err              # stder file (for logging errors)
 #SBATCH --chdir=/home/ubuntu/nichejepa-reproducibility        # set working directory
@@ -39,7 +39,7 @@ export MASTER_ADDR=$(scontrol show hostname $SLURM_NODELIST | head -n 1)
 export MASTER_PORT=12345 
 
 export EXPERIMENT_NAME="hst_corpus_80m"
-export RUN_NAME="gtsmall_aws_test1"
+export RUN_NAME="gtsmall_aws_test12"
 
 echo "[+] SLURM_JOB_GPUS: $SLURM_JOB_GPUS"
 echo "[+] CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"

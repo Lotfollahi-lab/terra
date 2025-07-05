@@ -43,7 +43,7 @@ from nichejepa.masks.block_masking  import BlockMaskCollator
 from nichejepa.masks.cell_masking import CellMaskCollator
 from nichejepa.masks.utils import apply_masks
 from nichejepa.models.utils import repeat_interleave_batch
-from nichejepa.utils.distributed import init_distributed
+from nichejepa.utils.distributed import init_distributed, AllReduce
 from nichejepa.utils.logging import (AverageMeter,
                             CSVLogger,
                             gpu_timer,
@@ -101,6 +101,7 @@ def train_step(udata,
             elif loss_fn_type == 'l1':
                 loss += torch.mean(torch.abs(zi - hi)**loss_exp) / loss_exp
         loss /= len(masks_pred)
+        loss = AllReduce.apply(loss)
         return loss
 
     # Step 1: forward pass
@@ -111,11 +112,11 @@ def train_step(udata,
 
     # Step 2: backward pass and step
     _enc_norm, _pred_norm = 0., 0.
-    if use_bfloat16:
-        scaler.scale(loss).backward()
-        scaler.unscale_(optimizer)
-    else:
-        loss.backward()
+    #if use_bfloat16:
+    #    scaler.scale(loss).backward()
+    #    scaler.unscale_(optimizer)
+    #else:
+    loss.backward()
     if warmup >= 1: # iteration-based clipping didn't always work # TODO
         if (epoch >= warmup) and (clip_grad is not None):
             _enc_norm = torch.nn.utils.clip_grad_norm_(
@@ -127,11 +128,11 @@ def train_step(udata,
             encoder.parameters(), clip_grad)
         _pred_norm = torch.nn.utils.clip_grad_norm_(
             predictor.parameters(), clip_grad)
-    if use_bfloat16:
-        scaler.step(optimizer)
-        scaler.update()
-    else:
-        optimizer.step()
+    #if use_bfloat16:
+    #    scaler.step(optimizer)
+    #    scaler.update()
+    #else:
+    optimizer.step()
 
     optimizer.zero_grad()
 
