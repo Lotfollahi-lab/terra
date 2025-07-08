@@ -12,24 +12,27 @@ from nichejepa.datasets.dataloaders import init_dataloader_and_sampler
 from nichejepa.models.modules import ClassificationModel
 
 
+_GLOBAL_SEED = 0
+
+
 @torch.no_grad()
 def finetune(args: dict,
              dataset: CellBaseDataset,
-                load_folder_path: str,
-                dataset_ids: list | None = None,
-                obs_cols: list | None = None,
-                uns_cols: list | None = None,
-                emb_layers: list | None = None,
-                cell_gene_ids: list = [],
-                neighborhood_gene_ids: list = [],
-                agg_type: Literal['cls',
-                                    'avg',
-                                    'weighted_avg'] = 'avg',
-                masked_tokens: list[int] | None = None,
-                agg_excluded_tokens: list[int] | None = None,
-                feature_norm: bool = False,
-                use_peft: bool = False,
-                ) -> ad.AnnData:
+             load_folder_path: str,
+             dataset_ids: list | None = None,
+             obs_cols: list | None = None,
+             uns_cols: list | None = None,
+             emb_layers: list | None = None,
+             cell_gene_ids: list = [],
+             neighborhood_gene_ids: list = [],
+             agg_type: Literal['cls',
+                                 'avg',
+                                 'weighted_avg'] = 'avg',
+             masked_tokens: list[int] | None = None,
+             agg_excluded_tokens: list[int] | None = None,
+             feature_norm: bool = False,
+             use_peft: bool = False,
+             ) -> ad.AnnData:
     """
     Use a trained model for inference. Run forward pass on a given
     dataset andbreturn cell, neighborhood and (optionally) gene
@@ -68,33 +71,58 @@ def finetune(args: dict,
     return_cosine_sim: 
         If 'True' will compute and return cosine_sim matrix.
     compute_cosine_with:
-       If set to 'neighborhood', it will compute the cosine similarity between each cell and its neighborhood. 
+       If set to 'neighborhood', it will compute the cosine similarity between
+       each cell and its neighborhood. 
        If set to 'cell', it will compute the cosine similarity between cells itself.
     Returns
     -----------
     adata:
         An AnnData object with the stored embeddings and labels.
     """
+    # Set random seeds
+    np.random.seed(_GLOBAL_SEED)
+    torch.manual_seed(_GLOBAL_SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(_GLOBAL_SEED)
+    torch.backends.cudnn.deterministic = False # set to True for reproducibility
+    torch.backends.cudnn.benchmark = True # set to False for reproducibility    
+    
     # Set device
     if not torch.cuda.is_available():
         device = torch.device('cpu')
-    else:
+    elif LOCAL_RANK is not None:
+        device = torch.device(f"cuda:{LOCAL_RANK}")
+    elif LOCAL_RANK is None:
         device = torch.device('cuda:0')
         torch.cuda.set_device(device)
 
     # Load params from config file
+    dataset_name = args['data']['dataset_name']
+    token_dict_folder_path = args['data']['token_dict_folder_path']
+    tokenizer_type = args['data']['tokenizer_type']
+    seq_len_cell = args['data']['seq_len_cell']
+    seq_len_neighborhood = args['data']['seq_len_neighborhood']
+    n_segments = args['data']['n_segments']
+    sampling_strategy = args['data']['sampling_strategy']
+    batch_size = args['data']['batch_size']
+    num_workers = args['data']['num_workers']
+    pin_memory = args['data']['pin_memory']
+
+    if 'sep_gene_tokens_neb' in args['data'].keys():
+        sep_gene_tokens_neb = args['data']['sep_gene_tokens_neb']
+    else:
+        sep_gene_tokens_neb = False
+
     add_cls = args['meta']['add_cls']
     gt_type = args['meta']['gt_type']
-    if 'count_encoding' in args['meta'].keys():
-        count_encoding = args['meta']['count_encoding']
+    count_encoding = args['meta']['count_encoding']
+    n_value_bins = args['meta']['n_value_bins']
+    if 'cell_pos_enc' in args['meta'].keys():
+        cell_pos_enc = args['meta']['cell_pos_enc']
     else:
-        count_encoding = 'value_bins'
-    if 'n_value_bins' in args['meta'].keys():
-        n_value_bins = args['meta']['n_value_bins']
-    else:
-        n_value_bins = 100
-    enc_depth = args['meta']['enc_depth']
-    enc_emb_dim = args['meta']['enc_emb_dim']
+        cell_pos_enc = 'segment'
+    enc_depth = args['meta']['enc_depth'] 
+    enc_emb_dim = args['meta']['enc_emb_dim']    
     pred_depth = args['meta']['pred_depth']
     pred_emb_dim = args['meta']['pred_emb_dim']
     if 'num_heads' in args['meta'].keys():
@@ -105,46 +133,54 @@ def finetune(args: dict,
         mlp_ratio = args['meta']['mlp_ratio']
     else:
         mlp_ratio = 4.0
+    if 'loss_fn_type' in args['meta'].keys():
+        loss_fn_type = args['meta']['loss_fn_type']
+    else:
+        loss_fn_type = 'l1'
     special_tokens = args['meta']['special_tokens']
     use_bfloat16 = args['meta']['use_bfloat16']
     use_flash_attention = args['meta']['use_flash_attention']
-    
-    if 'api_version' in args['meta'].keys():
-        api_version = args['meta']['api_version']
-    else:
-        api_version = 'v3'
-
-    dataset_name = args['data']['dataset_name']
-    token_dict_folder_path = args['data']['token_dict_folder_path']
-    raw_data_folder_path = args['data']['raw_data_folder_path']
-    batch_size = args['data']['batch_size']
-    pin_memory = args['data']['pin_memory']
-    num_workers = args['data']['num_workers']
-    tokenizer_type = args['data']['tokenizer_type']
-    seq_len_cell = args['data']['seq_len_cell']
-    seq_len_neighborhood = args['data']['seq_len_neighborhood']
-    n_segments = args['data']['n_segments']
-    MAX_OCC = args['data']['n_segments'] -1 
+    use_layer_norm = args['meta']['use_layer_norm']
 
     n_contexts = args['mask']['n_contexts']
     n_targets = args['mask']['n_targets']
     block_masking = args['mask']['block_masking']
-    if 'cell_masking' in args['mask'].keys():
-        cell_masking = args['mask']['cell_masking']
-    else:
-        cell_masking = False
+    cell_masking = args['mask']['cell_masking']
     context_mask_size = args['mask']['context_mask_size']
     target_mask_size = args['mask']['target_mask_size']
     per_block_mask_ratio = args['mask']['per_block_mask_ratio']
-    if 'targets_list' in args['mask'].keys():
-        targets_list = args['mask']['targets_list']
+    if 'sample_segments' in args['mask'].keys():
+        sample_segments = args['mask']['sample_segments']
     else:
-        targets_list = []
+        sample_segments = False
+    targets_list = args['mask']['targets_list']
 
+    warmup = args['optimization']['warmup']
+    num_epochs = args['optimization']['epochs']
+    if isinstance(args['optimization']['ema'], list):
+       ema = args['optimization']['ema']
+    else:
+       ema = [args['optimization']['ema'], 1]
+    start_lr = args['optimization']['start_lr']
+    lr = args['optimization']['lr']
+    final_lr = args['optimization']['final_lr']
+    wd = float(args['optimization']['weight_decay'])
+    final_wd = float(args['optimization']['final_weight_decay'])
+    ipe_scale = args['optimization']['ipe_scale'] # scheduler scale factor
+    clip_grad = args['optimization']['clip_grad']
+
+    log_freq = args['state']['log_freq']
+    checkpoint_freq = args['state']['checkpoint_freq']
+    checkpoint_freq_iter = args['state']['checkpoint_freq_iter']
+    write_tag = args['state']['write_tag']
+    load_model = args['state']['load_checkpoint'] or resume_preempt
     r_file = args['state']['read_checkpoint']
-    tag = args['state']['write_tag']
+    load_folder_path = args['state']['folder_path']
 
-    if args['data']['precomputed_n_nonzero_tokens']:
+    if 'precomputed_epoch_n_nonzero_tokens' in args['data'].keys():
+        with open(args['data']['precomputed_epoch_n_nonzero_tokens'], "rb") as f: 
+            epoch_n_nonzero_tokens = pickle.load(f)
+    elif args['data']['precomputed_n_nonzero_tokens']:
         with open(args['data']['precomputed_n_nonzero_tokens'], "rb") as f: 
             n_nonzero_tokens = pickle.load(f)
     else:
@@ -154,8 +190,10 @@ def finetune(args: dict,
     with open(token_dict_folder_path, 'rb') as file:
         token_dict = pickle.load(file)
     vocab_size = len(token_dict)
-    n_special_values = sum(1 for key in token_dict if "spv" in key)
-    max_special_tokens = sum(1 for key in token_dict if "cls" in key) + sum(
+    n_special_values = sum(
+        1 for key in token_dict if "spv" in key)
+    max_special_tokens = sum(
+        1 for key in token_dict if "cls" in key) + sum(
         1 for key in token_dict if "spt" in key)
 
     # Define tokenizer-specific params
@@ -171,29 +209,33 @@ def finetune(args: dict,
     n_special_tokens = len(special_tokens)
     seq_len = seq_len_cell + seq_len_neighborhood + n_special_tokens
 
+    # Initialize torch distributed backend
+    world_size, rank = init_distributed()
+    logger.info(f'Initialized (rank/world-size) {rank}/{world_size}.')
+    if rank > 0:
+        logger.setLevel(logging.ERROR)
+
     # Specify last emb layer if not defined
     if emb_layers is None:
         emb_layers = [enc_depth]
 
     # Set the folder for saving extracted features
-    save_folder = f"{load_folder_path}/extracted_features"
-    feature_path = f"{save_folder}/"
+    save_folder_path = f"{load_folder_path}/extracted_features"
+    feature_path = f"{save_folder_path}/"
 
-    os.makedirs(save_folder, exist_ok=True)
-    dump = os.path.join(save_folder, f'params.yaml')
-    #with open(dump, 'w') as f:
-    #    yaml.dump(args, f)
+    os.makedirs(save_folder_path, exist_ok=True)
 
     # Define checkpointing path
-    latest_path = os.path.join(load_folder_path, f'{tag}-latest.pth.tar')
-    load_path = (os.path.join(load_folder_path, r_file) if r_file is not None 
-        else latest_path)
+    latest_path = os.path.join(save_folder_path, f'{write_tag}-latest.pth.tar')
+    load_path = os.path.join(
+        load_folder_path, r_file) if r_file is not None else latest_path
 
     # Initialize target encoder
     target_encoder, _ = init_model(
         gt_type=gt_type,
         count_encoding=count_encoding,
         n_value_bins=n_value_bins,
+        cell_pos_enc=cell_pos_enc,
         device=device,
         vocab_size=vocab_size,
         seq_len=seq_len,
@@ -208,14 +250,14 @@ def finetune(args: dict,
         mlp_ratio=mlp_ratio,
         use_flash_attention=use_flash_attention,
         use_layer_norm=use_layer_norm,
-        api_version=api_version)
+        sep_gene_tokens_neb=sep_gene_tokens_neb)
 
     if api_version != 'v3':
         return_layer_emb_fn = target_encoder.return_layer_emb
     else:
         return_layer_emb_fn = target_encoder.backbone.return_layer_emb
 
-    # Initialize train and test datasets, dataloaders and samplers
+    # Initialize dataset, dataloader and sampler
     cell_dataset = init_cell_dataset(
         dataset=dataset,
         vocab_size=vocab_size,
@@ -223,23 +265,32 @@ def finetune(args: dict,
         seq_len_neighborhood=seq_len_neighborhood,
         tokenizer_type=tokenizer_type,
         gt_type=gt_type,
+        cell_pos_enc=cell_pos_enc,
         special_tokens=special_tokens,
         sampling_strategy=None,
-        n_nonzero_tokens_list=n_nonzero_tokens)
+        n_nonzero_tokens_list=n_nonzero_tokens,
+        include_cell_id=False,
+        sep_gene_tokens_neb=sep_gene_tokens_neb)
 
-    loader = init_dataloader_and_sampler(
+    loader, sampler = init_dataloader_and_sampler(
         cell_dataset=cell_dataset,
         batch_size=batch_size,
-        distributed=False,
-        world_size=1,
-        rank=0,
+        distributed=True,
+        world_size=world_size,
+        rank=rank,
         collate_fn=mask_collator,
         pin_memory=pin_memory,
         num_workers=num_workers,
         drop_last=False,
         persistent_workers=False)
-    
-    _, _, target_encoder, _, _, start_epoch_ iter_number = load_checkpoint(
+
+    target_encoder = DistributedDataParallel(
+        target_encoder,
+        device_ids=[LOCAL_RANK],
+        output_device=LOCAL_RANK)
+
+    # Load checkpoint    
+    _, _, target_encoder, _, _, start_epoch, iter_number = load_checkpoint(
             device=device,
             r_path=load_path,
             encoder=None,
@@ -251,10 +302,12 @@ def finetune(args: dict,
     
     # Apply PEFT
     if use_peft:
-        target_encoder = apply_peft(target_encoder, peft_method='lora', rank=8)
+        target_encoder = apply_peft(
+            target_encoder, peft_method='lora', rank=8)
 
     # Convert target encoder to a classification model
-    model = ClassificationModel(target_encoder, gt_type, num_classes)
+    model = ClassificationModel(
+        target_encoder, gt_type, num_classes)
     model.to(device)
 
     # Loss function
@@ -264,7 +317,18 @@ def finetune(args: dict,
     optimizer = torch.optim.Adam(
         filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
 
-    def save_checkpoint():
+    def save_checkpoint(epoch):
+            save_dict = {'target_encoder': target_encoder.state_dict(),
+                         'opt': optimizer.state_dict(),
+                         'epoch': epoch,
+                         'zero_epoch_tracking': True,
+                         'loss': loss_meter.avg,
+                         'batch_size': batch_size,
+                         'world_size': world_size,
+                         'lr': lr}
+            if rank == 0:
+                torch.save(save_dict, latest_path)
+                torch.save(save_dict, save_path.format(epoch=f'ft_{epoch}'))
 
     # Run training loop
     for epoch in range(num_epochs):
@@ -273,34 +337,22 @@ def finetune(args: dict,
         correct_preds = 0
         total_preds = 0
 
-        for itr, (udata, _, _, masks_attention) in tqdm(enumerate(loader)):
+        # Update distributed dataloader epoch
+        sampler.set_epoch(epoch)
 
+        for itr, (udata, _, _, masks_attention) in tqdm(enumerate(loader)):
+            for key in udata.keys():
+                udata[key] = udata[key].to(device, non_blocking=True)
+            masks_attention = masks_attention.to(device, non_blocking=True)
+            
             optimizer.zero_grad()
 
-            tokens = udata[0].to(device, non_blocking=True)
-            segments = udata[1].to(device, non_blocking=True)
-            if gt_type == 'rank':
-                positions = udata[2].to(device, non_blocking=True)
-            elif gt_type == 'counts':
-                counts = udata[2].to(device, non_blocking=True)
-            masks_attention = masks_attention.to(device, non_blocking=True)
-
-            # Get class logits
-            if gt_type == 'rank':
-                logits = model(
-                    tokens=tokens,
-                    segments=segments,
-                    positions=positions,
-                    masks_attention=masks_attention)
-            elif gt_type == 'counts':
-                logits = model(
-                    tokens=tokens,
-                    segments=segments,
-                    counts=counts,
-                    masks_attention=masks_attention)
-
             # Forward pass
-            loss = criterion(logits, labels)  # Compute the loss
+            logits = model(
+                udata=udata, masks_attention=masks_attention)
+
+            # Compute the loss
+            loss = criterion(logits, labels)
 
             # Backward pass and optimization
             loss.backward()
@@ -316,7 +368,6 @@ def finetune(args: dict,
         accuracy = correct_preds / total_preds
         print(f"Epoch [{epoch+1}/{epochs}], Loss: {epoch_loss:.4f}, Accuracy: {accuracy:.4f}")
 
-    #log_stats()
     if LOCAL_RANK == 0:
         wandb.log(
             {"loss": loss,
@@ -326,10 +377,7 @@ def finetune(args: dict,
             'global_norm_pred': grad_stats_pred.global_norm,
             })
     assert not np.isnan(loss), 'loss is nan'
-    if itr % checkpoint_freq_iter == 0:
-        logger.info(f'Saving checkpoint at epoch {epoch} iteration {itr}')
-        save_checkpoint(epoch, itr // checkpoint_freq_iter)
 
-# Save checkpoint
-logger.info('avg. loss %.3f' % loss_meter.avg)
-save_checkpoint(epoch)
+    # Save checkpoint
+    logger.info('avg. loss %.3f' % loss_meter.avg)
+    save_checkpoint(epoch)

@@ -247,7 +247,8 @@ class ClassificationModel(nn.Module):
             )
         else:
             # Using a simple linear layer
-            self.classification_head = nn.Linear(base_model.output_dim, num_classes)
+            self.classification_head = nn.Linear(
+                base_model.output_dim, num_classes)
 
     def forward(self, **base_model_kwargs) -> torch.Tensor:
         """
@@ -259,10 +260,7 @@ class ClassificationModel(nn.Module):
         Returns:
         - Tensor: The class logits.
         """
-        if self.gt_type == 'rank':
-            h, _, _ = self.base_model(**base_model_kwargs)
-        elif self.gt_type == 'counts':
-            h, _ = self.base_model(**base_model_kwargs)
+        h, _= self.base_model(**base_model_kwargs)
 
         # Normalize over feature dim
         h = F.layer_norm(h, (h.size(-1),))

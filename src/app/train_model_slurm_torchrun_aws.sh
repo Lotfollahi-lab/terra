@@ -54,7 +54,6 @@ echo "    --nnodes $SLURM_NNODES"
 echo "    --node_rank $SLURM_NODEID"
 echo "    --rdzv_endpoint $MASTER_ADDR:$MASTER_PORT"
 echo "    --rdzv_backend c10d"
-echo "    --node_rank=$SLURM_NODEID"
 
 # Run with torchrun
 srun torchrun \

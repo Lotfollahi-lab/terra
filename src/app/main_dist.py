@@ -82,7 +82,7 @@ def main():
     # Retrieve distributed environment variables
     WORLD_RANK, LOCAL_RANK, WORLD_SIZE = get_distributed_info()
 
-    # Argument parsing (as in your original script)
+    # Argument parsing
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
