@@ -62,9 +62,9 @@ state:
   log_freq: 20
   checkpoint_freq: 1
   write_tag: nichejepa
-  read_timestamp: ''
-  folder_path: null
-  load_checkpoint: False # true, false
-  read_checkpoint: null # null, 'nichejepa-ep5.pth.tar'
+  read_timestamp: '07072025_131151_043'
+  folder_path: '/nfs/team361/sb75/nichejepa-reproducibility/artifacts/hst_corpus_80m'
+  load_checkpoint: True # True, False
+  read_checkpoint: 'nichejepa-ep3.pth.tar' # null, 'nichejepa-ep5.pth.tar'
   checkpoint_freq_iter: 5000
 
