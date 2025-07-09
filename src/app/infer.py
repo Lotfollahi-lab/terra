@@ -453,15 +453,9 @@ def infer(args: dict,
                     if itr == 0 or itr == len(loader)-1:
                         cell_embs = torch.zeros((emb.shape[0], len(cell_gene_ids), emb.shape[-1]), device=emb.device)
                         cell_presence = torch.zeros((emb.shape[0], len(cell_gene_ids)), device=emb.device)
-                        neb_occ_list  = []
-                        neb_occ_mask_list = []
-                        neb_presence = torch.zeros((emb.shape[0], len(neighborhood_gene_ids)), device=emb.device)
                     else:
                         cell_embs.zero_()
                         cell_presence.zero_()
-                        neb_occ_list = []
-                        neb_occ_mask_list = []
-                        neb_presence.zero_()
                 rows = torch.arange(emb.shape[0], device=emb.device)
                 for j, gene_id in enumerate(cell_gene_ids):
                     gene_presence_local, gene_indices = retrieve_gene_emb(
@@ -1457,15 +1451,9 @@ def gene_embed_dataset(dataset: Dataset,
             if itr == 0 or itr == len(loader)-1:
                 cell_embs = torch.zeros((emb.shape[0], len(cell_gene_ids), emb.shape[-1]), device=emb.device)
                 cell_presence = torch.zeros((emb.shape[0], len(cell_gene_ids)), device=emb.device)
-                neb_occ_list  = []
-                neb_occ_mask_list = []
-                neb_presence = torch.zeros((emb.shape[0], len(neighborhood_gene_ids)), device=emb.device)
             else:
                 cell_embs.zero_()
                 cell_presence.zero_()
-                neb_occ_list = []
-                neb_occ_mask_list = []
-                neb_presence.zero_()
             rows = torch.arange(emb.shape[0], device=emb.device)
             for j, gene_id in enumerate(cell_gene_ids):
                 gene_presence_local, gene_indices = retrieve_gene_emb(
@@ -1615,8 +1603,8 @@ def get_gene_embed(
         dataset=dataset,
         model_folder_path=model_folder_path,
         emb_layer=emb_layer,
-        cell_gene_ids=cell_gene_ids,
-        neighborhood_gene_ids=neighborhood_gene_ids,
+        cell_gene_ids=list(set(cell_gene_ids)),
+        neighborhood_gene_ids=list(set(neighborhood_gene_ids)),
         batch_size=batch_size,
         pin_memory=pin_memory,
         num_workers=num_workers,
@@ -1682,8 +1670,8 @@ def get_average_gene_embed(
         dataset=dataset,
         model_folder_path=model_folder_path,
         emb_layer=emb_layer,
-        cell_gene_ids=cell_gene_ids,
-        neighborhood_gene_ids=neighborhood_gene_ids,
+        cell_gene_ids=list(set(cell_gene_ids)),
+        neighborhood_gene_ids=list(set(neighborhood_gene_ids)),
         batch_size=batch_size,
         pin_memory=pin_memory,
         num_workers=num_workers,
@@ -1753,6 +1741,11 @@ def get_spatial_score(
     cos_sim_dict : dict
         Dictionary containing cosine similarity statistics as numpy arrays.
     """
+    # Check for duplicates
+    if len(cell_gene_ensembl_id) != len(set(cell_gene_ensembl_id)):
+        raise ValueError("The list cell_gene_ensembl_id has duplication.")
+    if len(neighborhood_gene_ensembl_id) != len(set(neighborhood_gene_ensembl_id)):
+        raise ValueError("The list neighborhood_gene_ensembl_id has duplication.")
     # Load token dictionary
     token_dictionary_file_path = Path(model_folder_path) / 'token_dictionary.pkl'
     with open(token_dictionary_file_path, 'rb') as f:
@@ -1813,6 +1806,11 @@ def get_emd_distance(
     emd_array : np.ndarray
         Numpy array of EMD distances.
     """
+    # Check for duplicates
+    if len(cell_gene_ensembl_id) != len(set(cell_gene_ensembl_id)):
+        raise ValueError("The list cell_gene_ensembl_id has duplication.")
+    if len(neighborhood_gene_ensembl_id) != len(set(neighborhood_gene_ensembl_id)):
+        raise ValueError("The list neighborhood_gene_ensembl_id has duplication.")
     # Load token dictionary
     token_dictionary_file_path = Path(model_folder_path) / 'token_dictionary.pkl'
     with open(token_dictionary_file_path, 'rb') as f:
