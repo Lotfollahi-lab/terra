@@ -19,7 +19,7 @@ artifact:
   ARTIFACT_LOCATION: "/lustre/scratch126/cellgen/lotfollahi/sb75/nichejepa-reproducibility/artifacts/hst_corpus_80m"  # Path to store the artifacts.
   WAREHOUSE_PATH: "/lustre/scratch126/cellgen/lotfollahi/sb75/nichejepa-reproducibility/artifacts/hst_corpus_80m"
   EXPERIMENT_NAME: "nichejepa_pretraining"  # Name of the experiment.
-  RUN_NAME: "hst_corpus_80m_gtbase_nosampling_counts_09995ema_10ep"  # Name of the run.
+  RUN_NAME: "hst_corpus_80m_gtbase_nosampling_counts_09995ema_10ep_2"  # Name of the run.
 
 runner_script:
   RUNNER_SCRIPT: "/nfs/team361/sb75/nichejepa/src/app/runner.sh"  # Path to the runner script.
