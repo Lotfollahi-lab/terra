@@ -62,6 +62,10 @@ test = [
     "pytest",
     "coverage",
 ]
+eval = [
+    "cellphonedb",
+    "omnipath"
+]
 
 [tool.coverage.run]
 source = ["niche-jepa"]
