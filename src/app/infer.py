@@ -453,15 +453,9 @@ def infer(args: dict,
                     if itr == 0 or itr == len(loader)-1:
                         cell_embs = torch.zeros((emb.shape[0], len(cell_gene_ids), emb.shape[-1]), device=emb.device)
                         cell_presence = torch.zeros((emb.shape[0], len(cell_gene_ids)), device=emb.device)
-                        neb_occ_list  = []
-                        neb_occ_mask_list = []
-                        neb_presence = torch.zeros((emb.shape[0], len(neighborhood_gene_ids)), device=emb.device)
                     else:
                         cell_embs.zero_()
                         cell_presence.zero_()
-                        neb_occ_list = []
-                        neb_occ_mask_list = []
-                        neb_presence.zero_()
                 rows = torch.arange(emb.shape[0], device=emb.device)
                 for j, gene_id in enumerate(cell_gene_ids):
                     gene_presence_local, gene_indices = retrieve_gene_emb(
@@ -1457,15 +1451,9 @@ def gene_embed_dataset(dataset: Dataset,
             if itr == 0 or itr == len(loader)-1:
                 cell_embs = torch.zeros((emb.shape[0], len(cell_gene_ids), emb.shape[-1]), device=emb.device)
                 cell_presence = torch.zeros((emb.shape[0], len(cell_gene_ids)), device=emb.device)
-                neb_occ_list  = []
-                neb_occ_mask_list = []
-                neb_presence = torch.zeros((emb.shape[0], len(neighborhood_gene_ids)), device=emb.device)
             else:
                 cell_embs.zero_()
                 cell_presence.zero_()
-                neb_occ_list = []
-                neb_occ_mask_list = []
-                neb_presence.zero_()
             rows = torch.arange(emb.shape[0], device=emb.device)
             for j, gene_id in enumerate(cell_gene_ids):
                 gene_presence_local, gene_indices = retrieve_gene_emb(
