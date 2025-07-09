@@ -1603,8 +1603,8 @@ def get_gene_embed(
         dataset=dataset,
         model_folder_path=model_folder_path,
         emb_layer=emb_layer,
-        cell_gene_ids=cell_gene_ids,
-        neighborhood_gene_ids=neighborhood_gene_ids,
+        cell_gene_ids=list(set(cell_gene_ids)),
+        neighborhood_gene_ids=list(set(neighborhood_gene_ids)),
         batch_size=batch_size,
         pin_memory=pin_memory,
         num_workers=num_workers,
@@ -1670,8 +1670,8 @@ def get_average_gene_embed(
         dataset=dataset,
         model_folder_path=model_folder_path,
         emb_layer=emb_layer,
-        cell_gene_ids=cell_gene_ids,
-        neighborhood_gene_ids=neighborhood_gene_ids,
+        cell_gene_ids=list(set(cell_gene_ids)),
+        neighborhood_gene_ids=list(set(neighborhood_gene_ids)),
         batch_size=batch_size,
         pin_memory=pin_memory,
         num_workers=num_workers,
@@ -1741,6 +1741,11 @@ def get_spatial_score(
     cos_sim_dict : dict
         Dictionary containing cosine similarity statistics as numpy arrays.
     """
+    # Check for duplicates
+    if len(cell_gene_ensembl_id) != len(set(cell_gene_ensembl_id)):
+        raise ValueError("The list cell_gene_ensembl_id has duplication.")
+    if len(neighborhood_gene_ensembl_id) != len(set(neighborhood_gene_ensembl_id)):
+        raise ValueError("The list neighborhood_gene_ensembl_id has duplication.")
     # Load token dictionary
     token_dictionary_file_path = Path(model_folder_path) / 'token_dictionary.pkl'
     with open(token_dictionary_file_path, 'rb') as f:
@@ -1801,6 +1806,11 @@ def get_emd_distance(
     emd_array : np.ndarray
         Numpy array of EMD distances.
     """
+    # Check for duplicates
+    if len(cell_gene_ensembl_id) != len(set(cell_gene_ensembl_id)):
+        raise ValueError("The list cell_gene_ensembl_id has duplication.")
+    if len(neighborhood_gene_ensembl_id) != len(set(neighborhood_gene_ensembl_id)):
+        raise ValueError("The list neighborhood_gene_ensembl_id has duplication.")
     # Load token dictionary
     token_dictionary_file_path = Path(model_folder_path) / 'token_dictionary.pkl'
     with open(token_dictionary_file_path, 'rb') as f:
