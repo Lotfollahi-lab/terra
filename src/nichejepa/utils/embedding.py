@@ -496,6 +496,7 @@ def batch_rowwise_distances(
 
     mmd_out = np.zeros(B_sz, dtype=float)
     emd_out = np.zeros(B_sz, dtype=float)
+    emd_matrix = np.zeros((B_sz, G), dtype=float)
 
     for b in range(B_sz):
         m_list, w_list = [], []
@@ -511,17 +512,20 @@ def batch_rowwise_distances(
             ai_valid = ai[~np.isnan(ai) & (ai != 0)][:, None]
             bi_valid = bi[~np.isnan(bi) & (bi != 0)][:, None]
 
-            if ai_valid.shape[0] < 20 or bi_valid.shape[0] < 20:
+            if ai_valid.shape[0] < 1 or bi_valid.shape[0] < 1:
+                emd_matrix[b, i] = 0.0
                 continue  # Skip if either is empty
             #m_list.append(compute_scalar_mmd(ai_valid, bi_valid))
-            w_list.append(compute_emd(ai_valid, bi_valid))
+            emd_val = compute_emd(ai_valid, bi_valid)
+            emd_matrix[b, i] = emd_val
+            w_list.append(emd_val)
 
         if w_list:
             #mmd_out[b] = float(np.mean(m_list))
             emd_out[b] = float(np.mean(w_list))
         else:
             mmd_out[b] = emd_out[b] = 0.0
-    return mmd_out, emd_out
+    return mmd_out, emd_out, emd_matrix
 
 
 def collect_adata_from_folder(load_folder_path: str,

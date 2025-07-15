@@ -1419,6 +1419,7 @@ def gene_embed_dataset(dataset: Dataset,
     all_neighborhood_gene_emb_per_data_dict = {}
     cos_sim_dict = {}
     emd_list = []
+    emd_matrix_list = []
     MAX_OCC = model_config['data']['n_segments'] -1 
 
 
@@ -1546,8 +1547,9 @@ def gene_embed_dataset(dataset: Dataset,
                     return_per_cell=True
                     )
                     cos_sim_temp.append(sum_cos_sim/pair_count)
-                _, emd_out = batch_rowwise_distances(cos_sim_temp[0], cos_sim_temp[1])
+                _, emd_out, emd_matrix = batch_rowwise_distances(cos_sim_temp[0], cos_sim_temp[1])
                 emd_list.append(emd_out)
+                emd_matrix_list.append(emd_matrix)
     # last layer
     if return_gene:
         return all_cell_gene_emb_dict, all_neighborhood_gene_emb_dict
@@ -1556,7 +1558,7 @@ def gene_embed_dataset(dataset: Dataset,
     if return_cosine_sim:
         return cos_sim_dict
     if returen_distance:
-        return emd_list
+        return emd_list, emd_matrix_list
 
 @torch.no_grad()
 def get_gene_embed(
@@ -1701,12 +1703,21 @@ def get_average_gene_embed(
 
     output_average_gene_embed = {}        
 
-        # Concatenate all features, sums, and counts into single numpy arrays
-    output_average_gene_embed['cell_gene_emb_average_per_data'] = np.concatenate(cell_gene_emb_features, axis=0)
-    output_average_gene_embed['cell_gene_emb_counts_per_data'] = np.concatenate(cell_gene_emb_counts, axis=0)
+    # Concatenate all features, sums, and counts into single numpy arrays
+    if cell_gene_emb_features:
+        output_average_gene_embed['cell_gene_emb_average_per_data'] = np.concatenate(cell_gene_emb_features, axis=0)
+        output_average_gene_embed['cell_gene_emb_counts_per_data'] = np.concatenate(cell_gene_emb_counts, axis=0)
+    else:
+        output_average_gene_embed['cell_gene_emb_average_per_data'] =np.array([])
+        output_average_gene_embed['cell_gene_emb_counts_per_data'] = np.array([])
 
-    output_average_gene_embed['neighborhood_gene_emb_average_per_data'] = np.concatenate(neighborhood_gene_emb_features, axis=0)
-    output_average_gene_embed['neighborhood_gene_emb_counts_per_data'] = np.concatenate(neighborhood_gene_emb_counts, axis=0)
+    if neighborhood_gene_emb_features:
+        output_average_gene_embed['neighborhood_gene_emb_average_per_data'] = np.concatenate(neighborhood_gene_emb_features, axis=0)
+        output_average_gene_embed['neighborhood_gene_emb_counts_per_data'] = np.concatenate(neighborhood_gene_emb_counts, axis=0)
+    else:
+        output_average_gene_embed['neighborhood_gene_emb_average_per_data'] = np.array([])
+        output_average_gene_embed['neighborhood_gene_emb_counts_per_data'] = np.array([])
+    
     return output_average_gene_embed
 
 @torch.no_grad()
@@ -1819,7 +1830,7 @@ def get_emd_distance(
     neighborhood_gene_ids = [token_dict[ensg] for ensg in neighborhood_gene_ensembl_id]
     cell_gene_ids         = [token_dict[ensg] for ensg in cell_gene_ensembl_id]
 
-    emd_list = gene_embed_dataset(
+    emd_list, emd_matrix_list = gene_embed_dataset(
         dataset=dataset,
         model_folder_path=model_folder_path,
         emb_layer=emb_layer,
@@ -1833,4 +1844,4 @@ def get_emd_distance(
         description='COMPUTE EMD DISTANCE BETWEEN GENE IN CELL AND NEIGHBORHOOD'
     )
     
-    return np.concatenate(emd_list, axis=0)
+    return np.concatenate(emd_list, axis=0), np.concatenate(emd_matrix_list, axis=0)
