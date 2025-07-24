@@ -5,9 +5,9 @@ job_requirement:
   LSB_DEFAULT_USERGROUP: team361  # The user group to be used for scheduling the job.
   QUEUE: "gpu-parallel"  # The job queue to be used for scheduling the job.
   NUM_NODES: 1  # Number of compute nodes required for the job.
-  NUM_GPUS_NODE: 8  # Number of GPUs per node.
-  NUM_PROCESSES_NODE: 128  # Number of processes per node.
-  MEM_NODE: 920  # Memory allocated per node (in GB).
+  NUM_GPUS_NODE: 4  # Number of GPUs per node.
+  NUM_PROCESSES_NODE: 64  # Number of processes per node.
+  MEM_NODE: 460  # Memory allocated per node (in GB).
   
 infiniband:
   NCCL_IB_DISABLE: 0  # 1: Disable InfiniBand, 0: Enable InfiniBand
@@ -17,8 +17,9 @@ environment:
 
 artifact:
   ARTIFACT_LOCATION: "/lustre/scratch126/cellgen/lotfollahi/sb75/nichejepa-reproducibility/artifacts/hst_corpus_80m"  # Path to store the artifacts.
+  WAREHOUSE_PATH: "/lustre/scratch126/cellgen/lotfollahi/sb75/nichejepa-reproducibility/artifacts/hst_corpus_80m"  # Path to store the artifacts.
   EXPERIMENT_NAME: "nichejepa_pretraining"  # Name of the experiment.
-  RUN_NAME: "hst_corpus_80m_gtsmall_samplecells_coordcellposenc_combined_normrank_09995ema_10ep"  # Name of the run.
+  RUN_NAME: "hst_corpus_80m_gtsmall_samplecells_coordcellposenc_combined_normrank_09995ema_10ep_3"  # Name of the run.
 
 runner_script:
   RUNNER_SCRIPT: "/nfs/team361/sb75/nichejepa/src/app/runner.sh"  # Path to the runner script.
