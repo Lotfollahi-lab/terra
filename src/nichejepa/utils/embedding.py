@@ -568,10 +568,12 @@ def collect_adata_from_folder(load_folder_path: str,
                         if obs_cols is None:
                             adata.obs = adata.obs[['cell_id']]
                         else:
-                            adata.obs = adata.obs[['cell_id'] + obs_cols]
+                            adata.obs = adata.obs[['cell_id'] + [
+                                col for col in obs_cols if col in adata.obs.columns]]
                         if uns_cols:
                             for col in uns_cols:
-                                adata.obs[col] = adata.uns[col]
+                                if col in adata.uns:
+                                    adata.obs[col] = adata.uns[col]
                         if include_gene_panel_size:
                             adata.obs['gene_panel_size'] = len(adata.var_names)
                         adata_list.append(adata)
@@ -589,10 +591,12 @@ def collect_adata_from_folder(load_folder_path: str,
                     if obs_cols is None:
                         adata.obs = adata.obs[['cell_id']]
                     else:
-                        adata.obs = adata.obs[['cell_id'] + obs_cols]
+                        adata.obs = adata.obs[['cell_id'] + [
+                            col for col in obs_cols if col in adata.obs.columns]]
                     if uns_cols:
                         for col in uns_cols:
-                            adata.obs[col] = adata.uns[col]
+                            if col in adata.uns:
+                                adata.obs[col] = adata.uns[col]
                     if include_gene_panel_size:
                         adata.obs['gene_panel_size'] = len(adata.var_names)
                     adata_list.append(adata)        

@@ -829,7 +829,8 @@ def embed_dataset(dataset: Dataset,
                   top_k: int | None = None,
                   batch_size: int = 128,
                   pin_memory: bool = False,
-                  num_workers: int = 12
+                  num_workers: int = 12,
+                  include_spatial_cell_emb: bool = True,
                   ) -> dict:
     """
     Parameters
@@ -851,6 +852,9 @@ def embed_dataset(dataset: Dataset,
         Dataloader param.
     num_workers:
         Number of workers used.
+    include_spatial_cell_emb:
+        If `True`, also return a spatially contextualized cell embedding that
+        attends to the neighborhood.
 
     Returns:
     -----------
@@ -976,6 +980,8 @@ def embed_dataset(dataset: Dataset,
 
     # Retrieve embeddings
     all_cell_emb_list = []
+    if include_spatial_cell_emb:
+        all_spatial_cell_emb_list = []
     all_neighborhood_emb_list = []
 
     for itr, (udata, _, _, masks_attention) in tqdm(enumerate(loader)):
@@ -1030,20 +1036,29 @@ def embed_dataset(dataset: Dataset,
 
         # Average gene embeddings into cell and neighborhood embedding                    
         cell_emb = compute_mean_unmasked_emb(c_emb, cell_mask)
+        if include_spatial_cell_emb:
+            spatial_cell_emb = compute_mean_unmasked_emb(n_emb, cell_mask)
         neighborhood_emb = compute_mean_unmasked_emb(n_emb, neighborhood_mask)
 
         all_cell_emb_list.append(cell_emb)
+        if include_spatial_cell_emb:
+            all_spatial_cell_emb_list.append(spatial_cell_emb)
         all_neighborhood_emb_list.append(neighborhood_emb)
 
     output_embed = {}        
 
-    # Store cell and neighborhood embeddings of all observations
+    # Store cell, spatially contextualized cell and neighborhood embeddings of
+    # all observations
     output_embed["cell_emb"] = np.array(torch.cat(
         all_cell_emb_list,
         dim=0))
     output_embed["neighborhood_emb"] = np.array(torch.cat(
         all_neighborhood_emb_list,
         dim=0))
+    if include_spatial_cell_emb:
+        output_embed["spatial_cell_emb"] = np.array(torch.cat(
+            all_spatial_cell_emb_list,
+            dim=0))        
 
     return output_embed
 

@@ -587,12 +587,13 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
 
         # Run forward prop and store embeddings after each block
         n_blocks = len(self.blocks)
-        for i, blk in enumerate(self.blocks):
-            x = blk(x, masks=masks_attention)
-            if (i == (n_blocks - 1)) and (self.norm is not None):
-                x = self.norm(x)
-            if i == (layer-1):
-                break
+        if layer > 0:
+            for i, blk in enumerate(self.blocks):
+                x = blk(x, masks=masks_attention)
+                if (i == (n_blocks - 1)) and (self.norm is not None):
+                    x = self.norm(x)
+                if i == (layer - 1):
+                    break
 
         # Remove special tokens
         x = x[:, self.n_special_tokens:, :]
@@ -812,13 +813,14 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
             x = apply_masks(x, masks)
 
         # Run forward prop and store embeddings after each block
-        n_blocks = len(self.blocks)
-        for i, blk in enumerate(self.blocks):
-            x = blk(x, masks=masks_attention)
-            if (i == (n_blocks - 1)) and (self.norm is not None):
-                x = self.norm(x)
-            if i == (layer-1):
-                break
+        if layer > 0:
+            n_blocks = len(self.blocks)
+            for i, blk in enumerate(self.blocks):
+                x = blk(x, masks=masks_attention)
+                if (i == (n_blocks - 1)) and (self.norm is not None):
+                    x = self.norm(x)
+                if i == (layer - 1):
+                    break
 
         # Remove special tokens
         x = x[:, self.n_special_tokens:, :]
@@ -1092,13 +1094,14 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
             x = apply_masks(x, masks)
 
         # Run forward prop and store embeddings after each block
-        n_blocks = len(self.blocks)
-        for i, blk in enumerate(self.blocks):
-            x = blk(x, masks=masks_attention)
-            if (i == (n_blocks - 1)) and (self.norm is not None):
-                x = self.norm(x)
-            if i == (layer-1):
-                break
+        if layer > 0:
+            n_blocks = len(self.blocks)
+            for i, blk in enumerate(self.blocks):
+                x = blk(x, masks=masks_attention)
+                if (i == (n_blocks - 1)) and (self.norm is not None):
+                    x = self.norm(x)
+                if i == (layer - 1):
+                    break
 
         # Remove special tokens
         x = x[:, self.n_special_tokens:, :]
