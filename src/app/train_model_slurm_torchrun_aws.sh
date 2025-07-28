@@ -9,7 +9,7 @@
 #SBATCH --time=240:00:00                 # sets the max wall time (runtime) for the job (HH:MM:SS)
 #SBATCH --output=logs/%j.out             # stdout file (%j is replaced with the job ID)
 #SBATCH --error=logs/%j.err              # stder file (for logging errors)
-#SBATCH --chdir=/home/ubuntu/nichejepa-reproducibility        # set working directory
+#SBATCH --chdir=/home/ubuntu/sb75/nichejepa-reproducibility        # set working directory
 
 
 ###############################################################################
