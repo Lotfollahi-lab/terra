@@ -113,6 +113,7 @@ def main():
     logger.info(f'Params: {params}.')
     if WORLD_RANK==0:
         wandb.init(
+            settings=wandb.Settings(init_timeout=600)
             project='nichejepa-pretraining',
             id=run_id,
             resume="allow",
