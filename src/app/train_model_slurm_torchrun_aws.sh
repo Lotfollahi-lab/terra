@@ -7,8 +7,8 @@
 #SBATCH --mem=920G                       # allocates 920 GB of RAM memory per node
 #SBATCH --partition=p4de-24xlarge        # specifies the partition (queue) to submit the job to (use `sinfo` to see avaialble)
 #SBATCH --time=240:00:00                 # sets the max wall time (runtime) for the job (HH:MM:SS)
-#SBATCH --output=logs/%j.out             # stdout file (%j is replaced with the job ID)
-#SBATCH --error=logs/%j.err              # stder file (for logging errors)
+#SBATCH --output=logs/aws/%j.out             # stdout file (%j is replaced with the job ID)
+#SBATCH --error=logs/aws/%j.err              # stder file (for logging errors)
 #SBATCH --chdir=/home/ubuntu/sb75/nichejepa-reproducibility        # set working directory
 
 
@@ -62,6 +62,6 @@ srun torchrun \
     --node_rank $SLURM_NODEID \
     --rdzv_endpoint $MASTER_ADDR:$MASTER_PORT \
     --rdzv_backend c10d \
-    /home/ubuntu/nichejepa/src/app/main_dist.py \
+    /home/ubuntu/sb75/nichejepa/src/app/main_dist.py \
     --backend nccl \
-    --fname /home/ubuntu/nichejepa/configs/model/hst_corpus_80m/hst_corpus_80m_gtbase_aws.yaml
+    --fname /home/ubuntu/sb75/nichejepa/configs/model/hst_corpus_80m/hst_corpus_80m_gtbase_aws.yaml
