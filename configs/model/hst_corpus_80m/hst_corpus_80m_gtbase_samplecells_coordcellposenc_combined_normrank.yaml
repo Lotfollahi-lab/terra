@@ -17,7 +17,7 @@ data:
   n_segments: 11 # 7, 11; number of unique segment tokens (gene segments)
   sampling_strategy: null # null, 'rand_sampling', 'norm_count_rank_sampling', 'rand_sampling_rep', 'norm_count_rank_sampling_rep'
   batch_size: 40 # 104 # 224 no bfloat16 # 384, 448
-  num_workers: 48
+  num_workers: 48 # 48
   pin_memory: True
 meta:
   add_cls: False
@@ -47,13 +47,13 @@ mask:
   per_block_mask_ratio: 0.6 # 0.5, 0.6, 0.7, 0.8
   sample_segments: True
 optimization:
-  warmup: 3 # 3
-  epochs: 10 # 30
+  warmup: 10 # 3
+  epochs: 100 # 30
   ema:
-  - 0.998 # 0.998, 0.9995
+  - 0.9995 # 0.998, 0.9995
   - 1.0
   start_lr: 2.0e-05 # 1.0e-06, 2.0e-05
-  lr: 0.000625 # 6.0e-05, 0.000625
+  lr: 6.0e-05 # 6.0e-05, 0.000625
   final_lr: 1.0e-06
   weight_decay: 0.04
   final_weight_decay: 0.4
