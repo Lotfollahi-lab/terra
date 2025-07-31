@@ -363,12 +363,14 @@ class CellGraphDataset(CellBaseDataset):
         # Get (sampled) gene tokens, positions, segments, and values for
         # index cell segment
         item_dict['tokens'], \
-        item_dict['values'], \
+        item_values, \
         item_dict['rel_x_coords'], \
         item_dict['rel_y_coords'] = self._get_segment_seq(
             item=item,
             segment=1, # index cell segment
             segment_seq_len=self.seq_len_cell)
+        if self.gt_type != 'rank':
+            item_dict['values'] = item_values
         if self.gt_type != 'counts':
             item_dict['positions'] = torch.arange(
                 1, item_dict['tokens'].size(0) + 1, dtype=torch.long)

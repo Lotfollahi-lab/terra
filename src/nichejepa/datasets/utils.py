@@ -51,7 +51,8 @@ def get_ensembl_ids(gene_names: list[str],
 
 
 def prepare_dataset(
-        args: dict
+        args: dict,
+        train_mode: bool = False,
         ) -> tuple[datasets.Dataset, datasets.Dataset] | datasets.Dataset | list[datasets.Dataset]:
     """
     Prepare dataset by loading it, determining sample size, and
@@ -69,6 +70,8 @@ def prepare_dataset(
             - stratify: Whether to stratify the dataset based on cell
               types during the split.
             - random_state: The random seed for reproducibility.
+    train_mode:
+        If 'True', prepare dataset for training (exclude cell IDs)
 
     Returns
     -----------
@@ -92,7 +95,20 @@ def prepare_dataset(
                         'tissue_value_token',
                         'cls_tokens',
                         'cell_total_counts',
-                        'cell_n_probed_genes']  
+                        'cell_n_probed_genes']
+    #for special_token in ['batch', 'gene_panel', 'assay', 'species', 'tissue']:
+    #    if special_token not in args['meta']['special_tokens']:
+    #        fields_to_remove += [f'{special_token}_token']
+    #        fields_to_remove += [f'{special_token}_value']
+    if 'cell_pos_enc' not in args['meta'].keys():
+        fields_to_remove += ['rel_x_coord']
+        fields_to_remove += ['rel_y_coord']
+    elif args['meta']['cell_pos_enc'] == 'segment':
+        fields_to_remove += ['rel_x_coord']
+        fields_to_remove += ['rel_y_coord']
+    if train_mode:
+        fields_to_remove += [f'cell_id']
+
     existing_fields = [
         col for col in fields_to_remove if col in dataset.column_names]
 
@@ -100,7 +116,8 @@ def prepare_dataset(
         dataset = dataset.remove_columns(existing_fields)
     
     columns = list(dataset.features.keys())
-    columns.remove("cell_id")
+    if not train_mode:
+        columns.remove("cell_id")
     dataset.set_format(
         type="torch",
         columns=columns,

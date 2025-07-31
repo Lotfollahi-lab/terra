@@ -151,7 +151,7 @@ def main():
     dist.barrier()
     setup_for_distributed(LOCAL_RANK == 0)
 
-    train_dataset, val_dataset, test_dataset = prepare_dataset(params)
+    train_dataset, val_dataset, test_dataset = prepare_dataset(params, train_mode=True)
     train(params,
           train_dataset,
           test_dataset,

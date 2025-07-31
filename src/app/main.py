@@ -57,14 +57,14 @@ def process_main(rank, args, params, world_size, port, devices, logger, folder_p
 
     # Execute training or evaluation
     if is_training:
-        train_dataset, val_dataset, test_dataset = prepare_dataset(params)
+        train_dataset, val_dataset, test_dataset = prepare_dataset(params, is_training)
         train(params, train_dataset, save_folder_path=folder_path, LOCAL_RANK=rank)
     else:
-        train_dataset, test_dataset, val_dataset = prepare_dataset(params)
+        train_dataset, test_dataset, val_dataset = prepare_dataset(params, is_training)
         loss_val = train(params, val_dataset, resume_preempt=True, save_folder_path=folder_path, LOCAL_RANK=rank)
         params['data']['test_batch_ids'] = ['1000_batch11', '1000_batch19', '1000_batch32']
         params['data']['split_val'] = 0.0
-        train_dataset, test_dataset, val_dataset = prepare_dataset(params)
+        train_dataset, test_dataset, val_dataset = prepare_dataset(params, is_training)
         #indices = list(range(len(test_dataset)))
         #split_params = {'test_size': 0.25,
         #                'random_state': 0}
