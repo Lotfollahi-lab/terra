@@ -19,7 +19,7 @@ data:
   n_segments: 11 # 7, 11; number of unique segment tokens (gene segments)
   sampling_strategy: null # null, 'rand_sampling', 'norm_count_rank_sampling', 'rand_sampling_rep', 'norm_count_rank_sampling_rep'
   batch_size: 80
-  num_workers: 44
+  num_workers: 16
   pin_memory: True
 meta:
   add_cls: False
