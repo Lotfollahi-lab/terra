@@ -35,6 +35,7 @@ from nichejepa.utils.embedding import (create_binary_selection_mask,
                                        compute_sum_and_nonzero_count,
                                        batch_rowwise_distances)
 from nichejepa.utils.logging import CSVLogger
+from typing import Dict, List
 
 
 _GLOBAL_SEED = 0
@@ -1079,85 +1080,112 @@ def embed_dataset(dataset: Dataset,
     return output_embed
 
 
-def perturb_dataset(dataset: Dataset,
-                    perturb_df: pd.DataFrame,
-                    model_folder_path: str,
-                    seq_len_cell: int = 256,
-                    nproc: int = 4,
-                    keep_in_memory: bool = False,) -> Dataset:
+def _build_perturb_index(df: pd.DataFrame) -> Dict[str, List[dict]]:
+    """
+    Turn perturb_df into an index:
+        {perturbed_cell_id: [row_as_dict, …]}
+    (Using itertuples avoids Python object creation for every column.)
+    """
+    index = defaultdict(list)
+    for row in df.itertuples(index=False):
+        index[row.perturbed_cell_id].append(row._asdict())
+    return index
 
-    def _perturb_example(example,
-                        perturb_df: pd.DataFrame,
-                        seq_len_cell: int = 256) -> dict:
-        example_cell_ids = list(dict.fromkeys(example['cell_ids']))
-        
-        if not any(cell_id in perturb_df['perturbed_cell_id'].values.tolist() for cell_id in example_cell_ids):
-            # No perturbation applied
-            return example
-            
-        for idx, row in perturb_df.iterrows():
-            
-            perturbed_cell_id = row['perturbed_cell_id']
-            
-            if row['perturbation_target'] == 'cell':
-                if not perturbed_cell_id == example_cell_ids[0]:
+def _perturb_batch(
+    batch: dict,
+    index: Dict[str, List[dict]],
+    seq_len_cell: int = 256,
+) -> dict:
+    """
+    `batch` is the dictionary of column -> list-of-values
+    returned by Hugging-Face when batched=True.
+    Modify the tensors in-place (cheap) and return the same dict.
+    """
+    B = len(batch["cell_ids"])          # batch size
+    for b in range(B):
+        cell_ids: List[str] = list(dict.fromkeys(batch["cell_ids"][b]))
+        # Fast reject: does this example touch any perturbed cell at all?
+        if not any(cid in index for cid in cell_ids):
+            continue
+
+        # Handle index-cell (first) and neighbourhood (rest) separately
+        for cid in cell_ids:
+            for row in index.get(cid, []):
+                is_index_cell = (cid == cell_ids[0])
+                if row["perturbation_target"] == "cell" and not is_index_cell:
                     continue
-                else:
-                    #print(f"Perturb index cell with ID {example['cell_id']}:")
-                    if row['perturbed_gene_token'] == 'all':
-                        perturbed_token_idx = torch.arange(0, seq_len_cell)
-                    else:
-                        perturbed_token_idx = (example['gene_tokens'][:seq_len_cell] == row['perturbed_gene_token']).nonzero(as_tuple=True)[0]
-                    if row['perturbation_type'] == 'knockout':
-                        example['gene_tokens'][perturbed_token_idx] = 0
-                        example['gene_expr'][perturbed_token_idx] = 0.0
-                    elif row['perturbation_type'] == 'foldchange':
-                        example['gene_expr'][perturbed_token_idx] = example['gene_expr'][perturbed_token_idx] * row['foldchange']                    
-                    else:
-                        raise ValueError(f'Invalid perturbation type {row["perturbation_type"]}.')
-                                            
-            elif row['perturbation_target'] == 'neighborhood':
-                if not perturbed_cell_id in example_cell_ids[1:]:
+                if row["perturbation_target"] == "neighborhood" and is_index_cell:
                     continue
+
+                gene_tokens = batch["gene_tokens"][b]
+                gene_expr   = batch["gene_expr"][b]
+
+                # --- choose which token positions to perturb -------------
+                if row["perturbed_gene_token"] == "all":
+                    if is_index_cell:
+                        idx = slice(0, seq_len_cell)
+                    else:
+                        idx = slice(seq_len_cell, None)
                 else:
-                    #print(f"Perturb neighborhood of index cell with ID {example['cell_id']}:")
-                    if row['perturbed_gene_token'] == 'all':
-                        perturbed_token_idx = torch.arange(seq_len_cell, len(example['gene_tokens']))
-                    else:
-                        perturbed_token_idx = (example['gene_tokens'][seq_len_cell:] == row['perturbed_gene_token']).nonzero(as_tuple=True)[0]
-                    if row['perturbation_type'] == 'knockout':
-                        example['gene_tokens'][perturbed_token_idx] = 0
-                        example['gene_expr'][perturbed_token_idx] = 0.0
-                    elif row['perturbation_type'] == 'foldchange':
-                        example['gene_expr'][perturbed_token_idx] = example['gene_expr'][perturbed_token_idx] * row['foldchange']                    
-                    else:
-                        raise ValueError(f'Invalid perturbation type {row["perturbation_type"]}.')           
-            else:
-                raise ValueError(f'Invalid perturbation target {row["perturbation_target"]}.')
-        
-        # Perturbation applied
-        return example
+                    token_id = row["perturbed_gene_token"]
+                    token_slice = (
+                        gene_tokens[:seq_len_cell]
+                        if is_index_cell else
+                        gene_tokens[seq_len_cell:]
+                    )
+                    rel_idx = torch.nonzero(token_slice == token_id, as_tuple=True)[0]
+                    offset  = 0 if is_index_cell else seq_len_cell
+                    idx     = rel_idx + offset
+                # ---------------------------------------------------------
 
+                if row["perturbation_type"] == "knockout":
+                    gene_tokens[idx] = 0
+                    gene_expr[idx]   = 0.0
+                elif row["perturbation_type"] == "foldchange":
+                    gene_expr[idx] *= row["foldchange"]
+                else:
+                    raise ValueError(f"Bad perturbation_type: {row['perturbation_type']}")
 
-    # Load token dictionary
-    token_dictionary_file_path = Path(model_folder_path) / 'token_dictionary.pkl'
-    with open(token_dictionary_file_path, 'rb') as f:
+    return batch
+
+def perturb_dataset(
+    dataset: Dataset,
+    perturb_df: pd.DataFrame,
+    model_folder_path: str,
+    seq_len_cell: int = 256,
+    nproc: int = 4,
+    batch_size: int = 1000,
+    keep_in_memory: bool = False,
+) -> Dataset:
+    # 1) Load token dictionary once
+    with open(Path(model_folder_path) / "token_dictionary.pkl", "rb") as f:
         token_dict = pickle.load(f)
-    
-    perturb_df['perturbed_gene_token'] = perturb_df['perturbed_ensembl_id'].apply(lambda x: x if x == 'all' else token_dict[x])
 
-    perturb_func = partial(
-        _perturb_example,
-        perturb_df=perturb_df,
-        seq_len_cell=seq_len_cell)
-    
-    # Apply perturbation example-wise
-    perturbed_dataset = dataset.map(
-        perturb_func,
+    # 2) Convert gene IDs to token IDs up-front (vectorised)
+    perturb_df = perturb_df.copy()
+    perturb_df["perturbed_gene_token"] = perturb_df["perturbed_ensembl_id"].where(
+        perturb_df["perturbed_ensembl_id"] == "all",
+        perturb_df["perturbed_ensembl_id"].map(token_dict),
+    )
+
+    # 3) Build an index for O(1) lookup
+    perturb_index = _build_perturb_index(perturb_df)
+
+    # 4) Partial-apply so the mapper sees only one argument
+    perturb_fn = partial(
+        _perturb_batch,
+        index=perturb_index,
+        seq_len_cell=seq_len_cell,
+    )
+
+    # 5) Map in batch mode
+    return dataset.map(
+        perturb_fn,
+        batched=True,
+        batch_size=batch_size,
         num_proc=nproc,
-        keep_in_memory=keep_in_memory)    
-    
-    return perturbed_dataset
+        keep_in_memory=keep_in_memory,
+    )
 
 
 @torch.no_grad()
