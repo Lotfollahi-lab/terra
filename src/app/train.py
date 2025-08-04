@@ -310,7 +310,10 @@ def train(args: dict,
     seq_len = seq_len_cell + seq_len_neighborhood + n_special_tokens
 
     # Set multiprocessing start method
-    mp.set_start_method("spawn", force=True)
+    try:
+        mp.set_start_method("spawn", force=True)
+    except Exception:
+        logger.info(f'Multiprocessing not started.')
     
     # Initialize torch distributed backend
     world_size, rank = init_distributed()
