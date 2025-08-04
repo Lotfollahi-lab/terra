@@ -1139,7 +1139,6 @@ def _perturb_batch(
                 # ---------------------------------------------------------
 
                 if row["perturbation_type"] == "knockout":
-                    gene_tokens[idx] = 0
                     gene_expr[idx]   = 0.0
                 elif row["perturbation_type"] == "foldchange":
                     gene_expr[idx] *= row["foldchange"]
