@@ -377,8 +377,7 @@ class CellGraphDataset(CellBaseDataset):
             item_dict['positions'] = item_dict['positions'] * (
                 item_dict['tokens'] != 0).long()
             item_dict['positions'] = item_dict['positions'] * (
-                item_dict['gene_expr'] != 0).long()
-
+                item_dict['values'] != 0.0).long()
         item_dict['segments'] = torch.where(
             item_dict['tokens'] != 0,
             torch.ones_like(item_dict['tokens']),
@@ -420,6 +419,10 @@ class CellGraphDataset(CellBaseDataset):
                     masked_pos = torch.where(
                         segment_tokens != 0,
                         pos,
+                        torch.tensor(0, dtype=torch.long))
+                    masked_pos = torch.where(
+                        segment_values != 0.0,
+                        masked_pos,
                         torch.tensor(0, dtype=torch.long))
                     item_dict['positions'] = torch.cat(
                         [item_dict['positions'], masked_pos], dim=0)
