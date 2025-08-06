@@ -1169,14 +1169,12 @@ def perturb_dataset(
 
     # 3) Build an index for O(1) lookup
     perturb_index = _build_perturb_index(perturb_df)
-
     # 4) Partial-apply so the mapper sees only one argument
     perturb_fn = partial(
         _perturb_batch,
         index=perturb_index,
         seq_len_cell=seq_len_cell,
     )
-
     # 5) Map in batch mode
     return dataset.map(
         perturb_fn,
@@ -1184,6 +1182,7 @@ def perturb_dataset(
         batch_size=batch_size,
         num_proc=nproc,
         keep_in_memory=keep_in_memory,
+        load_from_cache_file=False,
     )
 
 
