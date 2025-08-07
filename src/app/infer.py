@@ -1312,6 +1312,7 @@ def gene_embed_dataset(dataset: Dataset,
                   returen_distance: bool=False,
                   return_cosine_sim: bool=False,
                   return_receptor_average: bool=False,
+                  include_spatial_cell_emb: bool = True,
                   description: str='',
                   ) -> dict:
     
@@ -1348,6 +1349,9 @@ def gene_embed_dataset(dataset: Dataset,
         If 'True' will compute and return cosine_sim matrix.
     return_receptor_average:
         If 'True' will compute and return receptor average embeddings for cell-neighborhood gene pairs.
+    include_spatial_cell_emb:
+        If `True`, also return gene embeddings for spatially contextualized cell embedding that
+        attends to the neighborhood.
     description:
         description for task that is currently using this function.
     Returns:
@@ -1477,6 +1481,9 @@ def gene_embed_dataset(dataset: Dataset,
     all_neighborhood_gene_emb_dict = {}
     all_cell_gene_emb_per_data_dict = {}
     all_neighborhood_gene_emb_per_data_dict = {}
+    if include_spatial_cell_emb:
+        all_spatial_cell_gene_emb_dict = {}
+        all_spatial_cell_gene_emb_per_data_dict = {}
     cos_sim_dict = {}
     emd_list = []
     emd_matrix_list = []
@@ -1513,9 +1520,13 @@ def gene_embed_dataset(dataset: Dataset,
             if itr == 0 or itr == len(loader)-1:
                 cell_embs = torch.zeros((emb.shape[0], len(cell_gene_ids), emb.shape[-1]), device=emb.device)
                 cell_presence = torch.zeros((emb.shape[0], len(cell_gene_ids)), device=emb.device)
+                if include_spatial_cell_emb:
+                    spatial_cell_embs = torch.zeros((emb.shape[0], len(cell_gene_ids), emb.shape[-1]), device=emb.device)
             else:
                 cell_embs.zero_()
                 cell_presence.zero_()
+                if include_spatial_cell_emb:
+                    spatial_cell_embs.zero_()
             rows = torch.arange(emb.shape[0], device=emb.device)
             for j, gene_id in enumerate(cell_gene_ids):
                 gene_presence_local, gene_indices = retrieve_gene_emb(
@@ -1526,19 +1537,32 @@ def gene_embed_dataset(dataset: Dataset,
                         aggregate_multiple=False
                 )
                 cell_embs[rows[gene_presence_local], j, :] = emb[rows[gene_presence_local], gene_indices[gene_presence_local], :]
+                if include_spatial_cell_emb:
+                    spatial_cell_embs[rows[gene_presence_local], j, :] = n_emb[rows[gene_presence_local], gene_indices[gene_presence_local], :]
                 cell_presence[:, j] = gene_presence_local.float()
                 if return_gene:
                     if itr == 0:
                         all_cell_gene_emb_dict[gene_id] = [cell_embs[:, j, :].clone()]
+                        if include_spatial_cell_emb:
+                            all_spatial_cell_gene_emb_dict[gene_id] = [spatial_cell_embs[:, j, :].clone()]
                     else:
                         all_cell_gene_emb_dict[gene_id].append(cell_embs[:, j, :].clone())
+                        if include_spatial_cell_emb:
+                            all_spatial_cell_gene_emb_dict[gene_id].append(spatial_cell_embs[:, j, :].clone())
                 if return_gene_per_data:
                     gene_sum, gene_count = compute_sum_and_nonzero_count(cell_embs[:, j, :])
                     if itr == 0:
                         all_cell_gene_emb_per_data_dict[gene_id] = (gene_sum, gene_count)
+                        if include_spatial_cell_emb:
+                            spatial_gene_sum, spatial_gene_count = compute_sum_and_nonzero_count(spatial_cell_embs[:, j, :])
+                            all_spatial_cell_gene_emb_per_data_dict[gene_id] = (spatial_gene_sum, spatial_gene_count)
                     else:
                         all_cell_gene_emb_per_data_dict[gene_id][0].add_(gene_sum)
                         all_cell_gene_emb_per_data_dict[gene_id][1].add_(gene_count)
+                        if include_spatial_cell_emb:
+                            spatial_gene_sum, spatial_gene_count = compute_sum_and_nonzero_count(spatial_cell_embs[:, j, :])
+                            all_spatial_cell_gene_emb_per_data_dict[gene_id][0].add_(spatial_gene_sum)
+                            all_spatial_cell_gene_emb_per_data_dict[gene_id][1].add_(spatial_gene_count)
 
             # Compute receptor averages for cell-neighborhood gene pairs
             if return_receptor_average:
@@ -1659,9 +1683,15 @@ def gene_embed_dataset(dataset: Dataset,
                 emd_matrix_list.append(emd_matrix)
     # last layer
     if return_gene:
-        return all_cell_gene_emb_dict, all_neighborhood_gene_emb_dict
+        if include_spatial_cell_emb:
+            return all_cell_gene_emb_dict, all_neighborhood_gene_emb_dict, all_spatial_cell_gene_emb_dict
+        else:
+            return all_cell_gene_emb_dict, all_neighborhood_gene_emb_dict
     if return_gene_per_data:
-        return all_cell_gene_emb_per_data_dict, all_neighborhood_gene_emb_per_data_dict
+        if include_spatial_cell_emb:
+            return all_cell_gene_emb_per_data_dict, all_neighborhood_gene_emb_per_data_dict, all_spatial_cell_gene_emb_per_data_dict
+        else:
+            return all_cell_gene_emb_per_data_dict, all_neighborhood_gene_emb_per_data_dict
     if return_cosine_sim:
         return cos_sim_dict
     if returen_distance:
@@ -1679,6 +1709,7 @@ def get_gene_embed(
     batch_size: int = 128,
     pin_memory: bool = False,
     num_workers: int = 12,
+    include_spatial_cell_emb: bool = True,
 ) -> dict[str, np.ndarray]:
     """
     Retrieve gene embeddings for specified cell and neighborhood gene IDs.
@@ -1693,6 +1724,7 @@ def get_gene_embed(
     batch_size: Dataloader param.
     pin_memory: Dataloader param.
     num_workers: Number of workers used.
+    include_spatial_cell_emb: If `True`, also return gene embeddings for spatially contextualized cell embedding.
 
     Returns
     -------
@@ -1710,19 +1742,36 @@ def get_gene_embed(
     # Create reverse mapping from token id to ensembl id
     id_to_ensembl = {v: k for k, v in token_dict.items()}
 
-    all_cell_gene_emb_dict, all_neighborhood_gene_emb_dict = gene_embed_dataset(
-        dataset=dataset,
-        model_folder_path=model_folder_path,
-        emb_layer=emb_layer,
-        cell_gene_ids=list(set(cell_gene_ids)),
-        neighborhood_gene_ids=list(set(neighborhood_gene_ids)),
-        batch_size=batch_size,
-        pin_memory=pin_memory,
-        num_workers=num_workers,
-        return_gene=True,
-        compute_cosine_with_list=['neighborhood'],
-        description='GETTING GENE EMBEDDINGS'
-    )
+    if include_spatial_cell_emb:
+        all_cell_gene_emb_dict, all_neighborhood_gene_emb_dict, all_spatial_cell_gene_emb_dict = gene_embed_dataset(
+            dataset=dataset,
+            model_folder_path=model_folder_path,
+            emb_layer=emb_layer,
+            cell_gene_ids=list(set(cell_gene_ids)),
+            neighborhood_gene_ids=list(set(neighborhood_gene_ids)),
+            batch_size=batch_size,
+            pin_memory=pin_memory,
+            num_workers=num_workers,
+            return_gene=True,
+            compute_cosine_with_list=['neighborhood'],
+            include_spatial_cell_emb=include_spatial_cell_emb,
+            description='GETTING GENE EMBEDDINGS'
+        )
+    else:
+        all_cell_gene_emb_dict, all_neighborhood_gene_emb_dict = gene_embed_dataset(
+            dataset=dataset,
+            model_folder_path=model_folder_path,
+            emb_layer=emb_layer,
+            cell_gene_ids=list(set(cell_gene_ids)),
+            neighborhood_gene_ids=list(set(neighborhood_gene_ids)),
+            batch_size=batch_size,
+            pin_memory=pin_memory,
+            num_workers=num_workers,
+            return_gene=True,
+            compute_cosine_with_list=['neighborhood'],
+            include_spatial_cell_emb=include_spatial_cell_emb,
+            description='GETTING GENE EMBEDDINGS'
+        )
     output_gene_embed = {}        
     for gene_id in cell_gene_ids:
         ensg = id_to_ensembl[gene_id]
@@ -1730,6 +1779,11 @@ def get_gene_embed(
             all_cell_gene_emb_dict[gene_id],
             dim=0).cpu())
         del all_cell_gene_emb_dict[gene_id]
+        if include_spatial_cell_emb:
+            output_gene_embed[f"spatial_cell_emb_gene{ensg}"] = np.array(torch.cat(
+                all_spatial_cell_gene_emb_dict[gene_id],
+                dim=0).cpu())
+            del all_spatial_cell_gene_emb_dict[gene_id]
     for gene_id in neighborhood_gene_ids:
         ensg = id_to_ensembl[gene_id]
         output_gene_embed[f"neighborhood_emb_gene{ensg}"] = np.array(torch.cat(
@@ -1749,6 +1803,7 @@ def get_average_gene_embed(
     batch_size: int = 128,
     pin_memory: bool = False,
     num_workers: int = 12,
+    include_spatial_cell_emb: bool = True,
 ) -> dict[str, np.ndarray]:
     """
     Retrieve average gene embeddings for each gene per dataset.
@@ -1763,6 +1818,7 @@ def get_average_gene_embed(
     batch_size: Dataloader param.
     pin_memory: Dataloader param.
     num_workers: Number of workers used.
+    include_spatial_cell_emb: If `True`, also return average gene embeddings for spatially contextualized cell embedding.
 
     Returns
     -------
@@ -1777,21 +1833,41 @@ def get_average_gene_embed(
     neighborhood_gene_ids = [token_dict[ensg] for ensg in neighborhood_gene_ensembl_id]
     cell_gene_ids         = [token_dict[ensg] for ensg in cell_gene_ensembl_id]
 
-    all_cell_gene_emb_per_data_dict, all_neighborhood_gene_emb_per_data_dict= gene_embed_dataset(
-        dataset=dataset,
-        model_folder_path=model_folder_path,
-        emb_layer=emb_layer,
-        cell_gene_ids=list(set(cell_gene_ids)),
-        neighborhood_gene_ids=list(set(neighborhood_gene_ids)),
-        batch_size=batch_size,
-        pin_memory=pin_memory,
-        num_workers=num_workers,
-        return_gene_per_data=True,
-        compute_cosine_with_list=['neighborhood'],
-        description='GETTING AVERAGE GENE EMBEDDINGS'
-    )
+    if include_spatial_cell_emb:
+        all_cell_gene_emb_per_data_dict, all_neighborhood_gene_emb_per_data_dict, all_spatial_cell_gene_emb_per_data_dict = gene_embed_dataset(
+            dataset=dataset,
+            model_folder_path=model_folder_path,
+            emb_layer=emb_layer,
+            cell_gene_ids=list(set(cell_gene_ids)),
+            neighborhood_gene_ids=list(set(neighborhood_gene_ids)),
+            batch_size=batch_size,
+            pin_memory=pin_memory,
+            num_workers=num_workers,
+            return_gene_per_data=True,
+            compute_cosine_with_list=['neighborhood'],
+            include_spatial_cell_emb=include_spatial_cell_emb,
+            description='GETTING AVERAGE GENE EMBEDDINGS'
+        )
+    else:
+        all_cell_gene_emb_per_data_dict, all_neighborhood_gene_emb_per_data_dict = gene_embed_dataset(
+            dataset=dataset,
+            model_folder_path=model_folder_path,
+            emb_layer=emb_layer,
+            cell_gene_ids=list(set(cell_gene_ids)),
+            neighborhood_gene_ids=list(set(neighborhood_gene_ids)),
+            batch_size=batch_size,
+            pin_memory=pin_memory,
+            num_workers=num_workers,
+            return_gene_per_data=True,
+            compute_cosine_with_list=['neighborhood'],
+            include_spatial_cell_emb=include_spatial_cell_emb,
+            description='GETTING AVERAGE GENE EMBEDDINGS'
+        )
     cell_gene_emb_features = []
     cell_gene_emb_counts = []
+    if include_spatial_cell_emb:
+        spatial_cell_gene_emb_features = []
+        spatial_cell_gene_emb_counts = []
 
     neighborhood_gene_emb_features = []
     neighborhood_gene_emb_counts = []
@@ -1802,6 +1878,11 @@ def get_average_gene_embed(
             count_emb = all_cell_gene_emb_per_data_dict[gene_id][1].numpy()
             cell_gene_emb_features.append((sum_emb / count_emb).reshape(1, -1))
             cell_gene_emb_counts.append(count_emb.reshape(1, -1))
+        if include_spatial_cell_emb and gene_id in all_spatial_cell_gene_emb_per_data_dict.keys():
+            spatial_sum_emb = all_spatial_cell_gene_emb_per_data_dict[gene_id][0].numpy()
+            spatial_count_emb = all_spatial_cell_gene_emb_per_data_dict[gene_id][1].numpy()
+            spatial_cell_gene_emb_features.append((spatial_sum_emb / spatial_count_emb).reshape(1, -1))
+            spatial_cell_gene_emb_counts.append(spatial_count_emb.reshape(1, -1))
 
     for gene_id in neighborhood_gene_ids:
         if gene_id in all_neighborhood_gene_emb_per_data_dict.keys():
@@ -1819,6 +1900,14 @@ def get_average_gene_embed(
     else:
         output_average_gene_embed['cell_gene_emb_average_per_data'] =np.array([])
         output_average_gene_embed['cell_gene_emb_counts_per_data'] = np.array([])
+
+    if include_spatial_cell_emb:
+        if spatial_cell_gene_emb_features:
+            output_average_gene_embed['spatial_cell_gene_emb_average_per_data'] = np.concatenate(spatial_cell_gene_emb_features, axis=0)
+            output_average_gene_embed['spatial_cell_gene_emb_counts_per_data'] = np.concatenate(spatial_cell_gene_emb_counts, axis=0)
+        else:
+            output_average_gene_embed['spatial_cell_gene_emb_average_per_data'] = np.array([])
+            output_average_gene_embed['spatial_cell_gene_emb_counts_per_data'] = np.array([])
 
     if neighborhood_gene_emb_features:
         output_average_gene_embed['neighborhood_gene_emb_average_per_data'] = np.concatenate(neighborhood_gene_emb_features, axis=0)
