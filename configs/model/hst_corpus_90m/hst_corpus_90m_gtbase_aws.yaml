@@ -3,8 +3,10 @@ data:
   raw_data_folder_path: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/silver/hst_corpus_90m'
   token_dict_folder_path: '/fsx-shared/s3/token_dictionary_homo_sapiens.pkl'
   tokenized_data_folder_path: '/fsx-shared/s3/hst_corpus_80m/hst_corpus_90m_32_None_None_None_None_None_shifted_log_knn_10.dataset'
-  precomputed_epoch_splits: '/fsx-shared/s3/hst_corpus_90m/hst_corpus_90m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_split_30.pkl'
-  precomputed_epoch_n_nonzero_tokens: '/fsx-shared/s3/hst_corpus_90m/hst_corpus_90m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_n_nonzero_tokens_30.pkl'
+  precomputed_split: '/fsx-shared/s3/hst_corpus_90m/hst_corpus_90m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_split_train.pkl'
+  precomputed_n_nonzero_tokens: '/fsx-shared/s3/hst_corpus_90m/hst_corpus_90m_32_None_None_None_None_None_shifted_log_knn_10_n_nonzero_tokens_train.pkl'
+  #precomputed_epoch_splits: '/fsx-shared/s3/hst_corpus_90m/hst_corpus_90m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_split_30.pkl'
+  #recomputed_epoch_n_nonzero_tokens: '/fsx-shared/s3/hst_corpus_90m/hst_corpus_90m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_n_nonzero_tokens_30.pkl'
   test_batch_ids: ['49_batch0']
   val_batch_ids: ['49_batch0']
   tokenizer_type: 'cell_graph'
@@ -47,13 +49,13 @@ mask:
   per_block_mask_ratio: 0.6 # 0.5, 0.6, 0.7, 0.8
   sample_segments: True
 optimization:
-  warmup: 3 # 3, 5
-  epochs: 10 # 10, 30
+  warmup: 1 # 3 # 3, 5
+  epochs: 3 # 10, 30
   ema:
   - 0.9995 # 0.998, 0.9995
   - 1.0
-  start_lr: 2.0e-05 # 1.0e-06, 2.0e-05
-  lr: 0.000625 # 6.0e-05, 0.000625
+  start_lr: 1.0e-06 # 1.0e-06, 2.0e-05
+  lr: 6.0e-05 # 6.0e-05, 0.000625
   final_lr: 1.0e-06
   weight_decay: 0.04
   final_weight_decay: 0.4
