@@ -3,8 +3,8 @@ data:
   raw_data_folder_path: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/silver/hst_corpus_90m'
   token_dict_folder_path: '/fsx-shared/s3/token_dictionary_homo_sapiens.pkl'
   tokenized_data_folder_path: '/fsx-shared/s3/hst_corpus_80m/hst_corpus_90m_32_None_None_None_None_None_shifted_log_knn_10.dataset'
-  precomputed_epoch_splits: '/fsx-shared/s3/hst_corpus_90m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_split_30.pkl'
-  precomputed_epoch_n_nonzero_tokens: '/fsx-shared/s3/hst_corpus_90m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_n_nonzero_tokens_30.pkl'
+  precomputed_epoch_splits: '/fsx-shared/s3/hst_corpus_90m/hst_corpus_90m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_split_30.pkl'
+  precomputed_epoch_n_nonzero_tokens: '/fsx-shared/s3/hst_corpus_90m/hst_corpus_90m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_n_nonzero_tokens_30.pkl'
   test_batch_ids: ['49_batch0']
   val_batch_ids: ['49_batch0']
   tokenizer_type: 'cell_graph'
