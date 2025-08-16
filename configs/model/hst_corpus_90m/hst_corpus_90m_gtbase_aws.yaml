@@ -6,7 +6,7 @@ data:
   precomputed_split: '/fsx-shared/s3/hst_corpus_90m/hst_corpus_90m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_split_train.pkl'
   precomputed_n_nonzero_tokens: '/fsx-shared/s3/hst_corpus_90m/hst_corpus_90m_32_None_None_None_None_None_shifted_log_knn_10_n_nonzero_tokens_train.pkl'
   #precomputed_epoch_splits: '/fsx-shared/s3/hst_corpus_90m/hst_corpus_90m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_split_30.pkl'
-  #recomputed_epoch_n_nonzero_tokens: '/fsx-shared/s3/hst_corpus_90m/hst_corpus_90m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_n_nonzero_tokens_30.pkl'
+  #precomputed_epoch_n_nonzero_tokens: '/fsx-shared/s3/hst_corpus_90m/hst_corpus_90m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_n_nonzero_tokens_30.pkl'
   test_batch_ids: ['49_batch0']
   val_batch_ids: ['49_batch0']
   tokenizer_type: 'cell_graph'

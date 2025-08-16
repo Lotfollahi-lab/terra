@@ -1,12 +1,12 @@
 data:
-  dataset_name: 'hst_corpus_80m'
-  raw_data_folder_path: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/silver/hst_corpus_80m'
+  dataset_name: 'hst_corpus_90m'
+  raw_data_folder_path: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/silver/hst_corpus_90m'
   token_dict_folder_path: '/fsx-shared/s3/token_dictionary_homo_sapiens.pkl'
   tokenized_data_folder_path: '/fsx-shared/s3/hst_corpus_80m/hst_corpus_90m_32_None_None_None_None_None_shifted_log_knn_10.dataset'
   precomputed_split: '/fsx-shared/s3/hst_corpus_90m/hst_corpus_90m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_split_train.pkl'
   precomputed_n_nonzero_tokens: '/fsx-shared/s3/hst_corpus_90m/hst_corpus_90m_32_None_None_None_None_None_shifted_log_knn_10_n_nonzero_tokens_train.pkl'
   #precomputed_epoch_splits: '/fsx-shared/s3/hst_corpus_90m/hst_corpus_90m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_split_30.pkl'
-  #recomputed_epoch_n_nonzero_tokens: '/fsx-shared/s3/hst_corpus_90m/hst_corpus_90m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_n_nonzero_tokens_30.pkl'
+  #precomputed_epoch_n_nonzero_tokens: '/fsx-shared/s3/hst_corpus_90m/hst_corpus_90m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_n_nonzero_tokens_30.pkl'
   test_batch_ids: ['49_batch0']
   val_batch_ids: ['49_batch0']
   tokenizer_type: 'cell_graph'
@@ -38,6 +38,7 @@ meta:
   use_bfloat16: True # True, False
   use_flash_attention: True
   use_layer_norm: True
+  predict_gene: True
 mask:
   n_contexts: 1 # 1
   n_targets: 1 # 1 =, this is the number of blocks in block masking
@@ -50,7 +51,7 @@ mask:
   sample_segments: True
 optimization:
   warmup: 1 # 5, 3
-  epochs: 3 # 30, 10
+  epochs: 4 # 30, 10
   ema:
   - 0.9995 # 0.998, 0.9995
   - 1.0
