@@ -1511,13 +1511,11 @@ class GeneTransformerCombinedPredictor(GeneTransformerBasePredictor):
         # MLP projection layer
         z = self.predictor_embed(z)
 
-        if self.predict_gene:
-            # Get positional embeddings
-            pos_embed = self.pos_embed(udata['positions'])
-        else:
-            # Get gene embeddings
-            token_embed = self.token_embed_projection(
-                udata['token_embed'])
+        # Get positional embeddings
+        pos_embed = self.pos_embed(udata['positions'])
+        # Get gene embeddings
+        token_embed = self.token_embed_projection(
+            udata['token_embed'])
 
         # Get segment embeddings
         if self.cell_pos_enc == 'segment':
@@ -1535,10 +1533,8 @@ class GeneTransformerCombinedPredictor(GeneTransformerBasePredictor):
         # Add positional or gene embeddings to tokens from context masks (only
         # keep context mask indices and sum positional or gene and segment
         # embeddings without token embeddings)
-        if self.predict_gene:
-            z += apply_masks(pos_embed, masks_enc)
-        else:
-            z += apply_masks(token_embed, masks_enc)
+        z += apply_masks(pos_embed, masks_enc)
+        z += apply_masks(token_embed, masks_enc)
         z += apply_masks(seg_embed, masks_enc)
         _, N_ctxt, D = z.shape # N_ctxt: CONTEXT_MASK_SIZE, D: EMBED_DIM
 
@@ -1546,10 +1542,8 @@ class GeneTransformerCombinedPredictor(GeneTransformerBasePredictor):
         # (only keep target mask indices and sum token and segment
         # embeddings without value embeddings; the latter are to be
         # predicted)
-        if self.predict_gene:
-            pos_embs = apply_masks(pos_embed, masks_pred)
-        else:
-            token_embs = apply_masks(token_embed, masks_pred)
+        pos_embs = apply_masks(pos_embed, masks_pred)
+        token_embs = apply_masks(token_embed, masks_pred)
         seg_embs = apply_masks(seg_embed, masks_pred)
 
         # Repeat mask token for all batches, masks and "positions" from
@@ -1559,11 +1553,8 @@ class GeneTransformerCombinedPredictor(GeneTransformerBasePredictor):
             seg_embs.size(1), # TARGET_MASK_SIZE
             1)
 
-        # Add position and segment embeddings to mask tokens
-        if self.predict_gene:                  
-            pred_tokens += pos_embs + seg_embs
-        else:
-            pred_tokens += token_embs + seg_embs
+        # Add position and segment embeddings to mask tokens               
+        pred_tokens += pos_embs + token_embs + seg_embs
 
         # Repeat context embeddings for all target masks
         z = z.repeat(len(masks_pred), 1, 1)
