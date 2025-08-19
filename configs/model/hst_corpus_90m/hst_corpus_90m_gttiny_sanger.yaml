@@ -39,7 +39,7 @@ meta:
   pred_emb_dim: 96
   num_heads: 3
   special_tokens: [] # ['assay'] # ['batch'], ['assay', 'tissue', 'gene_panel', 'batch']
-  pos_learnable: False
+  pos_learnable: True
   seg_learnable: False
   use_bfloat16: True # True, False
   use_flash_attention: True
