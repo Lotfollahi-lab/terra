@@ -1016,6 +1016,9 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
         if self.norm is not None:
             x = self.norm(x)
 
+        # Add token embeddings for predictor
+        udata['token_embed'] = token_emb
+
         return x, udata
 
     @torch.no_grad()
@@ -1439,21 +1442,20 @@ class GeneTransformerCombinedPredictor(GeneTransformerBasePredictor):
         super().__init__(**base_predictor_kwargs)
         self.predict_gene = predict_gene
 
-        if self.predict_gene:
-            # Initialize positional embeddings
-            self.pos_embed = nn.Embedding(self.seq_len + 1, # include <pad>
-                                        self.predictor_embed_dim,
-                                        padding_idx=0)
-            
-            if not pos_learnable:
-                # Prevent gradient updates and initialize with sincos embedding
-                self.pos_embed.weight.requires_grad = False
-                pos_embed = get_1d_sincos_pos_embed(
-                    embed_dim=self.predictor_embed_dim,
-                    n_zero_pos=0,
-                    n_sincos_pos=self.seq_len)
-                self.pos_embed.weight[1:].copy_(
-                    torch.from_numpy(pos_embed).float())
+        # Initialize positional embeddings
+        self.pos_embed = nn.Embedding(self.seq_len + 1, # include <pad>
+                                    self.predictor_embed_dim,
+                                    padding_idx=0)
+        
+        if not pos_learnable:
+            # Prevent gradient updates and initialize with sincos embedding
+            self.pos_embed.weight.requires_grad = False
+            pos_embed = get_1d_sincos_pos_embed(
+                embed_dim=self.predictor_embed_dim,
+                n_zero_pos=0,
+                n_sincos_pos=self.seq_len)
+            self.pos_embed.weight[1:].copy_(
+                torch.from_numpy(pos_embed).float())
 
     def forward(
         self,
