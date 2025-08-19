@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=nemo-pretraining      # sets the name of the job shown in the job queue (via `squeue`)
-#SBATCH --nodes=4                        # requests 4 nodes (each will typically run one process)
+#SBATCH --nodes=1                        # requests 4 nodes (each will typically run one process)
 #SBATCH --ntasks-per-node=1              # runs one task (process) per node and aligns with DDP across nodes
 #SBATCH --gpus-per-node=8                # requests 8 GPU on each node
 #SBATCH --cpus-per-task=48               # allocates 48 CPU cores per task
