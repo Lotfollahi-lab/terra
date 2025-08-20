@@ -706,7 +706,18 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
 
         # Get embeddings for sequence of gene tokens and segments
         token_emb = self.token_embed(udata['tokens'])
-        seg_emb = self.seg_embed(udata['segments'])
+
+        if self.cell_pos_enc == 'segment':
+            seg_emb = self.seg_embed(udata['segments'])
+        elif self.cell_pos_enc == 'coord':
+            rel_x_coord_emb = get_1d_sincos_pos_embed_from_coord(
+                embed_dim=self.embed_dim // 2,
+                coord=udata['rel_x_coords'])
+            rel_y_coord_emb = get_1d_sincos_pos_embed_from_coord(
+                embed_dim=self.embed_dim // 2,
+                coord=udata['rel_y_coords'])
+            seg_emb = torch.cat(
+                [rel_x_coord_emb, rel_y_coord_emb], dim=-1)
 
         # Get value embeddings
         if self.count_encoding == 'value_bins':
