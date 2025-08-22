@@ -49,7 +49,7 @@ meta:
   use_bfloat16: True # True, False
   use_flash_attention: True
   use_layer_norm: True
-  predict_gene: False
+  predict_gene: True
 mask:
   n_contexts: 1 # 1
   n_targets: 1 # 1 =, this is the number of blocks in block masking
