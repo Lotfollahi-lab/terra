@@ -167,7 +167,7 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
                mlp_ratio: float = 4.0,
                use_flash_attention: bool = True,
                use_layer_norm: bool = True,
-               api_version: Literal['v1', 'v2', 'v3'] = 'v3',
+               api_version: Literal['v1', 'v2', 'v3'] = 'v4',
                sep_gene_tokens_neb: bool = False,
                predict_gene: bool = True,
                pos_learnable: bool = False,
@@ -242,7 +242,7 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
         api_version=api_version,
         sep_gene_tokens_neb=sep_gene_tokens_neb,
         pos_learnable=pos_learnable)
-    if api_version == 'v3':
+    if api_version == 'v3' or api_version == 'v4':
         encoder = EncoderMultiMaskWrapper(encoder)
     predictor = gt.__dict__["init_gt_predictor"](
         predictor_type=gt_type,
@@ -260,7 +260,7 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
         api_version=api_version,
         predict_gene=predict_gene,
         pos_learnable=pos_learnable)
-    if api_version == 'v3':
+    if api_version == 'v3' or api_version == 'v4':
         predictor = PredictorMultiMaskWrapper(predictor)
 
     def init_weights(m):
@@ -304,7 +304,8 @@ def init_opt(encoder: gt.GeneTransformerBaseEncoder,
              final_wd: float = 1e-6,
              final_lr: float = 0.0,
              use_bfloat16: bool = False,
-             ipe_scale: float = 1.25
+             ipe_scale: float = 1.25,
+             api_version: Literal['v1', 'v2', 'v3', 'v4'] = 'v4',
              ) -> tuple[torch.optim.AdamW,
                         torch.cuda.amp.GradScaler,
                         WarmupCosineSchedule,
@@ -327,6 +328,7 @@ def init_opt(encoder: gt.GeneTransformerBaseEncoder,
     final_lr:
     use_bfloat16:
     ipe_scale:
+    api_version:
 
     Returns
     -----------
@@ -375,6 +377,7 @@ def init_opt(encoder: gt.GeneTransformerBaseEncoder,
     # represented in FP16
     logger.info('Initializing automatic mixed precision training scaler: '
                 'GradScaler.')
-    scaler = torch.cuda.amp.GradScaler() if use_bfloat16 else None
+    #scaler = torch.cuda.amp.GradScaler() if use_bfloat16 else None
+    scaler = None # GradScaler should not be used for bfloat16
     
     return optimizer, scaler, scheduler, wd_scheduler

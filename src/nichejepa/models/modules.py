@@ -86,15 +86,14 @@ class Attention(nn.Module):
         q, k, v = qkv[0], qkv[1], qkv[2]
 
         if self.use_flash_attention:
-            with torch.backends.cuda.sdp_kernel(enable_flash=True):
-                if masks is not None:
-                    x = nn.functional.scaled_dot_product_attention(
-                        q, k, v, attn_mask=masks!= 0, scale=self.scale)
-                    attn=None
-                else:
-                    x = nn.functional.scaled_dot_product_attention(
-                        q, k, v, scale=self.scale)
-                    attn=None
+            if masks is not None:
+                x = nn.functional.scaled_dot_product_attention(
+                    q, k, v, attn_mask=masks!= 0, scale=self.scale)
+                attn=None
+            else:
+                x = nn.functional.scaled_dot_product_attention(
+                    q, k, v, scale=self.scale)
+                attn=None
         else:
             attn = (q @ k.transpose(-2, -1)) * self.scale
             if (masks is not None):

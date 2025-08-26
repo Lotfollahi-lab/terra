@@ -114,11 +114,7 @@ def train_step(udata,
 
     # Step 2: backward pass and step
     _enc_norm, _pred_norm = 0., 0.
-    if use_bfloat16:
-        scaler.scale(loss).backward()
-        scaler.unscale_(optimizer)
-    else:
-        loss.backward()
+    loss.backward()
     if warmup >= 1: # iteration-based clipping didn't always work # TODO
         if (epoch >= warmup) and (clip_grad is not None):
             _enc_norm = torch.nn.utils.clip_grad_norm_(
@@ -130,13 +126,8 @@ def train_step(udata,
             encoder.parameters(), clip_grad)
         _pred_norm = torch.nn.utils.clip_grad_norm_(
             predictor.parameters(), clip_grad)
-    if use_bfloat16:
-        scaler.step(optimizer)
-        scaler.update()
-    else:
-        optimizer.step()
-
-    optimizer.zero_grad()
+    optimizer.step()
+    optimizer.zero_grad(set_to_none=True)
 
     # Step 3: momentum update of target encoder
     with torch.no_grad():
@@ -153,7 +144,7 @@ def train_step(udata,
         grad_stats_pred.global_norm = float(_pred_norm)
     else:
         grad_stats = None
-        grats_stats_pred = None
+        grad_stats_pred = None
 
     return (float(loss), _new_lr, _new_wd, grad_stats, grad_stats_pred)
 
@@ -507,18 +498,19 @@ def train(args: dict,
         use_bfloat16=use_bfloat16)
     
     encoder = torch.compile(
-        encoder, mode="max-autotune", fullgraph=True)
+        encoder,
+        mode="max-autotune",
+        full_graph=True)
     predictor = torch.compile(
-        predictor, mode="max-autotune", fullgraph=True)
-    target_encoder = torch.compile(
-        target_encoder, mode="max-autotune", fullgraph=True)
+        predictor,
+        mode="max-autotune",
+        full_graph=True)
 
     encoder = DistributedDataParallel(
         encoder,
         static_graph=True,
         device_ids=[LOCAL_RANK],
         output_device=LOCAL_RANK,
-        static_graph=True,
         gradient_as_bucket_view=True,
         broadcast_buffers=False)
     predictor = DistributedDataParallel(
@@ -526,7 +518,6 @@ def train(args: dict,
         static_graph=True,
         device_ids=[LOCAL_RANK],
         output_device=LOCAL_RANK,
-        static_graph=True,
         gradient_as_bucket_view=True,
         broadcast_buffers=False)
     for p in target_encoder.parameters():
