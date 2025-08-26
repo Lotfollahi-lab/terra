@@ -1,12 +1,12 @@
 data:
   dataset_name: 'hst_corpus_80m'
   raw_data_folder_path: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/silver/hst_corpus_80m'
-  token_dict_folder_path: '/fsx-shared/s3/tokenizer/token_dictionary_homo_sapiens.pkl'
-  tokenized_data_folder_path: '/fsx-shared/s3/hst_corpus_80m/hst_corpus_80m_1k_subset.dataset'
-  precomputed_split: null # '/lustre/scratch126/cellgen/lotfollahi/DATASETS/tokenizer/hst_corpus_80m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_split_train.pkl'
-  precomputed_n_nonzero_tokens: null # '/lustre/scratch126/cellgen/lotfollahi/DATASETS/tokenizer/hst_corpus_80m_32_None_None_None_None_None_shifted_log_knn_10_n_nonzero_tokens_train.pkl'
-  #precomputed_epoch_splits: '/fsx-shared/s3/tokenizer/hst_corpus_80m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_split_30.pkl'
-  #precomputed_epoch_n_nonzero_tokens: '/fsx-shared/s3/tokenizer/hst_corpus_80m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_n_nonzero_tokens_30.pkl'
+  token_dict_folder_path: '/fsx-shared/s3/token_dictionary_homo_sapiens.pkl'
+  tokenized_data_folder_path: '/fsx-shared/s3/hst_corpus_80m/hst_corpus_80m_32_gene_corrected_read_depth_nonzero_mean_None_None_None_shifted_log_knn_10.dataset'
+  #precomputed_split: null # '/lustre/scratch126/cellgen/lotfollahi/DATASETS/tokenizer/hst_corpus_80m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_split_train.pkl'
+  #precomputed_n_nonzero_tokens: null # '/lustre/scratch126/cellgen/lotfollahi/DATASETS/tokenizer/hst_corpus_80m_32_None_None_None_None_None_shifted_log_knn_10_n_nonzero_tokens_train.pkl'
+  precomputed_epoch_splits: '/fsx-shared/s3/hst_corpus_80m_32_gene_corrected_read_depth_nonzero_mean_None_None_None_shifted_log_knn_10_precomputed_epoch_split_30.pkl'
+  precomputed_epoch_n_nonzero_tokens: '/fsx-shared/s3/hst_corpus_80m_32_gene_corrected_read_depth_nonzero_mean_None_None_None_shifted_log_knn_10_precomputed_epoch_n_nonzero_tokens_30.pkl'
   test_batch_ids: ['49_batch0']
   val_batch_ids: ['49_batch0']
   tokenizer_type: 'cell_graph'
@@ -18,18 +18,19 @@ data:
   seq_len_neighborhood: 2560 # 384/640, 1536/2816
   n_segments: 11 # 7, 11; number of unique segment tokens (gene segments)
   sampling_strategy: null # null, 'rand_sampling', 'norm_count_rank_sampling', 'rand_sampling_rep', 'norm_count_rank_sampling_rep'
-  batch_size: 16 # 104 # 224 no bfloat16 # 384, 448
-  num_workers: 0
+  batch_size: 144
+  num_workers: 44
   pin_memory: True
 meta:
   add_cls: False
-  gt_type: 'counts' # 'rank', 'counts'
+  gt_type: 'combined' # 'rank', 'counts'
   count_encoding: 'mlp' # 'value_bins', 'mlp'
   n_value_bins: 100
+  cell_pos_enc: 'coord'
   enc_depth: 12
   enc_emb_dim: 384
   pred_depth: 12
-  pred_emb_dim: 384 # 384
+  pred_emb_dim: 192 # 384
   num_heads: 6
   special_tokens: [] # ['assay'] # ['batch'], ['assay', 'tissue', 'gene_panel', 'batch']
   pos_learnable: False
@@ -48,8 +49,8 @@ mask:
   per_block_mask_ratio: 0.6 # 0.5, 0.6, 0.7, 0.8
   sample_segments: True
 optimization:
-  warmup: 3 # 3
-  epochs: 10 # 30 # 10
+  warmup: 5 # 3
+  epochs: 30 # 30 # 10
   ema:
   - 0.9995 # 0.998
   - 1.0

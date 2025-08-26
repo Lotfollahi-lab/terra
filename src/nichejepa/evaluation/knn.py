@@ -16,7 +16,9 @@ def knn_classifier(
     labels_train: np.ndarray,
     features_test: np.ndarray,
     labels_test: np.ndarray,
-    k: int = 20):
+    k: int = 20,
+    results_save_path: str | None = None,
+    ):
     """
     Simple KNN classifier using cosine similarity and majority voting.
     """
@@ -57,6 +59,15 @@ def knn_classifier(
     labels_test_np = labels_test.cpu().numpy()
 
     print("\n--- Evaluation Report on Test Set ---")
-    print(classification_report(labels_test_np, predictions_np, digits=4))
+    cls_report = classification_report(
+        labels_test_np, predictions_np, digits=4)
+    print(cls_report)
+
+    # Save to a .txt file
+    if results_save_path:
+        with open(results_save_path, "w") as f:
+            f.write(cls_report)
+
+        print("\n--- Evaluation Report saved. ---")
 
     return predictions_np

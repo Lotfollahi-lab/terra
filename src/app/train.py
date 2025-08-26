@@ -5,7 +5,6 @@ Vis. Pattern Recognit. 15619–15629 (2023);
 https://github.com/facebookresearch/ijepa/blob/main/src/train.py (05.06.2024).
 """
 
-import gc
 import os
 
 """
@@ -237,6 +236,14 @@ def train(args: dict,
         loss_fn_type = args['meta']['loss_fn_type']
     else:
         loss_fn_type = 'l1'
+    if 'predict_gene' in args['meta'].keys():
+        predict_gene = args['meta']['predict_gene']
+    else:
+        predict_gene = True
+    if 'pos_learnable' in args['meta'].keys():
+        pos_learnable = args['meta']['pos_learnable']
+    else:
+        pos_learnable = False
     special_tokens = args['meta']['special_tokens']
     use_bfloat16 = args['meta']['use_bfloat16']
     use_flash_attention = args['meta']['use_flash_attention']
@@ -308,6 +315,12 @@ def train(args: dict,
     # Get token sequence length and number of special tokens
     n_special_tokens = len(special_tokens)
     seq_len = seq_len_cell + seq_len_neighborhood + n_special_tokens
+
+    # Set multiprocessing start method
+    try:
+        mp.set_start_method("spawn")
+    except Exception:
+        logger.info(f'Multiprocessing not started.')
     
     # Initialize torch distributed backend
     world_size, rank = init_distributed()
@@ -334,12 +347,6 @@ def train(args: dict,
         dump = os.path.join(save_folder_path, 'params.yaml')
         with open(dump, 'w') as f:
             yaml.dump(args, f)
-    
-    # Start multiprocessing
-    try:
-        mp.set_start_method('spawn')
-    except Exception:
-        pass
 
     # Define log/checkpointing paths
     log_file = os.path.join(save_folder_path, f'{write_tag}_r{rank}.csv')
@@ -381,7 +388,9 @@ def train(args: dict,
         mlp_ratio=mlp_ratio,
         use_flash_attention=use_flash_attention,
         use_layer_norm=use_layer_norm,
-        sep_gene_tokens_neb=sep_gene_tokens_neb)
+        sep_gene_tokens_neb=sep_gene_tokens_neb,
+        predict_gene=predict_gene,
+        pos_learnable=pos_learnable)
     target_encoder = copy.deepcopy(encoder)
 
     # Initialize mask collator
@@ -566,8 +575,8 @@ def train(args: dict,
         time_meter = AverageMeter()
 
         for itr, (udata, masks_enc, masks_pred, masks_attention) in enumerate(train_loader):
-            for key in udata.keys():
-                udata[key] = udata[key].to(device, non_blocking=True)
+            for key, val in udata.items():
+                udata[key] = val.to(device, non_blocking=True)
             masks_enc = [u.to(device, non_blocking=True) for u in masks_enc]
             masks_pred = [u.to(device, non_blocking=True) for u in masks_pred]
             masks_attention = masks_attention.to(device, non_blocking=True)
@@ -640,11 +649,6 @@ def train(args: dict,
             if itr % checkpoint_freq_iter == 0:
                 logger.info(f'Saving checkpoint at epoch {epoch} iteration {itr}')
                 save_checkpoint(epoch, itr // checkpoint_freq_iter)
-            del udata, masks_enc, masks_pred, masks_attention
-            del loss, _new_lr, _new_wd
-            del grad_stats, grad_stats_pred
-            torch.cuda.empty_cache()
-            gc.collect()
 
         # -- Save Checkpoint after every epoch
         logger.info('avg. loss %.3f' % loss_meter.avg)

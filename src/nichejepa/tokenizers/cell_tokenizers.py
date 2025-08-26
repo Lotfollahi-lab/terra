@@ -845,9 +845,9 @@ class CellGraphTokenizer(CellBaseTokenizer):
         spv_idx_subtract = spv_start_idx - 2 - self.max_cls_tokens
         adata_dict['batch_value'] = [
             self.token_dict[f'spv_{batch_id_key}'] - spv_idx_subtract] * n_cells
-        adata_dict['gene_panel_value'] = [self.token_dict[
-            f'spv_gene_panel{len(adata.var_names)}'] - spv_idx_subtract
-            ] * n_cells
+        adata_dict['gene_panel_value'] = [self.token_dict.get(
+            f'spv_gene_panel{len(adata.var_names)}', spv_idx_subtract) # TODO: temp solution for unused gene panels while token is not used
+            - spv_idx_subtract] * n_cells
         adata_dict['assay_value'] = [
             self.token_dict[
                 f'spv_{adata.uns["assay"]}'] - spv_idx_subtract] * n_cells
@@ -1389,8 +1389,8 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
 
         adata_dict['batch_value'] = [
             self.token_dict[f'spv_{batch_id_key}'] - spv_idx_subtract] * n_cells
-        adata_dict['gene_panel_value'] = [self.token_dict[
-            f'spv_gene_panel{len(adata.var_names)}']
+        adata_dict['gene_panel_value'] = [self.token_dict.get(
+            f'spv_gene_panel{len(adata.var_names)}', spv_idx_subtract) # TODO: temp solution for unused gene panels while token is not used
             - spv_idx_subtract] * n_cells
         adata_dict['assay_value'] = [
             self.token_dict[

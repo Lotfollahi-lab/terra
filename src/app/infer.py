@@ -15,7 +15,7 @@ import scanpy as sc
 import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
-from datasets import Dataset
+from datasets import concatenate_datasets, Dataset
 from functools import partial
 from tqdm import tqdm
 from pyensembl import EnsemblRelease
@@ -35,6 +35,7 @@ from nichejepa.utils.embedding import (create_binary_selection_mask,
                                        compute_sum_and_nonzero_count,
                                        batch_rowwise_distances)
 from nichejepa.utils.logging import CSVLogger
+from typing import Dict, List
 
 
 _GLOBAL_SEED = 0
@@ -70,6 +71,7 @@ def infer(args: dict,
           return_gene_per_data: bool=False,
           return_gene_marker_score: bool=False,
           returen_distance: bool=False,
+          include_spatial_cell_emb: bool = False,
           ) -> ad.AnnData:
     """
     Use a trained model for inference. Run forward pass on a given
@@ -118,6 +120,8 @@ def infer(args: dict,
     returen_distance:
         If 'True' will compute and return distance between cosine sim of cell_neb 
         and cell_cell matrix.
+    include_spatial_cell_emb:
+        If 'True' also return spatial cell embedding.
 
     Returns
     -----------
@@ -158,6 +162,14 @@ def infer(args: dict,
         mlp_ratio = args['meta']['mlp_ratio']
     else:
         mlp_ratio = 4.0
+    if 'predict_gene' in args['meta'].keys():
+        predict_gene = args['meta']['predict_gene']
+    else:
+        predict_gene = True
+    if 'pos_learnable' in args['meta'].keys():
+        pos_learnable = args['meta']['pos_learnable']
+    else:
+        pos_learnable = False
     special_tokens = args['meta']['special_tokens']
     use_bfloat16 = args['meta']['use_bfloat16']
     use_flash_attention = args['meta']['use_flash_attention']
@@ -267,7 +279,9 @@ def infer(args: dict,
         mlp_ratio=mlp_ratio,
         use_flash_attention=use_flash_attention,
         api_version=api_version,
-        sep_gene_tokens_neb=sep_gene_tokens_neb)
+        sep_gene_tokens_neb=sep_gene_tokens_neb,
+        predict_gene=predict_gene,
+        pos_learnable=pos_learnable)
 
     if api_version != 'v3':
         return_layer_emb_fn = target_encoder.return_layer_emb
@@ -336,6 +350,8 @@ def infer(args: dict,
     # Retrieve embeddings
     all_cell_ids = []
     all_cell_emb_list = []
+    if include_spatial_cell_emb:
+        all_spatial_cell_emb_list = []
     all_neighborhood_emb_list = []
     all_cell_gene_emb_dict = {}
     all_neighborhood_gene_emb_dict = {}
@@ -426,6 +442,8 @@ def infer(args: dict,
             # Average gene embeddings into cell and neighborhood embedding 
             if agg_type == 'avg':
                 cell_emb = compute_mean_unmasked_emb(c_emb, cell_mask)
+                if include_spatial_cell_emb:
+                    spatial_cell_emb = compute_mean_unmasked_emb(n_emb, cell_mask)
                 neighborhood_emb = compute_mean_unmasked_emb(n_emb, neighborhood_mask)
             elif agg_type == "weighted_avg":
                 cell_weights = compute_unmasked_rank_based_weights(
@@ -433,6 +451,12 @@ def infer(args: dict,
                 cell_emb = compute_mean_unmasked_emb(
                     c_emb * cell_weights.unsqueeze(-1),
                     cell_mask)
+                if include_spatial_cell_emb:
+                    spatial_cell_weights = compute_unmasked_rank_based_weights(
+                        tokens, cell_mask)
+                    spatial_cell_emb = compute_mean_unmasked_emb(
+                        n_emb * cell_weights.unsqueeze(-1),
+                        cell_mask)
                 neighborhood_weights = compute_unmasked_rank_based_weights(
                     tokens, neighborhood_mask)
                 neighborhood_emb = compute_mean_unmasked_emb(
@@ -442,9 +466,13 @@ def infer(args: dict,
             # Concat layer-specific embeddings across batches
             if itr == 0:
                 all_cell_emb_list.append([cell_emb])
+                if include_spatial_cell_emb:
+                    all_spatial_cell_emb_list.append([spatial_cell_emb])
                 all_neighborhood_emb_list.append([neighborhood_emb])
             else:
-                all_cell_emb_list[i].append(cell_emb) 
+                all_cell_emb_list[i].append(cell_emb)
+                if include_spatial_cell_emb:
+                    all_spatial_cell_emb_list[i].append(spatial_cell_emb) 
                 all_neighborhood_emb_list[i].append(neighborhood_emb)
 
             # Store cell and neighborhood gene embeddings of last layer
@@ -598,6 +626,10 @@ def infer(args: dict,
         adata.obsm[f"cell_emb_layer_{emb_layer}"] = np.array(torch.cat(
             all_cell_emb_list[i],
             dim=0))
+        if include_spatial_cell_emb:
+            adata.obsm[f"spatial_cell_emb_layer_{emb_layer}"] = np.array(torch.cat(
+                all_spatial_cell_emb_list[i],
+                dim=0))            
         adata.obsm[f"neighborhood_emb_layer_{emb_layer}"] = np.array(torch.cat(
             all_neighborhood_emb_list[i],
             dim=0))
@@ -846,7 +878,8 @@ def embed_dataset(dataset: Dataset,
                   batch_size: int = 128,
                   pin_memory: bool = False,
                   num_workers: int = 12,
-                  include_spatial_cell_emb: bool = True,
+                   include_spatial_cell_emb: bool = True,
+                   return_token_embeddings: bool = False,
                   ) -> dict:
     """
     Parameters
@@ -871,6 +904,9 @@ def embed_dataset(dataset: Dataset,
     include_spatial_cell_emb:
         If `True`, also return a spatially contextualized cell embedding that
         attends to the neighborhood.
+    return_token_embeddings:
+        If `True`, also return per-token embeddings for each sequence position
+        (cell and neighborhood tokens; special tokens are excluded).
 
     Returns:
     -----------
@@ -937,7 +973,9 @@ def embed_dataset(dataset: Dataset,
         mlp_ratio=model_config['meta']['mlp_ratio'],
         use_flash_attention=model_config['meta']['use_flash_attention'],
         api_version=model_config['meta']['api_version'],
-        sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'])
+        sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'],
+        predict_gene=model_config['meta']['predict_gene'],
+        pos_learnable=model_config['meta']['pos_learnable'])
 
     if model_config['meta']['api_version'] != 'v3':
         return_layer_emb_fn = target_encoder.return_layer_emb
@@ -999,6 +1037,8 @@ def embed_dataset(dataset: Dataset,
     if include_spatial_cell_emb:
         all_spatial_cell_emb_list = []
     all_neighborhood_emb_list = []
+    if return_token_embeddings:
+        all_token_emb_list = []
 
     for itr, (udata, _, _, masks_attention) in tqdm(enumerate(loader)):
         for key in udata.keys():
@@ -1024,6 +1064,9 @@ def embed_dataset(dataset: Dataset,
                 udata=udata,
                 masks_attention=masks_attention,
                 pad_neighborhood=False).cpu()
+            if return_token_embeddings:
+                # n_emb contains embeddings for all  tokens
+                all_token_emb_list.append(n_emb)
         
         # Create mask for index cell genes
         cell_mask = create_binary_selection_mask(
@@ -1075,94 +1118,123 @@ def embed_dataset(dataset: Dataset,
         output_embed["spatial_cell_emb"] = np.array(torch.cat(
             all_spatial_cell_emb_list,
             dim=0))        
-
+    if return_token_embeddings:
+        output_embed["token_emb"] = np.array(torch.cat(
+            all_token_emb_list,
+            dim=0))
     return output_embed
 
 
-def perturb_dataset(dataset: Dataset,
-                    perturb_df: pd.DataFrame,
-                    model_folder_path: str,
-                    seq_len_cell: int = 256,
-                    nproc: int = 4,
-                    keep_in_memory: bool = False,) -> Dataset:
+def _build_perturb_index(df: pd.DataFrame) -> Dict[str, List[dict]]:
+    """
+    Turn perturb_df into an index:
+        {perturbed_cell_id: [row_as_dict, …]}
+    (Using itertuples avoids Python object creation for every column.)
+    """
+    index = defaultdict(list)
+    for row in df.itertuples(index=False):
+        index[row.perturbed_cell_id].append(row._asdict())
+    return index
 
-    def _perturb_example(example,
-                        perturb_df: pd.DataFrame,
-                        seq_len_cell: int = 256) -> dict:
-        example_cell_ids = list(dict.fromkeys(example['cell_ids']))
-        
-        if not any(cell_id in perturb_df['perturbed_cell_id'].values.tolist() for cell_id in example_cell_ids):
-            # No perturbation applied
-            return example
-            
-        for idx, row in perturb_df.iterrows():
-            
-            perturbed_cell_id = row['perturbed_cell_id']
-            
-            if row['perturbation_target'] == 'cell':
-                if not perturbed_cell_id == example_cell_ids[0]:
+def _perturb_batch(
+    batch: dict,
+    index: Dict[str, List[dict]],
+    seq_len_cell: int = 256,
+) -> dict:
+    """
+    `batch` is the dictionary of column -> list-of-values
+    returned by Hugging-Face when batched=True.
+    Modify the tensors in-place (cheap) and return the same dict.
+    """
+    B = len(batch["cell_ids"])          # batch size
+    for b in range(B):
+        cell_ids: List[str] = list(dict.fromkeys(batch["cell_ids"][b]))
+        # Fast reject: does this example touch any perturbed cell at all?
+        if not any(cid in index for cid in cell_ids):
+            continue
+
+        # Handle index-cell (first) and neighbourhood (rest) separately
+        for cid in cell_ids:
+            for row in index.get(cid, []):
+                is_index_cell = (cid == cell_ids[0])
+                if row["perturbation_target"] == "cell" and not is_index_cell:
                     continue
-                else:
-                    #print(f"Perturb index cell with ID {example['cell_id']}:")
-                    if row['perturbed_gene_token'] == 'all':
-                        perturbed_token_idx = torch.arange(0, seq_len_cell)
-                    else:
-                        perturbed_token_idx = (example['gene_tokens'][:seq_len_cell] == row['perturbed_gene_token']).nonzero(as_tuple=True)[0]
-                    if row['perturbation_type'] == 'knockout':
-                        example['gene_tokens'][perturbed_token_idx] = 0
-                        example['gene_expr'][perturbed_token_idx] = 0.0
-                    elif row['perturbation_type'] == 'foldchange':
-                        example['gene_expr'][perturbed_token_idx] = example['gene_expr'][perturbed_token_idx] * row['foldchange']                    
-                    else:
-                        raise ValueError(f'Invalid perturbation type {row["perturbation_type"]}.')
-                                            
-            elif row['perturbation_target'] == 'neighborhood':
-                if not perturbed_cell_id in example_cell_ids[1:]:
+                if row["perturbation_target"] == "neighborhood" and is_index_cell:
                     continue
+
+                gene_tokens = batch["gene_tokens"][b]
+                gene_expr   = batch["gene_expr"][b]
+
+                # --- choose which token positions to perturb -------------
+                if row["perturbed_gene_token"] == "all":
+                    if is_index_cell:
+                        idx = slice(0, seq_len_cell)
+                    else:
+                        idx = slice(seq_len_cell, None)
                 else:
-                    #print(f"Perturb neighborhood of index cell with ID {example['cell_id']}:")
-                    if row['perturbed_gene_token'] == 'all':
-                        perturbed_token_idx = torch.arange(seq_len_cell, len(example['gene_tokens']))
-                    else:
-                        perturbed_token_idx = (example['gene_tokens'][seq_len_cell:] == row['perturbed_gene_token']).nonzero(as_tuple=True)[0]
-                    if row['perturbation_type'] == 'knockout':
-                        example['gene_tokens'][perturbed_token_idx] = 0
-                        example['gene_expr'][perturbed_token_idx] = 0.0
-                    elif row['perturbation_type'] == 'foldchange':
-                        example['gene_expr'][perturbed_token_idx] = example['gene_expr'][perturbed_token_idx] * row['foldchange']                    
-                    else:
-                        raise ValueError(f'Invalid perturbation type {row["perturbation_type"]}.')           
-            else:
-                raise ValueError(f'Invalid perturbation target {row["perturbation_target"]}.')
-        
-        # Perturbation applied
-        return example
+                    token_id = row["perturbed_gene_token"]
+                    token_slice = (
+                        gene_tokens[:seq_len_cell]
+                        if is_index_cell else
+                        gene_tokens[seq_len_cell:]
+                    )
+                    rel_idx = torch.nonzero(token_slice == token_id, as_tuple=True)[0]
+                    offset  = 0 if is_index_cell else seq_len_cell
+                    idx     = rel_idx + offset
+                # ---------------------------------------------------------
 
+                if row["perturbation_type"] == "knockout":
+                    gene_expr[idx]   = 0.0
+                elif row["perturbation_type"] == "foldchange":
+                    gene_expr[idx] *= row["foldchange"]
+                else:
+                    raise ValueError(f"Bad perturbation_type: {row['perturbation_type']}")
 
-    # Load token dictionary
-    token_dictionary_file_path = Path(model_folder_path) / 'token_dictionary.pkl'
-    with open(token_dictionary_file_path, 'rb') as f:
+    return batch
+
+def perturb_dataset(
+    dataset: Dataset,
+    perturb_df: pd.DataFrame,
+    model_folder_path: str,
+    seq_len_cell: int = 256,
+    nproc: int = 4,
+    batch_size: int = 1000,
+    keep_in_memory: bool = False,
+) -> Dataset:
+    # 1) Load token dictionary once
+    with open(Path(model_folder_path) / "token_dictionary.pkl", "rb") as f:
         token_dict = pickle.load(f)
-    
-    perturb_df['perturbed_gene_token'] = perturb_df['perturbed_ensembl_id'].apply(lambda x: x if x == 'all' else token_dict[x])
 
-    perturb_func = partial(
-        _perturb_example,
-        perturb_df=perturb_df,
-        seq_len_cell=seq_len_cell)
-    
-    # Apply perturbation example-wise
-    perturbed_dataset = dataset.map(
-        perturb_func,
+    # 2) Convert gene IDs to token IDs up-front (vectorised)
+    perturb_df = perturb_df.copy()
+    perturb_df["perturbed_gene_token"] = perturb_df["perturbed_ensembl_id"].where(
+        perturb_df["perturbed_ensembl_id"] == "all",
+        perturb_df["perturbed_ensembl_id"].map(token_dict),
+    )
+
+    # 3) Build an index for O(1) lookup
+    perturb_index = _build_perturb_index(perturb_df)
+    # 4) Partial-apply so the mapper sees only one argument
+    perturb_fn = partial(
+        _perturb_batch,
+        index=perturb_index,
+        seq_len_cell=seq_len_cell,
+    )
+    # 5) Map in batch mode
+    return dataset.map(
+        perturb_fn,
+        batched=True,
+        batch_size=batch_size,
         num_proc=nproc,
-        keep_in_memory=keep_in_memory)    
-    
-    return perturbed_dataset
+        keep_in_memory=keep_in_memory,
+        load_from_cache_file=False,
+    )
 
 
 @torch.no_grad()
 def harmonize_tokenize_embed_pipeline(
         adata: ad.AnnData,
+        sample_key: str | None,
         model_folder_path: str,
         gene_perturb_df: pd.DataFrame | None = None,               
         nproc: int = 4,
@@ -1171,8 +1243,6 @@ def harmonize_tokenize_embed_pipeline(
         save_dataset_path: Path | str | None = None,
         num_shards: int = 32,
         emb_layer: int | None = None,
-        cell_gene_ids: list = [],
-        neighborhood_gene_ids: list = [],
         agg_excluded_tokens: list[int] | None = None,
         top_k: int | None = None,
         batch_size: int = 128,
@@ -1186,6 +1256,8 @@ def harmonize_tokenize_embed_pipeline(
     -----------
     adata:
         An unharmonized AnnData object to be tokenized.
+    sample_key:
+        Key in `adata.obs` where the sample information is stored.
     model_folder_path:
         Path to the folder containing the model config, token dictionary, and
         normalization factors.
@@ -1209,11 +1281,6 @@ def harmonize_tokenize_embed_pipeline(
         Number of shards with which huggingface dataset is saved.
     emb_layer:
         Layer for which to retrieve the embedding.
-    cell_gene_ids:
-        List with gene IDs for which cell gene embeddings will be retrieved.
-    neighborhood_gene_ids:
-        List with gene IDs for which neighborhood gene embeddings will be
-        retrived.
     agg_excluded_tokens:
         List of tokens to be excluded from the aggregation.
     top_k:
@@ -1230,39 +1297,61 @@ def harmonize_tokenize_embed_pipeline(
     adata:
         A harmonized AnnData object with embeddings stored in `adata.obsm`.
     """
-    print('====================================================================================================')
-    print('                                         HARMONIZE DATA                                             ')
-    print('====================================================================================================')    
-    adata = harmonize_adata(adata)
+    datasets = []
+    if sample_key:
+        samples = adata.obs[sample_key].unique().tolist()
 
-    print('====================================================================================================')
-    print('                                          TOKENIZE DATA                                             ')
-    print('====================================================================================================')  
-    dataset = tokenize_adata(
-        adata=adata,
-        model_folder_path=model_folder_path,             
-        nproc=nproc,
-        processing_mode=processing_mode)
+        for sample in samples:
+            adata_sample = adata[adata.obs[sample_key] == sample]
+            print(f"Start processing sample: {sample}...")
+            print(f"Harmonizing sample {sample}...")
+            adata_sample = harmonize_adata(adata_sample)
+            print(f"Harmonized sample {sample}.")
+
+            print(f"Tokenizing sample {sample}...")
+            dataset_sample = tokenize_adata(
+                adata=adata_sample,
+                model_folder_path=model_folder_path,             
+                nproc=nproc,
+                processing_mode=processing_mode)
+            datasets.append(dataset_sample)
+            print(f"Tokenized sample {sample}.")
+
+        print(f"Concatenating tokenized data...")
+        dataset = concatenate_datasets(datasets)
+        print(f"Concatenated tokenized data.")
+
+    else:
+        print("No `sample_key` specified. Start processing entire AnnData.")
+        print(f"Harmonizing AnnData...")
+        adata = harmonize_adata(adata)
+        print(f"Harmonized AnnData.")
+
+        print(f"Tokenizing AnnData.")
+        dataset = tokenize_adata(
+            adata=adata,
+            model_folder_path=model_folder_path,             
+            nproc=nproc,
+            processing_mode=processing_mode)        
 
     if save_dataset_path:
+        print(f"Saving tokenized data...")
         dataset.save_to_disk(
             save_dataset_path,
             num_shards=num_shards)
+        print(f"Saved tokenized data.")
 
-    print('====================================================================================================')
-    print('                                            EMBED DATA                                              ')
-    print('====================================================================================================')  
+    print(f"Embedding tokenized data...")
     output_embed = embed_dataset(
         dataset=dataset,
         model_folder_path=model_folder_path,
         emb_layer=emb_layer,
-        cell_gene_ids=cell_gene_ids,
-        neighborhood_gene_ids=neighborhood_gene_ids,
         agg_excluded_tokens=agg_excluded_tokens,
         top_k=top_k,
         batch_size=batch_size,
         pin_memory=pin_memory,
         num_workers=num_workers)
+    print(f"Embedded tokenized data.")
 
     # Add embeddings to adata
     for key, values in output_embed.items():
@@ -1286,6 +1375,7 @@ def gene_embed_dataset(dataset: Dataset,
                   returen_distance: bool=False,
                   return_cosine_sim: bool=False,
                   return_receptor_average: bool=False,
+                  include_spatial_cell_emb: bool = True,
                   description: str='',
                   ) -> dict:
     
@@ -1322,6 +1412,9 @@ def gene_embed_dataset(dataset: Dataset,
         If 'True' will compute and return cosine_sim matrix.
     return_receptor_average:
         If 'True' will compute and return receptor average embeddings for cell-neighborhood gene pairs.
+    include_spatial_cell_emb:
+        If `True`, also return gene embeddings for spatially contextualized cell embedding that
+        attends to the neighborhood.
     description:
         description for task that is currently using this function.
     Returns:
@@ -1451,6 +1544,9 @@ def gene_embed_dataset(dataset: Dataset,
     all_neighborhood_gene_emb_dict = {}
     all_cell_gene_emb_per_data_dict = {}
     all_neighborhood_gene_emb_per_data_dict = {}
+    if include_spatial_cell_emb:
+        all_spatial_cell_gene_emb_dict = {}
+        all_spatial_cell_gene_emb_per_data_dict = {}
     cos_sim_dict = {}
     emd_list = []
     emd_matrix_list = []
@@ -1487,9 +1583,13 @@ def gene_embed_dataset(dataset: Dataset,
             if itr == 0 or itr == len(loader)-1:
                 cell_embs = torch.zeros((emb.shape[0], len(cell_gene_ids), emb.shape[-1]), device=emb.device)
                 cell_presence = torch.zeros((emb.shape[0], len(cell_gene_ids)), device=emb.device)
+                if include_spatial_cell_emb:
+                    spatial_cell_embs = torch.zeros((emb.shape[0], len(cell_gene_ids), emb.shape[-1]), device=emb.device)
             else:
                 cell_embs.zero_()
                 cell_presence.zero_()
+                if include_spatial_cell_emb:
+                    spatial_cell_embs.zero_()
             rows = torch.arange(emb.shape[0], device=emb.device)
             for j, gene_id in enumerate(cell_gene_ids):
                 gene_presence_local, gene_indices = retrieve_gene_emb(
@@ -1500,19 +1600,32 @@ def gene_embed_dataset(dataset: Dataset,
                         aggregate_multiple=False
                 )
                 cell_embs[rows[gene_presence_local], j, :] = emb[rows[gene_presence_local], gene_indices[gene_presence_local], :]
+                if include_spatial_cell_emb:
+                    spatial_cell_embs[rows[gene_presence_local], j, :] = n_emb[rows[gene_presence_local], gene_indices[gene_presence_local], :]
                 cell_presence[:, j] = gene_presence_local.float()
                 if return_gene:
                     if itr == 0:
                         all_cell_gene_emb_dict[gene_id] = [cell_embs[:, j, :].clone()]
+                        if include_spatial_cell_emb:
+                            all_spatial_cell_gene_emb_dict[gene_id] = [spatial_cell_embs[:, j, :].clone()]
                     else:
                         all_cell_gene_emb_dict[gene_id].append(cell_embs[:, j, :].clone())
+                        if include_spatial_cell_emb:
+                            all_spatial_cell_gene_emb_dict[gene_id].append(spatial_cell_embs[:, j, :].clone())
                 if return_gene_per_data:
                     gene_sum, gene_count = compute_sum_and_nonzero_count(cell_embs[:, j, :])
                     if itr == 0:
                         all_cell_gene_emb_per_data_dict[gene_id] = (gene_sum, gene_count)
+                        if include_spatial_cell_emb:
+                            spatial_gene_sum, spatial_gene_count = compute_sum_and_nonzero_count(spatial_cell_embs[:, j, :])
+                            all_spatial_cell_gene_emb_per_data_dict[gene_id] = (spatial_gene_sum, spatial_gene_count)
                     else:
                         all_cell_gene_emb_per_data_dict[gene_id][0].add_(gene_sum)
                         all_cell_gene_emb_per_data_dict[gene_id][1].add_(gene_count)
+                        if include_spatial_cell_emb:
+                            spatial_gene_sum, spatial_gene_count = compute_sum_and_nonzero_count(spatial_cell_embs[:, j, :])
+                            all_spatial_cell_gene_emb_per_data_dict[gene_id][0].add_(spatial_gene_sum)
+                            all_spatial_cell_gene_emb_per_data_dict[gene_id][1].add_(spatial_gene_count)
 
             # Compute receptor averages for cell-neighborhood gene pairs
             if return_receptor_average:
@@ -1633,9 +1746,15 @@ def gene_embed_dataset(dataset: Dataset,
                 emd_matrix_list.append(emd_matrix)
     # last layer
     if return_gene:
-        return all_cell_gene_emb_dict, all_neighborhood_gene_emb_dict
+        if include_spatial_cell_emb:
+            return all_cell_gene_emb_dict, all_neighborhood_gene_emb_dict, all_spatial_cell_gene_emb_dict
+        else:
+            return all_cell_gene_emb_dict, all_neighborhood_gene_emb_dict
     if return_gene_per_data:
-        return all_cell_gene_emb_per_data_dict, all_neighborhood_gene_emb_per_data_dict
+        if include_spatial_cell_emb:
+            return all_cell_gene_emb_per_data_dict, all_neighborhood_gene_emb_per_data_dict, all_spatial_cell_gene_emb_per_data_dict
+        else:
+            return all_cell_gene_emb_per_data_dict, all_neighborhood_gene_emb_per_data_dict
     if return_cosine_sim:
         return cos_sim_dict
     if returen_distance:
@@ -1653,6 +1772,7 @@ def get_gene_embed(
     batch_size: int = 128,
     pin_memory: bool = False,
     num_workers: int = 12,
+    include_spatial_cell_emb: bool = True,
 ) -> dict[str, np.ndarray]:
     """
     Retrieve gene embeddings for specified cell and neighborhood gene IDs.
@@ -1667,6 +1787,7 @@ def get_gene_embed(
     batch_size: Dataloader param.
     pin_memory: Dataloader param.
     num_workers: Number of workers used.
+    include_spatial_cell_emb: If `True`, also return gene embeddings for spatially contextualized cell embedding.
 
     Returns
     -------
@@ -1684,19 +1805,36 @@ def get_gene_embed(
     # Create reverse mapping from token id to ensembl id
     id_to_ensembl = {v: k for k, v in token_dict.items()}
 
-    all_cell_gene_emb_dict, all_neighborhood_gene_emb_dict = gene_embed_dataset(
-        dataset=dataset,
-        model_folder_path=model_folder_path,
-        emb_layer=emb_layer,
-        cell_gene_ids=list(set(cell_gene_ids)),
-        neighborhood_gene_ids=list(set(neighborhood_gene_ids)),
-        batch_size=batch_size,
-        pin_memory=pin_memory,
-        num_workers=num_workers,
-        return_gene=True,
-        compute_cosine_with_list=['neighborhood'],
-        description='GETTING GENE EMBEDDINGS'
-    )
+    if include_spatial_cell_emb:
+        all_cell_gene_emb_dict, all_neighborhood_gene_emb_dict, all_spatial_cell_gene_emb_dict = gene_embed_dataset(
+            dataset=dataset,
+            model_folder_path=model_folder_path,
+            emb_layer=emb_layer,
+            cell_gene_ids=list(set(cell_gene_ids)),
+            neighborhood_gene_ids=list(set(neighborhood_gene_ids)),
+            batch_size=batch_size,
+            pin_memory=pin_memory,
+            num_workers=num_workers,
+            return_gene=True,
+            compute_cosine_with_list=['neighborhood'],
+            include_spatial_cell_emb=include_spatial_cell_emb,
+            description='GETTING GENE EMBEDDINGS'
+        )
+    else:
+        all_cell_gene_emb_dict, all_neighborhood_gene_emb_dict = gene_embed_dataset(
+            dataset=dataset,
+            model_folder_path=model_folder_path,
+            emb_layer=emb_layer,
+            cell_gene_ids=list(set(cell_gene_ids)),
+            neighborhood_gene_ids=list(set(neighborhood_gene_ids)),
+            batch_size=batch_size,
+            pin_memory=pin_memory,
+            num_workers=num_workers,
+            return_gene=True,
+            compute_cosine_with_list=['neighborhood'],
+            include_spatial_cell_emb=include_spatial_cell_emb,
+            description='GETTING GENE EMBEDDINGS'
+        )
     output_gene_embed = {}        
     for gene_id in cell_gene_ids:
         ensg = id_to_ensembl[gene_id]
@@ -1704,6 +1842,11 @@ def get_gene_embed(
             all_cell_gene_emb_dict[gene_id],
             dim=0).cpu())
         del all_cell_gene_emb_dict[gene_id]
+        if include_spatial_cell_emb:
+            output_gene_embed[f"spatial_cell_emb_gene{ensg}"] = np.array(torch.cat(
+                all_spatial_cell_gene_emb_dict[gene_id],
+                dim=0).cpu())
+            del all_spatial_cell_gene_emb_dict[gene_id]
     for gene_id in neighborhood_gene_ids:
         ensg = id_to_ensembl[gene_id]
         output_gene_embed[f"neighborhood_emb_gene{ensg}"] = np.array(torch.cat(
@@ -1723,6 +1866,7 @@ def get_average_gene_embed(
     batch_size: int = 128,
     pin_memory: bool = False,
     num_workers: int = 12,
+    include_spatial_cell_emb: bool = True,
 ) -> dict[str, np.ndarray]:
     """
     Retrieve average gene embeddings for each gene per dataset.
@@ -1737,6 +1881,7 @@ def get_average_gene_embed(
     batch_size: Dataloader param.
     pin_memory: Dataloader param.
     num_workers: Number of workers used.
+    include_spatial_cell_emb: If `True`, also return average gene embeddings for spatially contextualized cell embedding.
 
     Returns
     -------
@@ -1751,21 +1896,41 @@ def get_average_gene_embed(
     neighborhood_gene_ids = [token_dict[ensg] for ensg in neighborhood_gene_ensembl_id]
     cell_gene_ids         = [token_dict[ensg] for ensg in cell_gene_ensembl_id]
 
-    all_cell_gene_emb_per_data_dict, all_neighborhood_gene_emb_per_data_dict= gene_embed_dataset(
-        dataset=dataset,
-        model_folder_path=model_folder_path,
-        emb_layer=emb_layer,
-        cell_gene_ids=list(set(cell_gene_ids)),
-        neighborhood_gene_ids=list(set(neighborhood_gene_ids)),
-        batch_size=batch_size,
-        pin_memory=pin_memory,
-        num_workers=num_workers,
-        return_gene_per_data=True,
-        compute_cosine_with_list=['neighborhood'],
-        description='GETTING AVERAGE GENE EMBEDDINGS'
-    )
+    if include_spatial_cell_emb:
+        all_cell_gene_emb_per_data_dict, all_neighborhood_gene_emb_per_data_dict, all_spatial_cell_gene_emb_per_data_dict = gene_embed_dataset(
+            dataset=dataset,
+            model_folder_path=model_folder_path,
+            emb_layer=emb_layer,
+            cell_gene_ids=list(set(cell_gene_ids)),
+            neighborhood_gene_ids=list(set(neighborhood_gene_ids)),
+            batch_size=batch_size,
+            pin_memory=pin_memory,
+            num_workers=num_workers,
+            return_gene_per_data=True,
+            compute_cosine_with_list=['neighborhood'],
+            include_spatial_cell_emb=include_spatial_cell_emb,
+            description='GETTING AVERAGE GENE EMBEDDINGS'
+        )
+    else:
+        all_cell_gene_emb_per_data_dict, all_neighborhood_gene_emb_per_data_dict = gene_embed_dataset(
+            dataset=dataset,
+            model_folder_path=model_folder_path,
+            emb_layer=emb_layer,
+            cell_gene_ids=list(set(cell_gene_ids)),
+            neighborhood_gene_ids=list(set(neighborhood_gene_ids)),
+            batch_size=batch_size,
+            pin_memory=pin_memory,
+            num_workers=num_workers,
+            return_gene_per_data=True,
+            compute_cosine_with_list=['neighborhood'],
+            include_spatial_cell_emb=include_spatial_cell_emb,
+            description='GETTING AVERAGE GENE EMBEDDINGS'
+        )
     cell_gene_emb_features = []
     cell_gene_emb_counts = []
+    if include_spatial_cell_emb:
+        spatial_cell_gene_emb_features = []
+        spatial_cell_gene_emb_counts = []
 
     neighborhood_gene_emb_features = []
     neighborhood_gene_emb_counts = []
@@ -1776,6 +1941,11 @@ def get_average_gene_embed(
             count_emb = all_cell_gene_emb_per_data_dict[gene_id][1].numpy()
             cell_gene_emb_features.append((sum_emb / count_emb).reshape(1, -1))
             cell_gene_emb_counts.append(count_emb.reshape(1, -1))
+        if include_spatial_cell_emb and gene_id in all_spatial_cell_gene_emb_per_data_dict.keys():
+            spatial_sum_emb = all_spatial_cell_gene_emb_per_data_dict[gene_id][0].numpy()
+            spatial_count_emb = all_spatial_cell_gene_emb_per_data_dict[gene_id][1].numpy()
+            spatial_cell_gene_emb_features.append((spatial_sum_emb / spatial_count_emb).reshape(1, -1))
+            spatial_cell_gene_emb_counts.append(spatial_count_emb.reshape(1, -1))
 
     for gene_id in neighborhood_gene_ids:
         if gene_id in all_neighborhood_gene_emb_per_data_dict.keys():
@@ -1793,6 +1963,14 @@ def get_average_gene_embed(
     else:
         output_average_gene_embed['cell_gene_emb_average_per_data'] =np.array([])
         output_average_gene_embed['cell_gene_emb_counts_per_data'] = np.array([])
+
+    if include_spatial_cell_emb:
+        if spatial_cell_gene_emb_features:
+            output_average_gene_embed['spatial_cell_gene_emb_average_per_data'] = np.concatenate(spatial_cell_gene_emb_features, axis=0)
+            output_average_gene_embed['spatial_cell_gene_emb_counts_per_data'] = np.concatenate(spatial_cell_gene_emb_counts, axis=0)
+        else:
+            output_average_gene_embed['spatial_cell_gene_emb_average_per_data'] = np.array([])
+            output_average_gene_embed['spatial_cell_gene_emb_counts_per_data'] = np.array([])
 
     if neighborhood_gene_emb_features:
         output_average_gene_embed['neighborhood_gene_emb_average_per_data'] = np.concatenate(neighborhood_gene_emb_features, axis=0)

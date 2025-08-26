@@ -3,11 +3,16 @@ Adapted from https://github.com/facebookresearch/dino/blob/main/eval_linear.py
 (07.07.2025).
 """
 
+import json
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset, random_split
-from sklearn.metrics import classification_report, mean_squared_error, r2_score
+import scipy.spatial.distance as dist
+from sklearn.metrics import (classification_report,
+                             mean_absolute_error,
+                             mean_squared_error)
 
 
 class LinearClassifier(nn.Module):
@@ -36,7 +41,9 @@ class LinearRegressor(nn.Module):
 
     def forward(self, x):
         x = x.view(x.size(0), -1)
-        return self.linear(x)
+        x = F.softmax(self.linear(x), dim=-1)
+        
+        return x
 
 
 def linear_classifier(
@@ -50,6 +57,7 @@ def linear_classifier(
     batch_size: int = 128,
     lr: float = 0.001,
     patience: int = 10,
+    results_save_path: str | None = None,
     ):
     """
     Train a linear classifier with early stopping on validation loss.
@@ -161,7 +169,16 @@ def linear_classifier(
             all_targets.extend(batch_labels.cpu().numpy())
 
     print("\n--- Evaluation Report on Test Set ---")
-    print(classification_report(all_targets, all_preds, digits=4))
+    cls_report = classification_report(
+        all_targets, all_preds, digits=4)
+    print(cls_report)
+
+    # Save to a .txt file
+    if results_save_path:
+        with open(results_save_path, "w") as f:
+            f.write(cls_report)
+
+        print("\n--- Evaluation Report saved. ---")
 
     return all_preds, all_targets, all_logits, model
 
@@ -177,6 +194,7 @@ def linear_regressor(
     batch_size: int = 128,
     lr: float = 0.001,
     patience: int = 10,
+    results_save_path: str | None = None,
     ):
     """
     Train a linear regressor with early stopping on validation loss.
@@ -286,8 +304,24 @@ def linear_regressor(
     all_targets = torch.cat(all_targets).numpy()
 
     print("\n--- Evaluation Report on Test Set ---")
-    print(f"R2 Score: {r2_score(all_targets, all_preds):.4f}")
-    print(f"MSE: {mean_squared_error(all_targets, all_preds):.6f}")
+    mae = mean_absolute_error(all_targets, all_preds)
+    mse = mean_squared_error(all_targets, all_preds)
+    jsd_values = dist.jensenshannon(all_targets, all_preds, axis=-1)
+    avg_jsd = jsd_values.mean()
+    print(f"MAE: {mae:.4f}")
+    print(f"MSE: {mse:.4f}")
+    print(f"Average Jensen-Shannon Divergence: {avg_jsd:.4f}")
+    metrics = {
+        "MAE": mae,
+        "MSE": mse,
+        "JSD": float(avg_jsd)}
+
+    # Save to a .txt file
+    if results_save_path:
+        with open(results_save_path, "w") as f:
+            json.dump(metrics, f, indent=4)
+
+        print("\n--- Evaluation Metrics saved. ---")
 
     return all_preds, model
 

@@ -15,7 +15,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from .modules import Attention, Block, ValueEmbWeightsProjection, MLP
+from .modules import Attention, Block, MLP, ValueEmbWeightsProjection
 from .utils import (get_1d_sincos_pos_embed,
                     get_1d_sincos_pos_embed_from_coord,
                     repeat_interleave_batch,
@@ -38,7 +38,9 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
     n_segments:
         Number of token segments within a token sequence.
     cell_pos_enc:
-        How cell positions are encoded.
+        Cell position encoding. Either `segment` if cells are ranked
+        based on distance to index cell or `coords` if relative
+        positions to index cell are used.
     embed_dim:
         Dimension of the encoder embedding.
     depth:
@@ -257,7 +259,9 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
     n_segments:
         Number of token segments within a token sequence.
     cell_pos_enc:
-        How cell positions are encoded.
+        Cell position encoding. Either `segment` if cells are ranked
+        based on distance to index cell or `coords` if relative
+        positions to index cell are used.
     predictor_embed_dim:
         Dimension of the embedding of the predictor.
     depth:
@@ -366,7 +370,7 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
                                         embed_dim,
                                         bias=True)
 
-        # Initialize mask token weights
+        # Initialize mask token weights (not used)
         # trunc_normal_(self.mask_token, std=self.init_std)
         
         # Initialize layer weights
@@ -483,7 +487,19 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
             # Get positional, segment and token embeddings (excl.
             # special tokens)
             pos_emb = self.pos_embed(udata['positions'])
-            seg_emb = self.seg_embed(udata['segments'])
+
+            if self.cell_pos_enc == 'segment':
+                seg_emb = self.seg_embed(udata['segments'])
+            elif self.cell_pos_enc == 'coord':
+                rel_x_coord_emb = get_1d_sincos_pos_embed_from_coord(
+                    embed_dim=self.embed_dim // 2,
+                    coord=udata['rel_x_coords'])
+                rel_y_coord_emb = get_1d_sincos_pos_embed_from_coord(
+                    embed_dim=self.embed_dim // 2,
+                    coord=udata['rel_y_coords'])
+                seg_emb = torch.cat(
+                    [rel_x_coord_emb, rel_y_coord_emb], dim=-1)
+
             token_emb = self.token_embed(udata['tokens'])
             
             # Add positional and segment embeddings to token embeddings
@@ -559,10 +575,10 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
         #B, N, D = x.shape
 
         # Pad special tokens
-        x[:, :self.n_special_tokens, :] = 0 
+        x[:, :self.n_special_tokens, :] = 0
         masks_attention[:,
                         :,
-                        :
+                        :,
                         :self.n_special_tokens] = 0
 
         if pad_neighborhood:
@@ -690,7 +706,18 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
 
         # Get embeddings for sequence of gene tokens and segments
         token_emb = self.token_embed(udata['tokens'])
-        seg_emb = self.seg_embed(udata['segments'])
+
+        if self.cell_pos_enc == 'segment':
+            seg_emb = self.seg_embed(udata['segments'])
+        elif self.cell_pos_enc == 'coord':
+            rel_x_coord_emb = get_1d_sincos_pos_embed_from_coord(
+                embed_dim=self.embed_dim // 2,
+                coord=udata['rel_x_coords'])
+            rel_y_coord_emb = get_1d_sincos_pos_embed_from_coord(
+                embed_dim=self.embed_dim // 2,
+                coord=udata['rel_y_coords'])
+            seg_emb = torch.cat(
+                [rel_x_coord_emb, rel_y_coord_emb], dim=-1)
 
         # Get value embeddings
         if self.count_encoding == 'value_bins':
@@ -773,7 +800,18 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
 
         # Get embeddings for sequence of gene tokens and segments
         token_emb = self.token_embed(udata['tokens'])
-        seg_emb = self.seg_embed(udata['segments'])
+
+        if self.cell_pos_enc == 'segment':
+            seg_emb = self.seg_embed(udata['segments'])
+        elif self.cell_pos_enc == 'coord':
+            rel_x_coord_emb = get_1d_sincos_pos_embed_from_coord(
+                embed_dim=self.embed_dim // 2,
+                coord=udata['rel_x_coords'])
+            rel_y_coord_emb = get_1d_sincos_pos_embed_from_coord(
+                embed_dim=self.embed_dim // 2,
+                coord=udata['rel_y_coords'])
+            seg_emb = torch.cat(
+                [rel_x_coord_emb, rel_y_coord_emb], dim=-1)
 
         # Get value embeddings
         if self.count_encoding == 'value_bins':
@@ -791,6 +829,13 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
         # Add gene token and segment embeddings to value embeddings
         x = token_emb + seg_emb + value_emb
         # B, N, D = x.shape # B: BATCH_SIZE, N: SEQ_LEN, D: EMBED_DIM
+
+        # Pad special tokens
+        x[:, :self.n_special_tokens, :] = 0
+        masks_attention[:,
+                        :,
+                        :,
+                        :self.n_special_tokens] = 0
 
         if pad_neighborhood:
             x[:, self.seq_len_cell:] = 0
@@ -841,8 +886,8 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
     n_value_bins:
         Number of value bins if `value_bins` count encoding is used.
     pos_learnable:
-        If 'True', positional embedding is learnable, otherwise initialized
-        with sincos.
+        If `True`, positional embeddings are learnable, otherwise use
+        sin cos positional embeddings.
     """
     def __init__(self,
                  n_special_values: int,
@@ -940,6 +985,7 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
 
         # Get embeddings for positions, segments and gene tokens
         pos_emb = self.pos_embed(udata['positions'])
+
         if self.cell_pos_enc == 'segment':
             seg_emb = self.seg_embed(udata['segments'])
         elif self.cell_pos_enc == 'coord':
@@ -980,6 +1026,9 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
             x = blk(x, masks=masks_attention)
         if self.norm is not None:
             x = self.norm(x)
+
+        # Add token embeddings for predictor
+        udata['token_embed'] = token_emb
 
         return x, udata
 
@@ -1112,24 +1161,33 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
 class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
     """
     GeneTransformerRankPredictor class.
+
+    Parameters
+    -----------
+    pos_learnable:
+        If `True`, positional embeddings are learnable, otherwise use
+        sin cos positional embeddings.
     """
     def __init__(self,
-                 **base_encoder_kwargs
+                 pos_learnable: bool = False,
+                 **base_predictor_kwargs
                  ):
-        super().__init__(**base_encoder_kwargs)
+        super().__init__(**base_predictor_kwargs)
 
         # Initialize positional embeddings
         self.pos_embed = nn.Embedding(self.seq_len + 1, # include <pad>
                                       self.predictor_embed_dim,
                                       padding_idx=0)
 
-        # Prevent gradient updates and initialize with sincos embedding
-        self.pos_embed.weight.requires_grad = False
-        pos_embed = get_1d_sincos_pos_embed(
-            embed_dim=self.predictor_embed_dim,
-            n_zero_pos=0,
-            n_sincos_pos=self.seq_len)
-        self.pos_embed.weight[1:].copy_(torch.from_numpy(pos_embed).float())
+        if not pos_learnable:
+            # Prevent gradient updates and initialize with sincos embedding
+            self.pos_embed.weight.requires_grad = False
+            pos_embed = get_1d_sincos_pos_embed(
+                embed_dim=self.predictor_embed_dim,
+                n_zero_pos=0,
+                n_sincos_pos=self.seq_len)
+            self.pos_embed.weight[1:].copy_(
+                torch.from_numpy(pos_embed).float())
 
     def forward(self,
                 z: torch.Tensor,
@@ -1189,7 +1247,18 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
 
             # Get positional and segment embeddings
             pos_embed = self.pos_embed(udata['positions'])
-            seg_embed = self.seg_embed(udata['segments'])
+
+            if self.cell_pos_enc == 'segment':
+                seg_embed = self.seg_embed(udata['segments'])
+            elif self.cell_pos_enc == 'coord':
+                rel_x_coord_emb = get_1d_sincos_pos_embed_from_coord(
+                    embed_dim=self.predictor_embed_dim // 2,
+                    coord=udata['rel_x_coords'])
+                rel_y_coord_emb = get_1d_sincos_pos_embed_from_coord(
+                    embed_dim=self.predictor_embed_dim // 2,
+                    coord=udata['rel_y_coords'])
+                seg_embed = torch.cat(
+                    [rel_x_coord_emb, rel_y_coord_emb], dim=-1)
 
             # Add positional embeddings to tokens from context masks
             # (only keep context mask indices and sum positional and
@@ -1308,7 +1377,18 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
 
         # Get gene and segment embeddings
         token_embed = self.token_embed_projection(udata['token_embed'])
-        seg_embed = self.seg_embed(udata['segments'])
+
+        if self.cell_pos_enc == 'segment':
+            seg_embed = self.seg_embed(udata['segments'])
+        elif self.cell_pos_enc == 'coord':
+            rel_x_coord_emb = get_1d_sincos_pos_embed_from_coord(
+                embed_dim=self.predictor_embed_dim // 2,
+                coord=udata['rel_x_coords'])
+            rel_y_coord_emb = get_1d_sincos_pos_embed_from_coord(
+                embed_dim=self.predictor_embed_dim // 2,
+                coord=udata['rel_y_coords'])
+            seg_embed = torch.cat(
+                [rel_x_coord_emb, rel_y_coord_emb], dim=-1)
 
         # Add positional embeddings to tokens from context masks (only
         # keep context mask indices and sum positional and segment
@@ -1362,26 +1442,42 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
 class GeneTransformerCombinedPredictor(GeneTransformerBasePredictor):
     """
     GeneTransformerCombinedPredictor class.
+
+    Parameters
+    -----------
+    predict_gene:
+        If `True`, predict gene given rank, otherwise predict rank given
+        gene.
+    pos_learnable:
+        If `True`, positional embeddings are learnable, otherwise use
+        sin cos positional embeddings.
     """
     def __init__(
         self,
+        predict_gene: bool = True,
+        pos_learnable: bool = False,
         **base_predictor_kwargs
         ):
         
         super().__init__(**base_predictor_kwargs)
+        self.predict_gene = predict_gene
 
-        # Initialize positional embeddings
-        self.pos_embed = nn.Embedding(self.seq_len + 1, # include <pad>
-                                      self.predictor_embed_dim,
-                                      padding_idx=0)
-
-        # Prevent gradient updates and initialize with sincos embedding
-        self.pos_embed.weight.requires_grad = False
-        pos_embed = get_1d_sincos_pos_embed(
-            embed_dim=self.predictor_embed_dim,
-            n_zero_pos=0,
-            n_sincos_pos=self.seq_len)
-        self.pos_embed.weight[1:].copy_(torch.from_numpy(pos_embed).float())
+        if self.predict_gene:
+            # Initialize positional embeddings
+            self.pos_embed = nn.Embedding(self.seq_len + 1, # include <pad>
+                                          self.predictor_embed_dim,
+                                          padding_idx=0)
+            
+            if not pos_learnable:
+                # Prevent gradient updates and initialize with sincos
+                # embedding
+                self.pos_embed.weight.requires_grad = False
+                pos_embed = get_1d_sincos_pos_embed(
+                    embed_dim=self.predictor_embed_dim,
+                    n_zero_pos=0,
+                    n_sincos_pos=self.seq_len)
+                self.pos_embed.weight[1:].copy_(
+                    torch.from_numpy(pos_embed).float())
 
     def forward(
         self,
@@ -1439,8 +1535,15 @@ class GeneTransformerCombinedPredictor(GeneTransformerBasePredictor):
         # MLP projection layer
         z = self.predictor_embed(z)
 
-        # Get positional and segment embeddings
-        pos_embed = self.pos_embed(udata['positions'])
+        if self.predict_gene:
+            # Get positional embeddings
+            pos_embed = self.pos_embed(udata['positions'])
+        else:
+            # Get gene embeddings
+            token_embed = self.token_embed_projection(
+                udata['token_embed'])
+
+        # Get segment embeddings
         if self.cell_pos_enc == 'segment':
             seg_embed = self.seg_embed(udata['segments'])
         elif self.cell_pos_enc == 'coord':
@@ -1453,10 +1556,13 @@ class GeneTransformerCombinedPredictor(GeneTransformerBasePredictor):
             seg_embed = torch.cat(
                 [rel_x_coord_emb, rel_y_coord_emb], dim=-1)
 
-        # Add positional embeddings to tokens from context masks (only
-        # keep context mask indices and sum positional and segment
+        # Add positional or gene embeddings to tokens from context masks (only
+        # keep context mask indices and sum positional or gene and segment
         # embeddings without token embeddings)
-        z += apply_masks(pos_embed, masks_enc)
+        if self.predict_gene:
+            z += apply_masks(pos_embed, masks_enc)
+        else:
+            z += apply_masks(token_embed, masks_enc)
         z += apply_masks(seg_embed, masks_enc)
         _, N_ctxt, D = z.shape # N_ctxt: CONTEXT_MASK_SIZE, D: EMBED_DIM
 
@@ -1464,18 +1570,24 @@ class GeneTransformerCombinedPredictor(GeneTransformerBasePredictor):
         # (only keep target mask indices and sum token and segment
         # embeddings without value embeddings; the latter are to be
         # predicted)
-        pos_embs = apply_masks(pos_embed, masks_pred)
+        if self.predict_gene:
+            pos_embs = apply_masks(pos_embed, masks_pred)
+        else:
+            token_embs = apply_masks(token_embed, masks_pred)
         seg_embs = apply_masks(seg_embed, masks_pred)
 
         # Repeat mask token for all batches, masks and "positions" from
         # predictor masks
         pred_tokens = self.mask_token.repeat(
-            pos_embs.size(0), # BATCH_SIZE * N_TARGET_MASKS
-            pos_embs.size(1), # TARGET_MASK_SIZE
+            seg_embs.size(0), # BATCH_SIZE * N_TARGET_MASKS
+            seg_embs.size(1), # TARGET_MASK_SIZE
             1)
 
-        # Add position and segment embeddings to mask tokens                  
-        pred_tokens += pos_embs + seg_embs 
+        # Add position and segment embeddings to mask tokens
+        if self.predict_gene:                  
+            pred_tokens += pos_embs + seg_embs
+        else:
+            pred_tokens += token_embs + seg_embs
 
         # Repeat context embeddings for all target masks
         z = z.repeat(len(masks_pred), 1, 1)
@@ -1537,21 +1649,18 @@ def init_gt_predictor(
     """
     if predictor_type == 'rank':
         model = GeneTransformerRankPredictor(
-            mlp_ratio=4,
             qkv_bias=True,
             norm_layer=partial(nn.LayerNorm, eps=1e-6),
             **predictor_kwargs)
     elif predictor_type == 'counts':
         model = GeneTransformerCountPredictor(
             n_special_values=n_special_values,
-            mlp_ratio=4,
             qkv_bias=True,
             norm_layer=partial(nn.LayerNorm, eps=1e-6),
             **predictor_kwargs)
     elif predictor_type == 'combined':
         model = GeneTransformerCombinedPredictor(
             n_special_values=n_special_values,
-            mlp_ratio=4,
             qkv_bias=True,
             norm_layer=partial(nn.LayerNorm, eps=1e-6),
             **predictor_kwargs)      

@@ -363,7 +363,7 @@ class CellGraphDataset(CellBaseDataset):
         # Get (sampled) gene tokens, positions, segments, and values for
         # index cell segment
         item_dict['tokens'], \
-        item_dict['values'], \
+        item_values, \
         item_dict['rel_x_coords'], \
         item_dict['rel_y_coords'] = self._get_segment_seq(
             item=item,
@@ -374,7 +374,11 @@ class CellGraphDataset(CellBaseDataset):
                 1, item_dict['tokens'].size(0) + 1, dtype=torch.long)
             item_dict['positions'] = item_dict['positions'] * (
                 item_dict['tokens'] != 0).long()
-
+        if self.gt_type != 'rank':
+            item_dict['values'] = item_values
+            if self.gt_type == 'combined':
+                item_dict['positions'] = item_dict['positions'] * (
+                    item_dict['values'] != 0.0).long()
         item_dict['segments'] = torch.where(
             item_dict['tokens'] != 0,
             torch.ones_like(item_dict['tokens']),
@@ -417,6 +421,11 @@ class CellGraphDataset(CellBaseDataset):
                         segment_tokens != 0,
                         pos,
                         torch.tensor(0, dtype=torch.long))
+                    if self.gt_type == 'combined':
+                        masked_pos = torch.where(
+                            segment_values != 0.0,
+                            masked_pos,
+                            torch.tensor(0, dtype=torch.long))
                     item_dict['positions'] = torch.cat(
                         [item_dict['positions'], masked_pos], dim=0)
                 if self.gt_type != 'rank':
