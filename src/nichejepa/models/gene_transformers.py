@@ -221,7 +221,8 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
 
     def _get_seg_emb(
             self,
-            udata: dict):
+            udata: dict,
+            device: str):
         """
         Helper function to get segment embeddings.
         """
@@ -626,8 +627,8 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
         Returns
         -----------
         (full_ctx, cell_only_ctx)
-          full_ctx : {layer_idx: Tensor[B, N_no_special, D]}
-          cell_only_ctx : {layer_idx: Tensor[B, N_no_special, D]} or None
+          full_ctx : {layer_idx: Tensor[B, L_no_special, D]}
+          cell_only_ctx : {layer_idx: Tensor[B, L_no_special, D]} or None
         """
         if not layers:
             raise ValueError(
@@ -646,10 +647,10 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
 
         token_emb = self.token_embed(udata['tokens'])
         pos_emb = self.pos_embed(udata['positions'])
-        seg_emb = self._get_seg_emb(udata)
+        seg_emb = self._get_seg_emb(udata, device)
 
         # Add segment and positional embeddings to token embeddings
-        x = seg_emb + pos_emb + token_emb # [B, N, D]
+        x = seg_emb + pos_emb + token_emb # [B, L, D]
 
         # Remove special token contents
         if self.n_special_tokens:
@@ -845,8 +846,8 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
         Returns
         -----------
         (full_ctx, cell_only_ctx)
-          full_ctx : {layer_idx: Tensor[B, N_no_special, D]}
-          cell_only_ctx : {layer_idx: Tensor[B, N_no_special, D]} or None
+          full_ctx : {layer_idx: Tensor[B, L_no_special, D]}
+          cell_only_ctx : {layer_idx: Tensor[B, L_no_special, D]} or None
         """
         if not layers:
             raise ValueError(
@@ -864,11 +865,11 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
         device = tokens.device
 
         token_emb = self.token_embed(tokens)
-        seg_emb = self._get_seg_emb(udata)
+        seg_emb = self._get_seg_emb(udata, device)
 
         # Get value embeddings
         if self.count_encoding == 'value_bins':
-            # [B, N, BINS] x [BINS, D] -> [B, N, D]
+            # [B, L, BINS] x [BINS, D] -> [B, L, D]
             value_emb_weights = self.value_emb_weights_projection(
                 udata['values'].unsqueeze(-1))
             value_emb = value_emb_weights @ self.value_embed.weight
@@ -887,7 +888,7 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
                 f"Unknown count_encoding: {self.count_encoding}.")
 
         # Add segment and gene token embeddings to value embeddings
-        x = seg_emb + token_emb + value_emb # [B, N, D]
+        x = seg_emb + token_emb + value_emb # [B, L, D]
 
         # Remove special token contents
         if self.n_special_tokens:
@@ -1109,8 +1110,8 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
         Returns
         -----------
         (full_ctx, cell_only_ctx)
-          full_ctx : {layer_idx: Tensor[B, N_no_special, D]}
-          cell_only_ctx : {layer_idx: Tensor[B, N_no_special, D]} or None
+          full_ctx : {layer_idx: Tensor[B, L_no_special, D]}
+          cell_only_ctx : {layer_idx: Tensor[B, L_no_special, D]} or None
         """
         if not layers:
             raise ValueError(
@@ -1129,11 +1130,11 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
 
         token_emb = self.token_embed(udata['tokens'])
         pos_emb = self.pos_embed(udata['positions'])
-        seg_emb = self._get_seg_emb(udata)
+        seg_emb = self._get_seg_emb(udata, device)
 
         # Get value embeddings
         if self.count_encoding == 'value_bins':
-            # [B, N, BINS] x [BINS, D] -> [B, N, D]
+            # [B, L, BINS] x [BINS, D] -> [B, L, D]
             value_emb_weights = self.value_emb_weights_projection(
                 udata['values'].unsqueeze(-1))
             value_emb = value_emb_weights @ self.value_embed.weight
@@ -1152,7 +1153,7 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
                 f"Unknown count_encoding: {self.count_encoding}.") 
 
         # Add segment, positional, and gene embeddings to value embeddings
-        x = seg_emb + pos_emb + token_emb + value_emb # [B, N, D]
+        x = seg_emb + pos_emb + token_emb + value_emb # [B, L, D]
 
         # Remove special token contents
         if self.n_special_tokens:
