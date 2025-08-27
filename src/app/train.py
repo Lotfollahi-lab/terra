@@ -132,9 +132,12 @@ def train_step(udata,
     # Step 3: momentum update of target encoder
     with torch.no_grad():
         m = next(momentum_scheduler)
-        for param_q, param_k in zip(encoder.parameters(),
-                                    target_encoder.parameters()):
-            param_k.data.mul_(m).add_((1.-m) * param_q.detach().data)
+        q_params = [p.detach() for p in encoder.parameters()]
+        k_params = [p for p in target_encoder.parameters()]
+        torch._foreach_mul_(k_params, m)
+        # tmp = (1-m) * q
+        tmp = torch._foreach_mul(q_params, (1.0 - m))
+        torch._foreach_add_(k_params, tmp)
 
     # Logging
     if compute_grad_stats:
@@ -462,7 +465,7 @@ def train(args: dict,
                 collate_fn=mask_collator,
                 pin_memory=pin_memory,
                 num_workers=num_workers,
-                drop_last=False,
+                drop_last=True,
                 persistent_workers=False)
             train_loaders.append(train_loader)
             train_samplers.append(train_sampler)
@@ -477,7 +480,8 @@ def train(args: dict,
             collate_fn=mask_collator,
             pin_memory=pin_memory,
             num_workers=num_workers,
-            drop_last=False,
+            drop_last=True,
+            prefetch_factor=4,
             persistent_workers=False)
 
     ipe = len(train_loader)
@@ -500,11 +504,11 @@ def train(args: dict,
     encoder = torch.compile(
         encoder,
         mode="max-autotune",
-        full_graph=True)
+        fullgraph=True)
     predictor = torch.compile(
         predictor,
         mode="max-autotune",
-        full_graph=True)
+        fullgraph=True)
 
     encoder = DistributedDataParallel(
         encoder,
