@@ -183,11 +183,20 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
             self,
             x: torch.Tensor,
             attn_base: torch.Tensor | None,
+            layers: Sequence[int],
+            masks: list[torch.Tensor] | torch.Tensor | None,
             cell_only: bool) -> dict[int, torch.Tensor]:
         """
         Helper function to return embeddings for either full context or
         cell only context.
         """
+        layers: list[int] = sorted({int(l) for l in layers})
+        max_layer: int = max(layers)
+
+        # Format masks
+        if masks is not None and not isinstance(masks, list):
+            masks = [masks]
+
         attn = None
         if attn_base is not None:
             attn = attn_base.clone()
@@ -634,13 +643,6 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
             raise ValueError(
                 "Layers must be a non-empty sequence of positive integers.")
 
-        layers: list[int] = sorted({int(l) for l in layers})
-        max_layer: int = max(layers)
-
-        # Format masks
-        if masks is not None and not isinstance(masks, list):
-            masks = [masks]
-
         # Get embeddings for sequence of gene tokens, positions and segments
         tokens = udata["tokens"]
         device = tokens.device
@@ -656,13 +658,17 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
         if self.n_special_tokens:
             x[:, : self.n_special_tokens, :] = 0
 
-        full_ctx: dict[int, torch.Tensor] = _compute_layer_emb(
+        full_ctx: dict[int, torch.Tensor] = self._compute_layer_emb(
             x,
             masks_attention,
+            layers,
+            masks,
             cell_only=False)
-        cell_only_ctx: dict[int, torch.Tensor] = _compute_layer_emb(
+        cell_only_ctx: dict[int, torch.Tensor] = self._compute_layer_emb(
             x,
             masks_attention,
+            layers,
+            masks,
             cell_only=True) if need_cell_only_context else None
 
         return full_ctx, cell_only_ctx
@@ -853,13 +859,6 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
             raise ValueError(
                 "Layers must be a non-empty sequence of positive integers.")
 
-        layers: list[int] = sorted({int(l) for l in layers})
-        max_layer: int = max(layers)
-
-        # Format masks
-        if masks is not None and not isinstance(masks, list):
-            masks = [masks]
-
         # Get embeddings for sequence of gene tokens and segments
         tokens = udata["tokens"]
         device = tokens.device
@@ -894,13 +893,17 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
         if self.n_special_tokens:
             x[:, : self.n_special_tokens, :] = 0
 
-        full_ctx: dict[int, torch.Tensor] = _compute_layer_emb(
+        full_ctx: dict[int, torch.Tensor] = self._compute_layer_emb(
             x,
             masks_attention,
+            layers,
+            masks,
             cell_only=False)
-        cell_only_ctx: dict[int, torch.Tensor] = _compute_layer_emb(
+        cell_only_ctx: dict[int, torch.Tensor] = self._compute_layer_emb(
             x,
             masks_attention,
+            layers,
+            masks,
             cell_only=True) if need_cell_only_context else None
 
         return full_ctx, cell_only_ctx
@@ -1117,13 +1120,6 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
             raise ValueError(
                 "Layers must be a non-empty sequence of positive integers.")
 
-        layers: list[int] = sorted({int(l) for l in layers})
-        max_layer: int = max(layers)
-
-        # Format masks
-        if masks is not None and not isinstance(masks, list):
-            masks = [masks]
-
         # Get embeddings for sequence of gene tokens, positions and segments
         tokens = udata["tokens"]
         device = tokens.device
@@ -1159,13 +1155,17 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
         if self.n_special_tokens:
             x[:, : self.n_special_tokens, :] = 0
 
-        full_ctx: dict[int, torch.Tensor] = _compute_layer_emb(
+        full_ctx: dict[int, torch.Tensor] = self._compute_layer_emb(
             x,
             masks_attention,
+            layers,
+            masks,
             cell_only=False)
-        cell_only_ctx: dict[int, torch.Tensor] = _compute_layer_emb(
+        cell_only_ctx: dict[int, torch.Tensor] = self._compute_layer_emb(
             x,
             masks_attention,
+            layers,
+            masks,
             cell_only=True) if need_cell_only_context else None
 
         return full_ctx, cell_only_ctx
