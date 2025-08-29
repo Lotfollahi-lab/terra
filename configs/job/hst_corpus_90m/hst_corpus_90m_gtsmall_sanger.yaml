@@ -3,7 +3,7 @@
 
 job_requirement:
   LSB_DEFAULT_USERGROUP: team361  # The user group to be used for scheduling the job.
-  QUEUE: "gpu-lotfollahi-train" # "gpu-lotfollahi-train"  # The job queue to be used for scheduling the job.
+  QUEUE: "gpu-lotfollahi" # "gpu-lotfollahi", "gpu-lotfollahi-train"  # The job queue to be used for scheduling the job.
   NUM_NODES: 2  # Number of compute nodes required for the job.
   NUM_GPUS_NODE: 1  # Number of GPUs per node.
   NUM_PROCESSES_NODE: 16  # Number of processes per node.
@@ -19,7 +19,7 @@ artifact:
   ARTIFACT_LOCATION: "/lustre/scratch126/cellgen/lotfollahi/sb75/nichejepa-reproducibility/artifacts/hst_corpus_90m"  # Path to store the artifacts.
   WAREHOUSE_PATH: "/lustre/scratch126/cellgen/lotfollahi/sb75/nichejepa-reproducibility/artifacts/hst_corpus_90m"  # Path to store the artifacts.
   EXPERIMENT_NAME: "nichejepa_pretraining"  # Name of the experiment.
-  RUN_NAME: "hst_corpus_90m_gtsmall_sanger_36"  # Name of the run.
+  RUN_NAME: "hst_corpus_90m_gtsmall_sanger_38"  # Name of the run.
 
 runner_script:
   RUNNER_SCRIPT: "/nfs/team361/sb75/nichejepa/src/app/runner.sh"  # Path to the runner script.
