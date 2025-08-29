@@ -1607,13 +1607,13 @@ def gene_embed_dataset(dataset: Dataset,
                 if return_gene:
                     for j, gene_id in enumerate(cell_gene_ids):  # store per-gene batch embeddings for later concatenation
                         if itr == 0:
-                            all_cell_gene_emb_dict[gene_id] = [cell_embs[:, j, :].detach().cpu().clone()]
+                            all_cell_gene_emb_dict[gene_id] = [cell_embs[:, j, :].detach().cpu()]
                             if include_spatial_cell_emb:
-                                all_spatial_cell_gene_emb_dict[gene_id] = [spatial_cell_embs[:, j, :].detach().cpu().clone()]
+                                all_spatial_cell_gene_emb_dict[gene_id] = [spatial_cell_embs[:, j, :].detach().cpu()]
                         else:
-                            all_cell_gene_emb_dict[gene_id].append(cell_embs[:, j, :].detach().cpu().clone())
+                            all_cell_gene_emb_dict[gene_id].append(cell_embs[:, j, :].detach().cpu())
                             if include_spatial_cell_emb:
-                                all_spatial_cell_gene_emb_dict[gene_id].append(spatial_cell_embs[:, j, :].detach().cpu().clone())
+                                all_spatial_cell_gene_emb_dict[gene_id].append(spatial_cell_embs[:, j, :].detach().cpu())
 
                 # Accumulate per-data averages (sum and count)
                 if return_gene_per_data:
@@ -1712,9 +1712,9 @@ def gene_embed_dataset(dataset: Dataset,
                         mean_emb = sum_occ / (cnt_occ + 1e-9)                              # (N, Gn, D) mean over valid occs
                         for j, gene_id in enumerate(neighborhood_gene_ids):
                             if itr == 0:
-                                all_neighborhood_gene_emb_dict[gene_id] = [mean_emb[:, j, :].detach().cpu().clone()]
+                                all_neighborhood_gene_emb_dict[gene_id] = [mean_emb[:, j, :].detach().cpu()]
                             else:
-                                all_neighborhood_gene_emb_dict[gene_id].append(mean_emb[:, j, :].detach().cpu().clone())
+                                all_neighborhood_gene_emb_dict[gene_id].append(mean_emb[:, j, :].detach().cpu())
 
                     if return_gene_per_data and compute_cosine_with == 'neighborhood':
                         # Compute per-sample mean embedding for each gene first
