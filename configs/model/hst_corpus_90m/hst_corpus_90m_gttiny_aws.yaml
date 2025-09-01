@@ -33,10 +33,10 @@ data:
 meta:
   api_version: 'v3'
   add_cls: False
-  gt_type: 'counts' # 'rank', 'counts'
+  gt_type: 'combined' # 'rank', 'counts'
   count_encoding: 'mlp' # 'value_bins', 'mlp'
   n_value_bins: 100
-  cell_pos_enc: 'segment'
+  cell_pos_enc: 'coord'
   enc_depth: 12
   enc_emb_dim: 192
   pred_depth: 12
