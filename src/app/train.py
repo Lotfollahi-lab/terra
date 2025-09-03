@@ -411,7 +411,7 @@ def train(args: dict,
         use_bfloat16=use_bfloat16)
     
     encoder = torch.compile(encoder, mode='max-autotune')
-    predictor = torch.compile(predicto, mode='reduce-overhead')
+    predictor = torch.compile(predictor, mode='max-autotune')
 
     if use_profiler and WORLD_RANK == 0:
 
