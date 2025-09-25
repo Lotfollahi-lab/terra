@@ -520,8 +520,7 @@ def train(args: dict,
             train_sampler = train_samplers[epoch] 
 
         # Update distributed dataloader epoch
-        if use_sampler:
-            train_sampler.set_epoch(epoch)
+        train_sampler.set_epoch(epoch)
 
         loss_meter = AverageMeter()
         #maskA_meter = AverageMeter()

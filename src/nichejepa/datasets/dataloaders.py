@@ -212,18 +212,19 @@ def init_dataloader_and_sampler(cell_dataset: CellBaseDataset,
             num_replicas=world_size,
             rank=rank,
             seed=_GLOBAL_SEED)
-
-        dataloader = DataLoader(cell_dataset,
-                                batch_size=batch_size,
-                                sampler=dist_sampler,
-                                **dataloader_kwargs)
-        logger.info('Dataloader and -sampler created.')
-
-        return dataloader, dist_sampler
     else:
-        dataloader = DataLoader(cell_dataset,
-                                batch_size=batch_size,
-                                **dataloader_kwargs)
-        logger.info('Dataloader created.')
+        dist_sampler = DistributedSampler(
+            cell_dataset=cell_dataset,
+            num_replicas=world_size,
+            rank=rank,
+            shuffle=False,
+            seed=_GLOBAL_SEED,
+        )
         
-        return dataloader, None
+    dataloader = DataLoader(cell_dataset,
+                            batch_size=batch_size,
+                            sampler=dist_sampler,
+                            **dataloader_kwargs)
+    logger.info('Dataloader and -sampler created.')
+
+    return dataloader, dist_sampler
