@@ -70,6 +70,7 @@ class CellBaseDataset(Dataset):
         self.seq_len = (seq_len_cell +
                         seq_len_neighborhood +
                         self.n_special_tokens)
+        self.n_segments = (seq_len_cell + seq_len_neighborhood) / seq_len_cell
         self.sampling_strategy = sampling_strategy
         if n_nonzero_tokens_list:
             self.n_nz_tokens = n_nonzero_tokens_list
@@ -360,6 +361,24 @@ class CellGraphDataset(CellBaseDataset):
 
         # Retrieve Hugging Face item once
         item = self.dataset[item]
+
+        # Expand spatial coordinates (TODO: if statement to support old API)
+        if len(item['rel_x_coord']) != len(item['gene_tokens']):
+            item['rel_x_coord'] = torch.repeat_interleave(
+                item['rel_x_coord'], self.seq_len_cell)
+            item['rel_y_coord'] = torch.repeat_interleave(
+                item['rel_y_coord'], self.seq_len_cell)
+
+        # Add segment to item (TODO: if statement to support old API)
+        if 'seg_tokens' not in item.keys():
+            seg_tokens = torch.arange(self.n_segments)
+            seg_tokens = torch.repeat_interleave(
+                seg_tokens, self.seq_len_cell)
+            # Mask out positions where gene_tokens == 0
+            seg_tokens = seg_tokens * (item['gene_tokens'] != 0).long()
+            item['seg_tokens'] = seg_tokens
+
+        # TODO: add special tokens from token dict directly (1 value per row)
 
         # Get (sampled) gene tokens, positions, segments, and values for
         # index cell segment
