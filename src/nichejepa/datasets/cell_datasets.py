@@ -363,11 +363,12 @@ class CellGraphDataset(CellBaseDataset):
         item = self.dataset[item]
 
         # Expand spatial coordinates (TODO: if statement to support old API)
-        if len(item['rel_x_coord']) != len(item['gene_tokens']):
-            item['rel_x_coord'] = torch.repeat_interleave(
-                item['rel_x_coord'], self.seq_len_cell)
-            item['rel_y_coord'] = torch.repeat_interleave(
-                item['rel_y_coord'], self.seq_len_cell)
+        if 'rel_x_coord' in item.keys():
+            if len(item['rel_x_coord']) != len(item['gene_tokens']):
+                item['rel_x_coord'] = torch.repeat_interleave(
+                    item['rel_x_coord'], self.seq_len_cell)
+                item['rel_y_coord'] = torch.repeat_interleave(
+                    item['rel_y_coord'], self.seq_len_cell)
 
         # Add segment to item (TODO: if statement to support old API)
         if 'seg_tokens' not in item.keys():
