@@ -1,31 +1,34 @@
+"""
+Usage: python source-code/src/app/finetune.py --fname reproducibility/config/finetuning/xhs1000-39b_1p-batch1_toy-finetune-nemo.yaml
+"""
 import os
 import sys
 import argparse
 import pickle
 import logging
 import yaml
-from typing import Literal
-
-import numpy as np
-import anndata as ad
-import torch
+from datetime import datetime
 from tqdm import tqdm
 
-from datasets import Dataset
-from datasets import Dataset, load_from_disk
+import numpy as np
+import pandas as pd
+import scanpy as sc
+from anndata import AnnData
 
-from app.helper import init_model, init_opt, load_checkpoint
+import torch
+import torch.nn as nn
+import torch.multiprocessing as mp
+from torch.nn.parallel import DistributedDataParallel
+
+from datasets import Dataset, load_from_disk
+from peft import LoraConfig, get_peft_model
+
+from app.helper import init_model, load_checkpoint
 from nichejepa.datasets.cell_datasets import init_cell_dataset
 from nichejepa.datasets.dataloaders import init_dataloader_and_sampler
 from nichejepa.masks.block_masking  import BlockMaskCollator
 from nichejepa.masks.cell_masking import CellMaskCollator
-from nichejepa.masks.utils import apply_masks
-from nichejepa.models.utils import repeat_interleave_batch
 from nichejepa.utils.distributed import init_distributed
-from nichejepa.utils.logging import (AverageMeter,
-                                     CSVLogger,
-                                     grad_logger)
-from nichejepa.datasets.cell_datasets import CellBaseDataset
 from nichejepa.models.modules import ClassificationModel
 
 
@@ -45,7 +48,7 @@ def parse_arguments():
     """
     parser = argparse.ArgumentParser(
         description='Run NicheJEPA finetuning.')
-    parser.add_argument('--fname', type=str, default='configs.yaml',
+    parser.add_argument('--config_fname', type=str, default='configs.yaml',
                         help='Name of the config file to load.')
     
     parser_args = parser.parse_args()
@@ -61,13 +64,15 @@ def parse_arguments():
 
 
 @torch.no_grad()
-def finetune(args: dict,
-          dataset: Dataset,
-          resume_preempt: bool = False,
-          save_folder_path: str | None = None,
-          LOCAL_RANK: int | None = None,
-          WORLD_RANK: int | None = None,
-          ):
+def finetune(
+        args: dict,
+        adata: AnnData,
+        dataset: Dataset,
+        resume_preempt: bool = False,
+        save_folder_path: str | None = None,
+        LOCAL_RANK: int | None = None,
+        WORLD_RANK: int | None = None,
+    ):
     """
     Train model.
 
@@ -75,6 +80,8 @@ def finetune(args: dict,
     -----------
     args:
         Dictionary containing the hyperparams from the config file.
+    adata:
+        AnnData object containing labels for the finetune training dataset.
     dataset:
         Finetune training dataset.
     resume_preempt:
@@ -201,6 +208,31 @@ def finetune(args: dict,
     r_file = args['state']['read_checkpoint']
     load_folder_path = args['state']['folder_path']
     use_profiler = args['state'].get('use_profiler', False)
+    
+    use_peft = args['finetune']['use_peft']
+    peft_method = args['finetune']['peft_method']
+    peft_rank = args['finetune']['peft_rank']
+    peft_alpha = args['finetune']['peft_alpha']
+    peft_dropout = args['finetune']['peft_dropout']
+    peft_bias = args['finetune']['peft_bias']
+    peft_task_type = args['finetune']['peft_task_type']
+    use_mlp = args['finetune']['use_mlp']
+    hidden_dim = args['finetune']['hidden_dim']
+    label_name = args['finetune']['label_name']
+
+    # Assert required columns exist in adata.obs
+    assert 'cell_id' in adata.obs.columns, f"'cell_id' not found in adata.obs.columns. Available columns: {adata.obs.columns.tolist()}"
+    assert label_name in adata.obs.columns, f"'{label_name}' not found in adata.obs.columns. Available columns: {adata.obs.columns.tolist()}"
+    
+    # Assert that label_name contains integer values (required for CrossEntropyLoss)
+    label_dtype = adata.obs[label_name].dtype
+    assert pd.api.types.is_integer_dtype(label_dtype), (
+        f"Labels in '{label_name}' must be integers, but got dtype: {label_dtype}. "
+        f"Please encode string labels to integer class indices."
+    )
+    
+    # Create label lookup dictionary indexed by cell_id (do once before training loop)
+    label_lookup = adata.obs.set_index('cell_id')[label_name]
 
     if 'precomputed_epoch_n_nonzero_tokens' in args['data'].keys():
         with open(args['data']['precomputed_epoch_n_nonzero_tokens'], "rb") as f: 
@@ -234,11 +266,37 @@ def finetune(args: dict,
     n_special_tokens = len(special_tokens)
     seq_len = seq_len_cell + seq_len_neighborhood + n_special_tokens
 
+    # Set multiprocessing start method
+    try:
+        mp.set_start_method("spawn")
+    except Exception:
+        logger.info(f'Multiprocessing not started.')
+
     # Initialize torch distributed backend
     world_size, rank = init_distributed()
     logger.info(f'Initialized (rank/world-size) {rank}/{world_size}.')
     if rank > 0:
         logger.setLevel(logging.ERROR)
+
+    # Create folder to store artifacts
+    if not save_folder_path:
+        artifact_folder_path = os.path.join(
+            os.path.dirname(os.path.dirname(
+                os.path.dirname(os.path.abspath(__file__)))), "artifacts")
+        current_timestamp = (
+            datetime.now().strftime("%d%m%Y_%H%M%S") +
+            f"_{datetime.now().microsecond // 1000:03d}")
+        save_folder_path = os.path.join(artifact_folder_path,
+                                        dataset_name,
+                                        current_timestamp)
+    if rank==0:
+        os.makedirs(save_folder_path, exist_ok=True)
+        
+    # Store config file with model
+    if rank==0:
+        dump = os.path.join(save_folder_path, 'params.yaml')
+        with open(dump, 'w') as f:
+            yaml.dump(args, f)
 
     # # Specify last emb layer if not defined
     # if emb_layers is None:
@@ -250,37 +308,33 @@ def finetune(args: dict,
 
     # os.makedirs(save_folder_path, exist_ok=True)
 
-    # # Define checkpointing path
-    # latest_path = os.path.join(save_folder_path, f'{write_tag}-latest.pth.tar')
-    # load_path = os.path.join(
-    #     load_folder_path, r_file) if r_file is not None else latest_path
+    # Define log/checkpointing paths
+    latest_path = os.path.join(save_folder_path, f'{write_tag}-latest.pt')
+    assert load_model, 'load_model must be True'
+    load_path = os.path.join(
+        load_folder_path, r_file) if r_file is not None else "model_checkpoint.pt"
 
-    # # Initialize target encoder
-    # target_encoder, _ = init_model(
-    #     gt_type=gt_type,
-    #     count_encoding=count_encoding,
-    #     n_value_bins=n_value_bins,
-    #     cell_pos_enc=cell_pos_enc,
-    #     device=device,
-    #     vocab_size=vocab_size,
-    #     seq_len=seq_len,
-    #     n_special_tokens=n_special_tokens,
-    #     n_segments=n_segments,
-    #     n_special_values=n_special_values,
-    #     enc_emb_dim=enc_emb_dim,
-    #     enc_depth=enc_depth,
-    #     pred_emb_dim=pred_emb_dim,
-    #     pred_depth=pred_depth,
-    #     num_heads=num_heads,
-    #     mlp_ratio=mlp_ratio,
-    #     use_flash_attention=use_flash_attention,
-    #     use_layer_norm=use_layer_norm,
-    #     sep_gene_tokens_neb=sep_gene_tokens_neb)
-
-    # if api_version != 'v3':
-    #     return_layer_emb_fn = target_encoder.return_layer_emb
-    # else:
-    #     return_layer_emb_fn = target_encoder.backbone.return_layer_emb
+    # Initialize target encoder
+    target_encoder, _ = init_model(
+        gt_type=gt_type,
+        count_encoding=count_encoding,
+        n_value_bins=n_value_bins,
+        cell_pos_enc=cell_pos_enc,
+        device=device,
+        vocab_size=vocab_size,
+        seq_len=seq_len,
+        n_special_tokens=n_special_tokens,
+        n_segments=n_segments,
+        n_special_values=n_special_values,
+        enc_emb_dim=enc_emb_dim,
+        enc_depth=enc_depth,
+        pred_emb_dim=pred_emb_dim,
+        pred_depth=pred_depth,
+        num_heads=num_heads,
+        mlp_ratio=mlp_ratio,
+        use_flash_attention=use_flash_attention,
+        use_layer_norm=use_layer_norm,
+        sep_gene_tokens_neb=sep_gene_tokens_neb)
 
     # Initialize mask collator
     if block_masking:
@@ -317,7 +371,7 @@ def finetune(args: dict,
             special_tokens=special_tokens,
             sampling_strategy=sampling_strategy,
             n_nonzero_tokens_list=n_nonzero_tokens,
-            include_cell_id=False,
+            include_cell_id=True,
             sep_gene_tokens_neb=sep_gene_tokens_neb)
 
     loader, sampler = init_dataloader_and_sampler(
@@ -333,89 +387,135 @@ def finetune(args: dict,
             prefetch_factor=4,
             persistent_workers=False)
 
-    # target_encoder = DistributedDataParallel(
-    #     target_encoder,
-    #     device_ids=[LOCAL_RANK],
-    #     output_device=LOCAL_RANK)
+    target_encoder = DistributedDataParallel(
+        target_encoder,
+        static_graph=True,
+        device_ids=[LOCAL_RANK],
+        output_device=LOCAL_RANK,
+        gradient_as_bucket_view=True,
+        broadcast_buffers=False)
 
-    # # Load checkpoint    
-    # _, _, target_encoder, _, _, start_epoch, iter_number = load_checkpoint(
-    #         device=device,
-    #         r_path=load_path,
-    #         encoder=None,
-    #         predictor=None,
-    #         target_encoder=target_encoder,
-    #         opt=None,
-    #         scaler=None,
-    #         is_training=False)
+    # Load checkpoint
+    _, _, target_encoder, _, _, start_epoch, _ = load_checkpoint(
+            device=device,
+            r_path=load_path,
+            encoder=None,
+            predictor=None,
+            target_encoder=target_encoder,
+            opt=None,
+            scaler=None,
+            is_training=False)
     
-    # # Apply PEFT
-    # if use_peft:
-    #     target_encoder = apply_peft(
-    #         target_encoder, peft_method='lora', rank=8)
+    # Apply PEFT
+    if use_peft:
+        # if peft is to be applied, then apply to the target encoder given the config parameters
+        if peft_method == 'lora':
+            # create LoRA config
+            peft_config = LoraConfig(
+                r=peft_rank,
+                lora_alpha=peft_alpha,
+                lora_dropout=peft_dropout,
+                bias=peft_bias,
+                task_type=peft_task_type)
+            # from the docs, get_peft_model returns the target encoder with a LoRA adapter added to it
+            peft_model = get_peft_model(target_encoder, peft_config)
 
-    # # Convert target encoder to a classification model
-    # model = ClassificationModel(
-    #     target_encoder, gt_type, num_classes)
-    # model.to(device)
+            # the parameters of target encoder are frozen
+            for p in peft_model.parameters():
+                assert p.requires_grad == False
+        else:
+            # only lora is supported for now
+            raise ValueError(f"PEFT method {peft_method} not supported.")
+    else:
+        # if peft is not to be applied, then freeze the parameters of the target encoder
+        for p in target_encoder.parameters():
+            p.requires_grad = False
 
-    # # Loss function
-    # criterion = nn.CrossEntropyLoss()
+    # set number of classes
+    num_classes = len(dataset.unique('label'))
+
+    # apply a linear layer or MLP to the output of the peft model if peft is to be applied, otherwise apply to the output of the target encoder
+    model = ClassificationModel(
+        base_model=peft_model if use_peft else target_encoder,
+        gt_type=gt_type,
+        num_classes=num_classes,
+        use_mlp=use_mlp,
+        hidden_dim=hidden_dim
+    )
+    model.to(device)
+
+    # Loss function
+    criterion = nn.CrossEntropyLoss()
     
-    # # Optimizer (only optimize PEFT parameters)
-    # optimizer = torch.optim.Adam(
-    #     filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
+    # Optimizer (only optimize PEFT parameters)
+    optimizer = torch.optim.Adam(
+        filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
 
-    # def save_checkpoint(epoch):
-    #         save_dict = {'target_encoder': target_encoder.state_dict(),
-    #                      'opt': optimizer.state_dict(),
-    #                      'epoch': epoch,
-    #                      'zero_epoch_tracking': True,
-    #                      'loss': loss_meter.avg,
-    #                      'batch_size': batch_size,
-    #                      'world_size': world_size,
-    #                      'lr': lr}
-    #         if rank == 0:
-    #             torch.save(save_dict, latest_path)
-    #             torch.save(save_dict, save_path.format(epoch=f'ft_{epoch}'))
+    def save_checkpoint(epoch):
+            save_dict = {'model': model.state_dict(),
+                         'opt': optimizer.state_dict(),
+                         'epoch': epoch,
+                         'zero_epoch_tracking': True,
+                         'loss': running_loss,
+                         'batch_size': batch_size,
+                         'world_size': world_size,
+                         'lr': lr}
+            if rank == 0:
+                torch.save(save_dict, latest_path)
+                torch.save(save_dict, save_folder_path.format(epoch=f'ft_{epoch}'))
 
-    # # Run training loop
+    # Run training loop
     for epoch in range(num_epochs):
         logger.info(f"Epoch {epoch}")
-    #     running_loss = 0.0
+        running_loss = 0.0
     #     correct_preds = 0
     #     total_preds = 0
 
         # Update distributed dataloader epoch
         sampler.set_epoch(epoch)
 
-        for itr, (udata, _, _, masks_attention) in tqdm(enumerate(loader)):
+        for _, (udata, _, _, masks_attention) in tqdm(enumerate(loader)):
             for key in udata.keys():
                 udata[key] = udata[key].to(device, non_blocking=True)
             masks_attention = masks_attention.to(device, non_blocking=True)
             
-    #         optimizer.zero_grad()
+            optimizer.zero_grad()
 
-    #         # Forward pass
-    #         logits = model(
-    #             udata=udata, masks_attention=masks_attention)
+            # Forward pass
+            logits = model(
+                udata=udata,
+                masks_attention=masks_attention
+            )
 
-    #         # Compute the loss
-    #         loss = criterion(logits, labels)
+            # Get labels for this batch by matching cell IDs
+            batch_cell_ids = udata['cell_id']
+            labels = torch.tensor(
+                label_lookup.reindex(batch_cell_ids).values,
+                dtype=torch.long,
+                device=device
+            )
 
-    #         # Backward pass and optimization
-    #         loss.backward()
-    #         optimizer.step()
+            # Compute the loss
+            loss = criterion(
+                logits=logits,
+                targets=labels
+            )
 
-    #         # Track statistics
-    #         running_loss += loss.item()
-    #         _, predicted = torch.max(logits, 1)
-    #         correct_preds += (predicted == labels).sum().item()
-    #         total_preds += labels.size(0)
+            # Backward pass and optimization
+            loss.backward()
+            optimizer.step()
 
-    #     epoch_loss = running_loss / len(loader)
-    #     accuracy = correct_preds / total_preds
-    #     print(f"Epoch [{epoch+1}/{epochs}], Loss: {epoch_loss:.4f}, Accuracy: {accuracy:.4f}")
+            # Track statistics
+            running_loss += loss.item()
+
+        epoch_loss = running_loss / len(loader)
+        # accuracy = correct_preds / total_preds
+        
+        logger.info(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}")
+        # print(f"Epoch [{epoch+1}/{epochs}], Loss: {epoch_loss:.4f}, Accuracy: {accuracy:.4f}")
+
+        save_checkpoint(epoch)
+        
 
     # if LOCAL_RANK == 0:
     #     wandb.log(
@@ -437,13 +537,17 @@ if __name__ == '__main__':
     # load args dictionary from config file
     args = parse_arguments()
     
-    # load finetune training data
-    dataset = load_from_disk(args['data']['finetune_training_data_path'])
+    # load finetune dataset (tokenized)
+    dataset = load_from_disk(args['data']['finetune_dataset'])
     cols = [c for c in dataset.column_names if c != 'cell_id']
     dataset.set_format(type="torch", columns=cols, output_all_columns=False)
-    
+
+    # load finetune adata (labels)
+    adata = sc.read_h5ad(args['data']['finetune_adata'])
+
     # finetune model
     finetune(
         args=args,
-        dataset=dataset
+        dataset=dataset,
+        adata=adata
     )
