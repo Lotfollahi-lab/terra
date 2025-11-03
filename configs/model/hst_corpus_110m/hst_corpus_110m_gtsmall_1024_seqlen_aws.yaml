@@ -24,7 +24,7 @@ data:
   seq_len_neighborhood: 6144
   n_segments: 7 # number of unique segment tokens (gene segments)
   sampling_strategy: null # null, 'rand_sampling', 'norm_count_rank_sampling', 'rand_sampling_rep', 'norm_count_rank_sampling_rep'
-  batch_size: 112
+  batch_size: 96
   num_workers: 16
   pin_memory: True
   sep_gene_tokens_neb: False
