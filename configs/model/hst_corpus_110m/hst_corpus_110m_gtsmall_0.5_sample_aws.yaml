@@ -57,7 +57,7 @@ mask:
   targets_list: null
   context_mask_size: 200 # this doesn't have meaning in block masking.
   target_mask_size: 50 # this doesn't have meaning in block masking.
-  per_block_mask_ratio: 0.8 # 0.5, 0.6, 0.7, 0.8
+  per_block_mask_ratio: 0.9
   sample_segments: True
 optimization:
   warmup: 4
