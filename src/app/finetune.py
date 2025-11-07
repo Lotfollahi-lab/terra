@@ -1,5 +1,5 @@
 """
-Usage: python source-code/src/app/finetune.py --fname reproducibility/config/finetuning/xhs1000-39b_1p-batch1_toy-finetune-nemo.yaml
+Usage: python source-code/src/app/finetune.py --fname reproducibility/config/finetuning/xhs1000_niche_finetune-nemo.yaml
 """
 import os
 import sys
@@ -64,7 +64,7 @@ def parse_arguments():
     return args
 
 
-@torch.no_grad()
+# @torch.no_grad()
 def finetune(
         args: dict,
         adata: AnnData,
@@ -210,7 +210,7 @@ def finetune(
     print(label_lookup)
 
     # set number of classes
-    num_classes = len(label_lookup.unique())
+    num_classes = adata.uns[f'{label_name}_num_classes']
     print(f"Number of classes: {num_classes}")
 
     # -------------------------------------------------------------------- #
@@ -229,7 +229,6 @@ def finetune(
     
     with open(finetune_dir / 'params.yaml', 'w') as f:
         yaml.dump(args, f)
-    finetune_model_name = "finetune_checkpoint.pt"
 
     # -------------------------------------------------------------------- #
     # LOAD TARGET ENCODER
@@ -274,6 +273,9 @@ def finetune(
             scaler=None,
             is_training=False)
     
+    # TODO: Check if we can incorporate DistributedDataParallel here
+    
+    # TODO: Check if this is required
     # set target encoder to evaluation mode
     target_encoder.eval()
     
@@ -352,9 +354,11 @@ def finetune(
                          'batch_size': args['data']['batch_size'],
                          'world_size': 1,
                          'lr': lr}
+            ft_model_name = finetune_dir / f'ft_{epoch}.pt'
+            print(f"Saving checkpoint to {ft_model_name}...")
             torch.save(
                 save_dict, 
-                finetune_dir.format(epoch=f'ft_{epoch}')
+                ft_model_name
             )
 
     # -------------------------------------------------------------------- #
@@ -363,32 +367,35 @@ def finetune(
     for epoch in range(num_epochs):
         logger.info(f"Epoch {epoch}")
         running_loss = 0.0
+        correct_preds = 0
+        total_preds = 0
 
         for _, (udata, _, _, masks_attention) in tqdm(enumerate(loader)):
             for key in udata.keys():
-                udata[key] = udata[key].to(device, non_blocking=True)
+                if key != 'cell_id':
+                    udata[key] = udata[key].to(device, non_blocking=True)
             masks_attention = masks_attention.to(device, non_blocking=True)
             
             optimizer.zero_grad()
 
             # Forward pass
             logits = model(
-                udata=udata,
+                batch=udata,
                 masks_attention=masks_attention
             )
 
             # Get labels for this batch by matching cell IDs
-            batch_cell_ids = udata['cell_id']
+            # udata['cell_id'] is a list of cell IDs
             labels = torch.tensor(
-                label_lookup[batch_cell_ids.values].values,
+                label_lookup[udata['cell_id']].values,
                 dtype=torch.long,
                 device=device
             )
 
             # Compute the loss
             loss = criterion(
-                logits=logits,
-                targets=labels
+                input=logits,
+                target=labels
             )
 
             # Backward pass and optimization
@@ -397,11 +404,17 @@ def finetune(
 
             # Track statistics
             running_loss += loss.item()
-
+            
+            # Track accuracy
+            with torch.no_grad():
+                preds = torch.argmax(logits, dim=1)
+                correct_preds += (preds == labels).sum().item()
+                total_preds += labels.size(0)
+            
         epoch_loss = running_loss / len(loader)
-        # accuracy = correct_preds / total_preds
-        
-        logger.info(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}")
+        epoch_accuracy = correct_preds / total_preds
+
+        logger.info(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}, Accuracy: {epoch_accuracy:.4f}")
 
         save_checkpoint(epoch)
 
