@@ -10,6 +10,7 @@ from typing import Literal
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
 
@@ -216,7 +217,7 @@ class ClassificationModel(nn.Module):
 
     def __init__(self,
                  base_model: nn.Module,
-                 gt_type: Literal['rank', 'counts'],
+                 gt_type: Literal['rank', 'counts', 'combined'],
                  num_classes: int, use_mlp: bool = False, hidden_dim: int = 512):
         """
         Initialize the classification head.
@@ -225,6 +226,8 @@ class ClassificationModel(nn.Module):
         -----------
         base_model:
             The base model whose output is used for classification.
+        gt_type:
+            The type of gene transformer used in the base model.
         num_classes:
             The number of output classes for classification.
         use_mlp:
@@ -237,17 +240,23 @@ class ClassificationModel(nn.Module):
         self.base_model = base_model
         self.gt_type = gt_type
 
+        if type(self.base_model).__name__ == 'EncoderMultiMaskWrapper':
+            self.embed_dim = self.base_model.backbone.embed_dim
+        elif type(self.base_model).__name__ in ['PeftModel', 'PeftMixedModel']:
+            self.embed_dim = self.base_model.get_base_model().backbone.embed_dim
+        else:
+            raise ValueError(f"Invalid base model type: {type(self.base_model).__name__}")
+
         if use_mlp:
             # Using MLP with one hidden layer
             self.classification_head = nn.Sequential(
-                nn.Linear(base_model.output_dim, hidden_dim),
+                nn.Linear(self.embed_dim, hidden_dim),
                 nn.ReLU(),
                 nn.Linear(hidden_dim, num_classes)
             )
         else:
             # Using a simple linear layer
-            self.classification_head = nn.Linear(
-                base_model.output_dim, num_classes)
+            self.classification_head = nn.Linear(self.embed_dim,num_classes)
 
     def forward(self, **base_model_kwargs) -> torch.Tensor:
         """
@@ -263,6 +272,9 @@ class ClassificationModel(nn.Module):
 
         # Normalize over feature dim
         h = F.layer_norm(h, (h.size(-1),))
+        
+        # TODO: This pooling needs to be fixed for the padding/non-padding tokens
+        h = h.mean(dim=1)
         
         logits = self.classification_head(h)
         return logits
