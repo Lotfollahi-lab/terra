@@ -210,12 +210,6 @@ def infer(args: dict,
 
     r_file = args['state']['read_checkpoint']
     tag = args['state']['write_tag']
-
-    if args['data'].get('precomputed_n_nonzero_tokens'):
-        with open(args['data']['precomputed_n_nonzero_tokens'], "rb") as f: 
-            n_nonzero_tokens = pickle.load(f)
-    else:
-        n_nonzero_tokens = None
     
     # Load token dict and get token dict-specfic params
     with open(token_dict_folder_path, 'rb') as file:
@@ -319,7 +313,7 @@ def infer(args: dict,
         cell_pos_enc=cell_pos_enc,
         special_tokens=special_tokens,
         sampling_strategy=None,
-        n_nonzero_tokens_list=n_nonzero_tokens,
+        n_nonzero_tokens_list=[],
         include_cell_id=True,
         sep_gene_tokens_neb=sep_gene_tokens_neb)
 
@@ -1006,7 +1000,7 @@ def embed_dataset(dataset: Dataset,
         cell_pos_enc=model_config['meta']['cell_pos_enc'],
         special_tokens=model_config['meta']['special_tokens'],
         sampling_strategy=None,
-        n_nonzero_tokens_list=None,
+        n_nonzero_tokens_list=[],
         include_cell_id=True,
         sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'])
 
@@ -1516,7 +1510,7 @@ def gene_embed_dataset(dataset: Dataset,
         cell_pos_enc=model_config['meta']['cell_pos_enc'],
         special_tokens=model_config['meta']['special_tokens'],
         sampling_strategy=None,
-        n_nonzero_tokens_list=None,
+        n_nonzero_tokens_list=[],
         include_cell_id=True,
         sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'])
 
