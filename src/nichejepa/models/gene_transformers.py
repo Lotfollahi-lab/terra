@@ -1424,7 +1424,6 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
         # Run forward prop
         for blk in self.predictor_blocks:
             z = blk(z, masks=masks_attention)
-
         z = self.predictor_norm(z)
 
         # Return predictions for (target) mask tokens

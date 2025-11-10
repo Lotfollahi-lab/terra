@@ -1,15 +1,15 @@
 #!/bin/bash
-#SBATCH --job-name=nemo-pretraining      # sets the name of the job shown in the job queue (via `squeue`)
-#SBATCH --nodes=4                        # requests 4 nodes (each will typically run one process)
-#SBATCH --ntasks-per-node=1              # runs one task (process) per node and aligns with DDP across nodes
-#SBATCH --gpus-per-node=8                # requests 8 GPU on each node
-#SBATCH --cpus-per-task=48               # allocates 48 CPU cores per task
-#SBATCH --mem=1024G                      # allocates 1024 GB of RAM memory per node
-#SBATCH --partition=p4de-24xlarge        # specifies the partition (queue) to submit the job to (use `sinfo` to see avaialble)
-#SBATCH --time=480:00:00                 # sets the max wall time (runtime) for the job (HH:MM:SS)
-#SBATCH --output=logs/aws/%j.out         # stdout file (%j is replaced with the job ID)
-#SBATCH --error=logs/aws/%j.err          # stder file (for logging errors)
-#SBATCH --chdir=/home/ubuntu/sb75/nichejepa-reproducibility        # set working directory
+#SBATCH --job-name=nemo-pretraining                            # sets the name of the job shown in the job queue (via `squeue`)
+#SBATCH --nodes=4                                              # requests 4 nodes (each will typically run one process)
+#SBATCH --ntasks-per-node=1                                    # runs one task (process) per node and aligns with DDP across nodes
+#SBATCH --gpus-per-node=8                                      # requests 8 GPU on each node
+#SBATCH --cpus-per-task=192                                    # allocates 192 CPU cores per task
+#SBATCH --mem=1942G                                            # allocates 1942 GB of RAM memory per node
+#SBATCH --partition=p5-48xlarge                                # specifies the partition (queue) to submit the job to (use `sinfo` to see avaialble)
+#SBATCH --time=480:00:00                                       # sets the max wall time (runtime) for the job (HH:MM:SS)
+#SBATCH --output=logs/aws/%j.out                               # stdout file (%j is replaced with the job ID)
+#SBATCH --error=logs/aws/%j.err                                # stder file (for logging errors)
+#SBATCH --chdir=/home/ubuntu/sb75/nichejepa-reproducibility    # set working directory
 
 
 ###############################################################################
@@ -40,8 +40,8 @@ source ../nichejepa_env/bin/activate
 export MASTER_ADDR=$(scontrol show hostname $SLURM_NODELIST | head -n 1)
 export MASTER_PORT=$((12000 + RANDOM % 1000)) 
 
-export EXPERIMENT_NAME="hst_corpus_90m" # "hst_corpus_80m"
-export RUN_NAME="gttiny_fullcorpus_aws_50"
+export EXPERIMENT_NAME="hst_corpus_110m"
+export RUN_NAME="train_split_gttiny_aws_1"
 
 echo "[+] SLURM_JOB_GPUS: $SLURM_JOB_GPUS"
 echo "[+] CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
@@ -66,4 +66,4 @@ srun torchrun \
     --rdzv_backend c10d \
     /home/ubuntu/sb75/nichejepa/src/app/main_dist.py \
     --backend nccl \
-    --fname /home/ubuntu/sb75/nichejepa/configs/model/hst_corpus_90m/hst_corpus_90m_gttiny_aws.yaml
+    --fname /home/ubuntu/sb75/nichejepa/configs/model/hst_corpus_110m/hst_corpus_110m_gttiny_aws.yaml

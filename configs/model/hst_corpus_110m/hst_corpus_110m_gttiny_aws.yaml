@@ -10,9 +10,9 @@ data:
   count_count_norm_method: 'shifted_log'
   raw_data_folder_path: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/silver/hst_corpus_110m'
   token_dict_folder_path: '/fsx-shared/s3/token_dictionary_homo_sapiens.pkl'
-  tokenized_data_folder_path: '/fsx-shared/s3/hst_corpus_110m/hst_corpus_110m_0.25_sample_32_None_None_None_None_None_shifted_log_knn_10.dataset'
-  precomputed_split: '/fsx-shared/s3/hst_corpus_110m/hst_corpus_110m_0.25_sample_32_None_None_None_None_None_shifted_log_knn_10_precomputed_split_full.pkl'
-  precomputed_n_nonzero_tokens: '/fsx-shared/s3/hst_corpus_110m/hst_corpus_110m_0.25_sample_32_None_None_None_None_None_shifted_log_knn_10_n_nonzero_tokens_full.pkl'
+  tokenized_data_folder_path: '/fsx-shared/s3/hst_corpus_110m/hst_corpus_110m_32_None_None_None_None_None_shifted_log_knn_10.dataset'
+  precomputed_split: '/fsx-shared/s3/hst_corpus_110m/hst_corpus_110m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_split_train.pkl'
+  precomputed_n_nonzero_tokens: '/fsx-shared/s3/hst_corpus_110m/hst_corpus_110m_32_None_None_None_None_None_shifted_log_knn_10_n_nonzero_tokens_train.pkl'
   test_batch_ids: ['49_batch0']
   val_batch_ids: ['49_batch0']
   tokenizer_type: 'cell_graph'
@@ -37,10 +37,10 @@ meta:
   n_value_bins: 100
   cell_pos_enc: 'coord'
   enc_depth: 12
-  enc_emb_dim: 384
+  enc_emb_dim: 192
   pred_depth: 12
-  pred_emb_dim: 192 # 384
-  num_heads: 6
+  pred_emb_dim: 96
+  num_heads: 3
   mlp_ratio: 4
   special_tokens: [] # ['assay'] # ['batch'], ['assay', 'tissue', 'gene_panel', 'batch']
   pos_learnable: False
@@ -57,11 +57,11 @@ mask:
   targets_list: null
   context_mask_size: 200 # this doesn't have meaning in block masking.
   target_mask_size: 50 # this doesn't have meaning in block masking.
-  per_block_mask_ratio: 0.8
+  per_block_mask_ratio: 0.9 # 0.5, 0.6, 0.7, 0.8
   sample_segments: True
 optimization:
-  warmup: 4
-  epochs: 20
+  warmup: 1 # 1, 2
+  epochs: 5 # 5, 8
   ema:
   - 0.9995 # 0.998, 0.9995
   - 1.0
@@ -74,11 +74,11 @@ optimization:
   clip_grad: 2.0
 state:
   log_freq: 20
-  checkpoint_freq: 4
+  checkpoint_freq: 1
   write_tag: nichejepa
   read_timestamp: ''
   folder_path: null
   load_checkpoint: False # true, false
   read_checkpoint: null # null, 'nichejepa-ep5.pth.tar'
-  checkpoint_freq_iter: 20000
+  checkpoint_freq_iter: 5000
 
