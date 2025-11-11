@@ -12,7 +12,8 @@ import sys
 from typing import Literal
 
 import torch
-#from peft import get_peft_model, LoraConfig
+import torch.nn as nn
+from peft import get_peft_model, LoraConfig
 
 import terra.models.gene_transformers as gt
 from terra.models.batch_classifier import BatchClassifierHead
@@ -26,13 +27,75 @@ from terra.utils.schedulers import (CosineWDSchedule,
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logger = logging.getLogger()
 
-"""
-def apply_peft(model, peft_method='lora', rank=8):
+def apply_peft(
+        target_encoder: gt.GeneTransformerBaseEncoder | EncoderMultiMaskWrapper,
+        peft_method: Literal['lora'] = 'lora',
+        peft_rank: int = 8,
+        peft_alpha: int = 16,
+        peft_dropout: float = 0.05,
+        peft_bias: Literal['none', 'all'] = 'none',
+        peft_task_type: Literal['FEATURE_EXTRACTION'] = 'FEATURE_EXTRACTION',
+    ) -> nn.Module:
+    """
+    Apply PEFT to the target encoder.
+
+    Parameters:
+    -----------
+    target_encoder:
+        The target encoder to apply PEFT to.
+    peft_method:
+        The PEFT method to use. Currently, only LoRA is supported.
+    peft_rank:
+        The rank of the PEFT adapter.
+    peft_alpha:
+        The alpha of the PEFT adapter.
+    peft_dropout:
+        The dropout of the PEFT adapter. Default is 0.05.
+    peft_bias:
+        The bias of the PEFT adapter. Default is 'none'.
+    peft_task_type:
+        The task type of the PEFT adapter. Default is 'FEATURE_EXTRACTION'.
+
+    Returns:
+    -----------
+    peft_target_encoder:
+        The PEFT target encoder.
+
+    Notes:
+    - If target_encoder object is an EncoderMultiMaskWrapper, PEFT is applied to the backbone, i.e. gt.GeneTransformerBaseEncoder,
+    and a new EncoderMultiMaskWrapper object is instantiated with the PEFT model as the backbone.
+    """
     if peft_method == 'lora':
-        peft_config = LoraConfig(r=rank)
-        model = get_peft_model(model, peft_config)
-    return model
-"""
+        target_modules = [
+            "attn.qkv",
+            "attn.proj",
+            "mlp.fc1",
+            "mlp.fc2",
+            "value_embed.fc1",
+            "value_embed.fc2",
+        ]
+        logger.info(f"Target modules for LoRA: {target_modules}")
+        peft_config = LoraConfig(
+            r=peft_rank,
+            lora_alpha=peft_alpha,
+            lora_dropout=peft_dropout,
+            bias=peft_bias,
+            task_type=peft_task_type,
+            target_modules=target_modules,
+        )
+
+    if isinstance(target_encoder, EncoderMultiMaskWrapper):
+        logger.info("Target encoder is an EncoderMultiMaskWrapper. Applying PEFT to the backbone...")
+        peft_encoder = get_peft_model(target_encoder.backbone, peft_config)
+        logger.info("Instantiating a new EncoderMultiMaskWrapper object with the PEFT model as the backbone...")
+        peft_target_encoder = EncoderMultiMaskWrapper(peft_encoder)
+        logger.info(peft_target_encoder.backbone.print_trainable_parameters())
+    elif isinstance(target_encoder, gt.GeneTransformerBaseEncoder):
+        logger.info("Target encoder is a gt.GeneTransformerBaseEncoder. Applying PEFT to the target encoder...")
+        target_encoder = get_peft_model(target_encoder, peft_config)
+        logger.info(target_encoder.print_trainable_parameters())
+
+    return target_encoder
 
 def parse_distribution_alignment_kwargs(args: dict) -> dict | None:
     """Resolve the optional
