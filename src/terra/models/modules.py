@@ -339,13 +339,7 @@ class ClassificationModel(nn.Module):
 
         self.base_model = base_model
         self.gt_type = gt_type
-
-        if type(self.base_model).__name__ == 'EncoderMultiMaskWrapper':
-            self.embed_dim = self.base_model.backbone.embed_dim
-        elif type(self.base_model).__name__ in ['PeftModel', 'PeftMixedModel']:
-            self.embed_dim = self.base_model.get_base_model().backbone.embed_dim
-        else:
-            raise ValueError(f"Invalid base model type: {type(self.base_model).__name__}")
+        self.embed_dim = self.base_model.backbone.embed_dim
 
         if use_mlp:
             # Using MLP with one hidden layer
