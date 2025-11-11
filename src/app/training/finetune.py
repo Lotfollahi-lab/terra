@@ -180,11 +180,11 @@ def finetune(
     
     # Create label lookup dictionary indexed by cell_id (do once before training loop)
     label_lookup = adata.obs.set_index('cell_id')[label_name]
-    print(label_lookup)
+    logger.info(f"Label lookup: {label_lookup}")
 
     # set number of classes
     num_classes = adata.uns[f'{label_name}_num_classes']
-    print(f"Number of classes: {num_classes}")
+    logger.info(f"Number of classes: {num_classes}")
 
     # Load token dict and get token dict-specfic params
     with open(token_dict_folder_path, 'rb') as file:
@@ -273,6 +273,7 @@ def finetune(
     # else:
     #     return_layer_emb_fn = target_encoder.backbone.return_layer_emb
 
+    # TODO: Check if this is required
     if model_config['meta']['api_version'] != 'v3':
         return_layer_emb_fn = target_encoder.return_layer_emb
     else:
@@ -310,38 +311,27 @@ def finetune(
     hidden_dim = args['finetune']['hidden_dim']
     lr = args['finetune']['lr']
     num_epochs = args['finetune']['num_epochs']
-
+    
     # apply PEFT-adapter if specified
     if use_peft:
-        if peft_method == 'lora':
-            # create LoRA config
-            peft_config = LoraConfig(
-                r=peft_rank,
-                lora_alpha=peft_alpha,
-                lora_dropout=peft_dropout,
-                bias=peft_bias,
-                task_type=peft_task_type)
-            # add LoRA adapter to the target encoder
-            peft_model = get_peft_model(
-                            target_encoder,
-                            peft_config
-                        )
-
-            # confirm that parameters of target encoder are frozen
-            base_model = peft_model.get_base_model()
-            for p in base_model.parameters():
-                assert p.requires_grad == False
-        else:
-            # only LoRA is supported for now
-            raise ValueError(f"PEFT method {peft_method} not supported.")
+        peft_target_encoder = apply_peft(
+            target_encoder=target_encoder,
+            peft_method=peft_method,
+            peft_rank=peft_rank,
+            peft_alpha=peft_alpha,
+            peft_dropout=peft_dropout,
+            peft_bias=peft_bias,
+            peft_task_type=peft_task_type
+        )
     else:
-        # confirm that parameters of target encoder are frozen
+        # freeze parameters of target encoder
         for p in target_encoder.parameters():
             p.requires_grad = False
+        logger.info(f"Target encoder parameters are frozen.")
 
-    # apply a linear layer or MLP to the output of the PEFT model if PEFT is applied, otherwise apply to the output of the target encoder
+    # apply a linear layer or MLP to the output of the PEFT target encoder if PEFT is applied, otherwise apply to the output of the target encoder
     model = ClassificationModel(
-        base_model=peft_model if use_peft else target_encoder,
+        base_model=peft_target_encoder if use_peft else target_encoder,
         gt_type=model_config['meta']['gt_type'],
         num_classes=num_classes,
         use_mlp=use_mlp,
@@ -361,6 +351,9 @@ def finetune(
             lambda p: p.requires_grad, model.parameters()),
             lr=lr
         )
+    
+    # Save checkpoint function
+    # TODO: Check if we want to save the entire model or just the PEFT adapters.
     def save_checkpoint(epoch):
             save_dict = {'model': model.state_dict(),
                          'opt': optimizer.state_dict(),
@@ -371,7 +364,7 @@ def finetune(
                          'world_size': 1,
                          'lr': lr}
             ft_model_name = finetune_dir / f'ft_{epoch}.pt'
-            print(f"Saving checkpoint to {ft_model_name}...")
+            logger.info(f"Saving checkpoint to {ft_model_name}...")
             torch.save(
                 save_dict, 
                 ft_model_name
@@ -426,7 +419,7 @@ def finetune(
                 preds = torch.argmax(logits, dim=1)
                 correct_preds += (preds == labels).sum().item()
                 total_preds += labels.size(0)
-            
+
         epoch_loss = running_loss / len(loader)
         epoch_accuracy = correct_preds / total_preds
 
@@ -448,11 +441,11 @@ if __name__ == '__main__':
         columns=cols,
         output_all_columns=True
     )
-    print(dataset[0])
+    logger.info(f"Finetune training dataset sample: {dataset[0]}")
 
     # load finetune adata (labels)
     adata = sc.read_h5ad(args['data']['finetune_adata'])
-    print(adata)
+    logger.info(f"Finetune training adata: {adata}")
 
     # finetune model
     finetune(
