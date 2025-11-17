@@ -33,6 +33,7 @@ def apply_peft(
         peft_alpha: int = 16,
         peft_dropout: float = 0.05,
         peft_bias: Literal['none', 'all'] = 'none',
+        peft_target_modules: list[str] | None = None,
         peft_task_type: Literal['FEATURE_EXTRACTION'] = 'FEATURE_EXTRACTION',
     ) -> nn.Module:
     """
@@ -52,6 +53,8 @@ def apply_peft(
         The dropout of the PEFT adapter. Default is 0.05.
     peft_bias:
         The bias of the PEFT adapter. Default is 'none'.
+    peft_target_modules:
+        The target modules to apply PEFT to. Default is None.
     peft_task_type:
         The task type of the PEFT adapter. Default is 'FEATURE_EXTRACTION'.
 
@@ -66,17 +69,15 @@ def apply_peft(
     """
     # build PEFT config
     if peft_method == 'lora':
-        # TODO: Confirm this list and remove value_embed.fc1 and value_embed.fc2 if not needed
-        # set target modules for LoRA
-        target_modules = [
-            "attn.qkv",
-            "attn.proj",
-            "mlp.fc1",
-            "mlp.fc2",
-            "value_embed.fc1",
-            "value_embed.fc2",
-        ]
-        logger.info(f"Target modules for LoRA: {target_modules}")
+        if not peft_target_modules:
+            peft_target_modules = [
+                "attn.qkv",
+                "attn.proj",
+                "mlp.fc1",
+                "mlp.fc2",
+            ]
+            logger.info("No target modules provided. Using default target modules.")
+        logger.info(f"Target modules for LoRA: {peft_target_modules}")
 
         # create LoRA config
         peft_config = LoraConfig(
@@ -85,7 +86,7 @@ def apply_peft(
             lora_dropout=peft_dropout,
             bias=peft_bias,
             task_type=peft_task_type,
-            target_modules=target_modules
+            target_modules=peft_target_modules
             )
 
     # apply PEFT to the target encoder
@@ -100,16 +101,9 @@ def apply_peft(
         logger.info("Instantiating a new EncoderMultiMaskWrapper object with the PEFT model as the backbone...")
         peft_target_encoder = EncoderMultiMaskWrapper(peft_encoder)
         logger.info(peft_target_encoder.backbone.print_trainable_parameters())
-    elif isinstance(target_encoder, gt.GeneTransformerBaseEncoder):
-        # TODO: Confirm that this should be included in the codebase (for backward compatibility?)
-        # if target_encoder object is a gt.GeneTransformerBaseEncoder, apply PEFT to the target_encoder
-        logger.info("Target encoder is a gt.GeneTransformerBaseEncoder. Applying PEFT to the target encoder...")
-        target_encoder = get_peft_model(
-            target_encoder,
-            peft_config
-        )
-        logger.info(target_encoder.print_trainable_parameters())
 
+    else:
+        raise ValueError(f"Target encoder is of type {type(target_encoder)}. PEFT is not supported for this type of encoder.")
     return target_encoder
 
 

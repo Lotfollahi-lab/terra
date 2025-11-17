@@ -30,6 +30,7 @@ from nichejepa.masks.block_masking  import BlockMaskCollator
 from nichejepa.masks.cell_masking import CellMaskCollator
 from nichejepa.utils.distributed import init_distributed
 from nichejepa.models.modules import ClassificationModel
+from nichejepa.utils.embedding import create_binary_selection_mask
 
 
 os.environ["NCCL_ASYNC_ERROR_HANDLING"] = "1" # Better error propagation
@@ -96,6 +97,7 @@ def finetune(
     # BACKEND SETUP
     # -------------------------------------------------------------------- #
     # Set random seeds
+    logger.info("Configuring backend...")
     np.random.seed(_GLOBAL_SEED)
     torch.manual_seed(_GLOBAL_SEED)
     if torch.cuda.is_available():
@@ -119,6 +121,7 @@ def finetune(
     # -------------------------------------------------------------------- #
     # LOAD MODEL CONFIG
     # -------------------------------------------------------------------- #
+    logger.info("Loading model config...")
     # Construct paths to model config, token dictionary, and model checkpoint
     pretrained_checkpoint_path = Path(args['model']['pretrained_checkpoint_path'])
     model_config_file_path = pretrained_checkpoint_path / 'model_config.yaml'
@@ -132,6 +135,7 @@ def finetune(
     # -------------------------------------------------------------------- #
     # LOAD TOKEN DICTIONARY AND GET TOKEN DICTIONARY-SPECIFIC PARAMS
     # -------------------------------------------------------------------- #
+    logger.info("Loading token dictionary...")
     # Get token sequence length and number of special tokens
     n_special_tokens = len(model_config['meta']['special_tokens'])
     seq_len = (
@@ -148,6 +152,7 @@ def finetune(
     # -------------------------------------------------------------------- #
     # PREPARE TOKENIZED DATASET AND DATALOADER
     # -------------------------------------------------------------------- #
+    logger.info("Preparing tokenized dataset and dataloader...")
     # Create mask collator
     mask_collator = BlockMaskCollator(
         n_targets=model_config['mask']['n_targets'],
@@ -191,6 +196,7 @@ def finetune(
     # -------------------------------------------------------------------- #
     # PREPARE LABELS
     # -------------------------------------------------------------------- #
+    logger.info("Preparing labels...")
     label_name = args['data']['label_name']
     
     # Assert required columns exist in adata.obs
@@ -209,7 +215,11 @@ def finetune(
     logger.info(f"Label lookup: {label_lookup}")
 
     # set number of classes
-    num_classes = adata.uns[f'{label_name}_num_classes']
+    try:
+        num_classes = adata.uns[f'{label_name}_num_classes']
+    except KeyError:
+        num_classes = adata.obs[label_name].nunique()
+        logger.warning(f"Number of classes not found in adata.uns. Using adata.obs[{label_name}].nunique() instead.")
     logger.info(f"Number of classes: {num_classes}")
 
     # -------------------------------------------------------------------- #
@@ -256,12 +266,6 @@ def finetune(
         predict_gene=model_config['meta']['predict_gene'],
         pos_learnable=model_config['meta']['pos_learnable'])
 
-    # TODO: Check if this is required
-    if model_config['meta']['api_version'] != 'v3':
-        return_layer_emb_fn = target_encoder.return_layer_emb
-    else:
-        return_layer_emb_fn = target_encoder.backbone.return_layer_emb
-
     # Load model checkpoint
     _, _, target_encoder, _, _, _, _ = load_checkpoint(
             device=device,
@@ -273,11 +277,7 @@ def finetune(
             scaler=None,
             is_training=False)
     
-    # TODO: Check if we can incorporate DistributedDataParallel here
-    
-    # TODO: Check if this is required
-    # set target encoder to evaluation mode
-    target_encoder.eval()
+    # TODO: Incorporate DistributedDataParallel here if we want to finetune the model in a distributed manner.
     
     # -------------------------------------------------------------------- #
     # BUILD MODEL
@@ -290,10 +290,19 @@ def finetune(
     peft_dropout = args['finetune']['peft_dropout']
     peft_bias = args['finetune']['peft_bias']
     peft_task_type = args['finetune']['peft_task_type']
+    try:
+        peft_target_modules = args['finetune']['peft_target_modules']
+    except KeyError:
+        peft_target_modules = None
+
     use_mlp = args['finetune']['use_mlp']
     hidden_dim = args['finetune']['hidden_dim']
     lr = args['finetune']['lr']
     num_epochs = args['finetune']['num_epochs']
+    selection_type = args['finetune']['selection_type']
+    agg_type = args['finetune']['agg_type']
+    agg_excluded_tokens = args['finetune']['excluded_tokens']
+    top_k = args['finetune']['top_k']
     
     # apply PEFT-adapter if specified
     if use_peft:
@@ -304,6 +313,7 @@ def finetune(
             peft_alpha=peft_alpha,
             peft_dropout=peft_dropout,
             peft_bias=peft_bias,
+            peft_target_modules=peft_target_modules,
             peft_task_type=peft_task_type
         )
     else:
@@ -315,7 +325,7 @@ def finetune(
     # apply a linear layer or MLP to the output of the PEFT target encoder if PEFT is applied, otherwise apply to the output of the target encoder
     model = ClassificationModel(
         base_model=peft_target_encoder if use_peft else target_encoder,
-        gt_type=model_config['meta']['gt_type'],
+        agg_type=agg_type,
         num_classes=num_classes,
         use_mlp=use_mlp,
         hidden_dim=hidden_dim
@@ -335,23 +345,47 @@ def finetune(
             lr=lr
         )
     
+    # -------------------------------------------------------------------- #
+    # SAVE CHECKPOINT FUNCTION
+    # -------------------------------------------------------------------- #
+    model_name = "Zeroshot" if not use_peft else "Finetune"
+    model_name += "+Linear" if not use_mlp else "MLP"
+    
     # Save checkpoint function
-    # TODO: Check if we want to save the entire model or just the PEFT adapters.
-    def save_checkpoint(epoch):
-            save_dict = {'model': model.state_dict(),
-                         'opt': optimizer.state_dict(),
-                         'epoch': epoch,
-                         'zero_epoch_tracking': True,
-                         'loss': running_loss,
-                         'batch_size': args['data']['batch_size'],
-                         'world_size': 1,
-                         'lr': lr}
-            ft_model_name = finetune_dir / f'ft_{epoch}.pt'
-            logger.info(f"Saving checkpoint to {ft_model_name}...")
-            torch.save(
-                save_dict, 
-                ft_model_name
-            )
+    def save_checkpoint(
+            epoch,
+            epoch_loss,
+            epoch_accuracy,
+        ):
+        """
+        Save checkpoint.
+        Parameters
+        ----------
+        epoch:
+            Epoch number.
+        epoch_loss:
+            Loss for the epoch.
+        epoch_accuracy:
+            Accuracy for the epoch.
+        """
+        save_dict = {
+                        'model': model.state_dict(),
+                        'opt': optimizer.state_dict(),
+                        'epoch': epoch,
+                        'zero_epoch_tracking': True,
+                        'loss': epoch_loss,
+                        'accuracy': epoch_accuracy,
+                        'batch_size': args['data']['batch_size'],
+                        'world_size': 1,
+                        'lr': lr,
+                        'model_name': model_name,
+                    }
+        ft_model_name = finetune_dir / f'ft_{epoch}.pt'
+        logger.info(f"Saving checkpoint to {ft_model_name}...")
+        torch.save(
+            save_dict,
+            ft_model_name
+        )
 
     # -------------------------------------------------------------------- #
     # TRAINING LOOP
@@ -368,12 +402,34 @@ def finetune(
                     udata[key] = udata[key].to(device, non_blocking=True)
             masks_attention = masks_attention.to(device, non_blocking=True)
             
+            ns_tokens = udata['tokens'][:, n_special_tokens:]
+
+            # Aggregate gene embeddings into cell and neighborhood embeddings
+            cell_mask = create_binary_selection_mask(
+                ns_tokens,
+                selection_type=selection_type,
+                excluded_tokens=agg_excluded_tokens,
+                seq_len_cell=model_config['data']['seq_len_cell'],
+                top_k=top_k).to(device)
+            if selection_type == 'agg_graph':
+                neighborhood_mask = create_binary_selection_mask(
+                    ns_tokens,
+                    selection_type=selection_type,
+                    excluded_tokens=agg_excluded_tokens,
+                    seq_len_cell=model_config['data']['seq_len_cell'],
+                    top_k=top_k,
+                    n_segments=model_config['data']['n_segments']).to(device)
+            else:
+                neighborhood_mask = None
+                    
             optimizer.zero_grad()
 
             # Forward pass
             logits = model(
-                batch=udata,
-                masks_attention=masks_attention
+                udata=udata,
+                masks_attention=masks_attention,
+                cell_mask=cell_mask,
+                neighborhood_mask=neighborhood_mask
             )
 
             # Get labels for this batch by matching cell IDs
@@ -402,13 +458,17 @@ def finetune(
                 preds = torch.argmax(logits, dim=1)
                 correct_preds += (preds == labels).sum().item()
                 total_preds += labels.size(0)
+                
+            # break
 
         epoch_loss = running_loss / len(loader)
         epoch_accuracy = correct_preds / total_preds
 
         logger.info(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}, Accuracy: {epoch_accuracy:.4f}")
 
-        save_checkpoint(epoch)
+        save_checkpoint(epoch, epoch_loss, epoch_accuracy)
+        
+    logger.info(f"Finetuning completed.")
 
 
 if __name__ == '__main__':
