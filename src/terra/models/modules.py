@@ -16,6 +16,8 @@ from torch.nn.attention import SDPBackend, sdpa_kernel
 from .adaln import AdaLN
 from .rope2d import RoPE2D
 
+from terra.utils.embedding import (compute_mean_unmasked_emb,
+                                       compute_unmasked_rank_based_weights)
 
 class Attention(nn.Module):
     """
@@ -315,10 +317,14 @@ class ClassificationModel(nn.Module):
     for classification based on the output of a base model.
     """
 
-    def __init__(self,
-                 base_model: nn.Module,
-                 gt_type: Literal['rank', 'counts', 'combined'],
-                 num_classes: int, use_mlp: bool = False, hidden_dim: int = 512):
+    def __init__(
+            self,
+            base_model: nn.Module,
+            agg_type: Literal['avg', 'weighted_avg'],
+            num_classes: int,
+            use_mlp: bool = False,
+            hidden_dim: int = 512
+        ):
         """
         Initialize the classification head.
 
@@ -326,8 +332,8 @@ class ClassificationModel(nn.Module):
         -----------
         base_model:
             The base model whose output is used for classification.
-        gt_type:
-            The type of gene transformer used in the base model.
+        agg_type:
+            The type of aggregation to use for padding/non-padding tokens.
         num_classes:
             The number of output classes for classification.
         use_mlp:
@@ -338,7 +344,7 @@ class ClassificationModel(nn.Module):
         super(ClassificationModel, self).__init__()
 
         self.base_model = base_model
-        self.gt_type = gt_type
+        self.agg_type = agg_type
         self.embed_dim = self.base_model.backbone.embed_dim
 
         if use_mlp:
@@ -352,25 +358,53 @@ class ClassificationModel(nn.Module):
             # Using a simple linear layer
             self.classification_head = nn.Linear(self.embed_dim,num_classes)
 
-    def forward(self, **base_model_kwargs) -> torch.Tensor:
+    def forward(
+            self,
+            udata: dict,
+            masks_attention: torch.Tensor,
+            cell_mask: torch.Tensor,
+            neighborhood_mask: torch.Tensor | None = None,
+        ) -> torch.Tensor:
         """
         Forward pass through the classification head.
 
         Parameters:
-        - x (Tensor): The input tensor (feature vector) from the base model.
-
+        - udata (dict): The input dictionary containing the batch data.
+        - masks_attention (Tensor): The attention masks.
+        - cell_mask (Tensor): The cell mask.
+        - neighborhood_mask (Tensor | None): The neighborhood mask. If None,
+          the neighborhood mask is not used.
+        
         Returns:
         - Tensor: The class logits.
         """
-        h, _= self.base_model(**base_model_kwargs)
+        # h.shape = (<batch_size>, <seq_len>, <embedding_dim>)
+        h, _= self.base_model(batch=udata, masks_attention=masks_attention)
 
         # Normalize over feature dim
         h = F.layer_norm(h, (h.size(-1),))
         
-        # TODO: This pooling needs to be fixed for the padding/non-padding tokens
-        h = h.mean(dim=1)
+        # Aggregate gene embeddings into cell and neighborhood embeddings
+        # h.shape = (<batch_size>, <embedding_dim>)
+        try:
+            # TODO: Confirm about spatial_cell_emb
+            if self.agg_type == 'avg':
+                h = compute_mean_unmasked_emb(h, cell_mask)
+            elif self.agg_type == 'weighted_avg':
+                h_weights = compute_unmasked_rank_based_weights(
+                    udata['tokens'], # TODO: Confirm correctness
+                    cell_mask)
+                h = compute_mean_unmasked_emb(
+                    h * h_weights.unsqueeze(-1),
+                    cell_mask)
+        except KeyError:
+            # Fall back to mean pooling if mask-based aggregation fails
+            h = h.mean(dim=1)
         
+        # Project gene embeddings into logits
+        # logits.shape = (<batch_size>, <num_classes>)
         logits = self.classification_head(h)
+
         return logits
 
 
