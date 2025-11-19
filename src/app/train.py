@@ -5,7 +5,6 @@ Vis. Pattern Recognit. 15619–15629 (2023);
 https://github.com/facebookresearch/ijepa/blob/main/src/train.py (05.06.2024).
 """
 
-import gc
 import os
 
 """
@@ -653,8 +652,6 @@ def train(args: dict,
             del udata, masks_enc, masks_pred, masks_attention
             del loss, _new_lr, _new_wd
             del grad_stats, grad_stats_pred
-            torch.cuda.empty_cache()
-            gc.collect()
 
         # -- Save Checkpoint after every epoch
         logger.info('avg. loss %.3f' % loss_meter.avg)
