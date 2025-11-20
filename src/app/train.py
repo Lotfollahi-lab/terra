@@ -373,6 +373,7 @@ def train(args: dict,
                 pin_memory=pin_memory,
                 num_workers=num_workers,
                 drop_last=True,
+                prefetch_factor=(4 if num_workers > 0 else None),
                 persistent_workers=False)
             train_loaders.append(train_loader)
             train_samplers.append(train_sampler)
@@ -388,7 +389,7 @@ def train(args: dict,
             pin_memory=pin_memory,
             num_workers=num_workers,
             drop_last=True,
-            prefetch_factor=4,
+            prefetch_factor=(4 if num_workers > 0 else None),
             persistent_workers=False)
 
     ipe = len(train_loader)
@@ -498,7 +499,7 @@ def train(args: dict,
             save_dict['iter_number'] = iter_number
         if rank == 0:
             torch.save(save_dict, latest_path)
-            if (epoch) % checkpoint_freq == 0:
+            if (epoch + 1) % checkpoint_freq == 0:
                 if iter_number is None:
                     torch.save(save_dict, save_path.format(epoch=f'{epoch}'))
                 else:

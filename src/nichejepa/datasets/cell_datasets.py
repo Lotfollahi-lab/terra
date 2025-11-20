@@ -449,7 +449,7 @@ class CellGraphDataset(CellBaseDataset):
                 segment_tensor = torch.where(
                     segment_tokens != 0,
                     segment,
-                    torch.tensor(0, dtype=torch.long))
+                    torch.tensor(0, dtype=torch.long)).to(dtype=torch.long)
                 item_dict['segments'] = torch.cat(
                     [item_dict['segments'], segment_tensor], dim=0)
                 if self.cell_pos_enc == 'coord':
@@ -555,9 +555,11 @@ class CellNeighborhoodDataset(CellBaseDataset):
             [gene_tokens_cell, gene_tokens_neigh], dim=0)
 
         segments_cell = torch.where(
-            gene_tokens_cell != 0, torch.tensor(1), torch.tensor(0))
+            gene_tokens_cell != 0, torch.tensor(1), torch.tensor(0)).to(
+                dtype=torch.long)
         segments_neigh = torch.where(
-            gene_tokens_neigh != 0, torch.tensor(2), torch.tensor(0))
+            gene_tokens_neigh != 0, torch.tensor(2), torch.tensor(0)).to(
+                dtype=torch.long)
         item_dict['segments'] = torch.cat(
             [segments_cell, segments_neigh], dim=0)
         if self.cell_pos_enc == 'coord':

@@ -3,28 +3,26 @@
 
 job_requirement:
   LSB_DEFAULT_USERGROUP: team361  # The user group to be used for scheduling the job.
-  QUEUE: "gpu-lotfollahi"  # The job queue to be used for scheduling the job.
+  QUEUE: "gpu-normal" # "gpu-lotfollahi", "gpu-lotfollahi-train"  # The job queue to be used for scheduling the job.
   NUM_NODES: 1  # Number of compute nodes required for the job.
   NUM_GPUS_NODE: 1  # Number of GPUs per node.
   NUM_PROCESSES_NODE: 16  # Number of processes per node.
   MEM_NODE: 128  # Memory allocated per node (in GB).
-
+  
 infiniband:
   NCCL_IB_DISABLE: 1  # 1: Disable InfiniBand, 0: Enable InfiniBand
 
 environment:
   ENV_PATH: "/nfs/users/nfs_s/sb75/.venvs/nichejepa"  # Path to the environment to be activated.
 
-#artifact:
-  ARTIFACT_LOCATION: "/nfs/team361/sb75/nichejepa-reproducibility/artifacts/mmb0-1b_smb1-1b_2p"  # Path to store the artifacts.
-  WAREHOUSE_PATH: "/nfs/team361/sb75/nichejepa-reproducibility/artifacts/mmb0-1b_smb1-1b_2p"  # Path to store the artifacts.
-  OUTPUT_DIR: "/nfs/team361/sb75/nichejepa-reproducibility/artifacts/mmb0-1b_smb1-1b_2p"  # Path to store the artifacts.
-  LOG_DIR: "/nfs/team361/sb75/nichejepa-reproducibility/artifacts/mmb0-1b_smb1-1b_2p"
-  EXPERIMENT_NAME: "nemo"  # Name of the experiment.
-  RUN_NAME: "mmb0-1b_smb1-1b_2p-1337"  # Name of the run.
+artifact:
+  ARTIFACT_LOCATION: "/nfs/team361/sb75/nichejepa-reproducibility/artifacts/xhs1000-39b_1p"  # Path to store the artifacts.
+  WAREHOUSE_PATH: "/nfs/team361/sb75/nichejepa-reproducibility/artifacts/xhs1000-39b_1p"  # Path to store the artifacts.
+  EXPERIMENT_NAME: "nichejepa_pretraining"  # Name of the experiment.
+  RUN_NAME: "xhs1000-39b_1p_sanger_53_newblockmasking_counts_segment"  # Name of the run.
 
 runner_script:
   RUNNER_SCRIPT: "/nfs/team361/sb75/nichejepa/src/app/runner.sh"  # Path to the runner script.
   TRAINING_SCRIPT_PATH: "/nfs/team361/sb75/nichejepa/src/app/main_dist.py"  # Path to the training script.
   BACKEND: "nccl"  # Backend for distributed training.
-  CONFIG_FILE: "/nfs/team361/sb75/nichejepa/configs/model/mmb0-1b_smb1-1b/mmb0-1b_smb1-1b_2p.yaml"
+  CONFIG_FILE: "/nfs/team361/sb75/nichejepa/configs/model/xhs1000-39b_1p/xhs1000-39b_1p.yaml"

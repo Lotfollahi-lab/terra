@@ -19,6 +19,7 @@ from datasets import concatenate_datasets, Dataset
 from functools import partial
 from tqdm import tqdm
 from pyensembl import EnsemblRelease
+from scipy.sparse import issparse
 
 from app.helper import init_model, load_checkpoint
 from nichejepa.datasets.cell_datasets import CellBaseDataset, init_cell_dataset
@@ -210,12 +211,6 @@ def infer(args: dict,
 
     r_file = args['state']['read_checkpoint']
     tag = args['state']['write_tag']
-
-    if args['data'].get('precomputed_n_nonzero_tokens'):
-        with open(args['data']['precomputed_n_nonzero_tokens'], "rb") as f: 
-            n_nonzero_tokens = pickle.load(f)
-    else:
-        n_nonzero_tokens = None
     
     # Load token dict and get token dict-specfic params
     with open(token_dict_folder_path, 'rb') as file:
@@ -319,7 +314,7 @@ def infer(args: dict,
         cell_pos_enc=cell_pos_enc,
         special_tokens=special_tokens,
         sampling_strategy=None,
-        n_nonzero_tokens_list=n_nonzero_tokens,
+        n_nonzero_tokens_list=[],
         include_cell_id=True,
         sep_gene_tokens_neb=sep_gene_tokens_neb)
 
@@ -696,8 +691,12 @@ def infer(args: dict,
 
 
 def harmonize_adata(adata: ad.AnnData,
-                    ensembl_release: int=110, # 111
+                    gene_mapping_dict_file_path: str | None='/lustre/scratch126/cellgen/lotfollahi/DATASETS/genes/homo_sapiens_gene_name_to_ensembl_id_dict.pkl',
+                    gene_occurrence_count_file_path: str | None='/lustre/scratch126/cellgen/lotfollahi/DATASETS/genes/homo_sapiens_gene_occurence_count_dict.pkl',
+                    gene_occurrence_count_filter_value: int=10,
+                    ensembl_release: int=111,
                     min_genes_per_cell: int=10,
+                    min_cells_per_gene: int=10,
                     ) -> ad.AnnData:
     """
     Harmonize an AnnData object prior to tokenization.
@@ -717,21 +716,38 @@ def harmonize_adata(adata: ad.AnnData,
         A harmonized AnnData object.
     """
     print('==================================================')
-    print('STEP 1: ADDING ENSEMBL IDS...')
+    print('STEP 1: DATA VALIDATION...')
     print('==================================================')
-    print(f'Adding ensembl IDs from release {ensembl_release}...')
-    # Extract ensembl IDs of protein coding and miRNA mouse genes
-    ensembl = EnsemblRelease(release=ensembl_release, species='human')
-    ensembl.download()
-    ensembl.index()
-    all_genes = ensembl.genes()
-    protein_coding_genes = [
-        gene for gene in all_genes if gene.biotype == "protein_coding"]
-    mirna_genes = [
-        gene for gene in all_genes if gene.biotype == "miRNA"]
-    all_relevant_genes = protein_coding_genes + mirna_genes
-    gene_ensembl_map_dict = {
-        gene.gene_name: gene.gene_id for gene in all_relevant_genes}
+    print('Checking that adata.X contains raw counts...')
+    if issparse(adata.X):
+        data = adata.X.data
+    else:
+        data = np.asarray(adata.X)
+    all_integers = np.allclose(data, data.astype(int))
+
+    print('==================================================')
+    print('STEP 2: ADDING ENSEMBL IDS...')
+    print('==================================================')
+    if not gene_mapping_dict_file_path:
+        print(f'Adding ensembl IDs from release {ensembl_release}...')
+        print(f'Make sure this ensembl release is aligned with pretraining.')
+        print(f'Current ensembl release used for pretraining is 111.')
+        # Extract ensembl IDs of protein coding and miRNA mouse genes
+        ensembl = EnsemblRelease(release=ensembl_release, species='human')
+        ensembl.download()
+        ensembl.index()
+        all_genes = ensembl.genes()
+        protein_coding_genes = [
+            gene for gene in all_genes if gene.biotype == "protein_coding"]
+        mirna_genes = [
+            gene for gene in all_genes if gene.biotype == "miRNA"]
+        all_relevant_genes = protein_coding_genes + mirna_genes
+        gene_ensembl_map_dict = {
+            gene.gene_name: gene.gene_id for gene in all_relevant_genes}
+    else:
+        print(f'Adding ensembl IDs from gene_mapping_dict with file path `{gene_mapping_dict_file_path}`...')
+        with open(gene_mapping_dict_file_path, 'rb') as f:
+            gene_ensembl_map_dict = pickle.load(f)
 
     adata_gene_names = [gene_name for gene_name in adata.var_names.tolist()]
     adata.var.index = adata_gene_names
@@ -742,19 +758,48 @@ def harmonize_adata(adata: ad.AnnData,
         if gene_name in gene_ensembl_map_dict.keys():
             harmonized_gene_names.append(gene_name)
             matching_ensembl_ids.append(gene_ensembl_map_dict[gene_name])
-    print(f'Number of genes with matching ensembl IDs: \
-          {len(harmonized_gene_names)}.')
-    print(f'Number of genes skipped: \
-          {len(adata_gene_names) - len(harmonized_gene_names)}.')
+    print(f'Number of genes with matching ensembl IDs: {len(harmonized_gene_names)}.')
+    print(f'Number of genes skipped due to non-matching ensembl IDs: {len(adata_gene_names) - len(harmonized_gene_names)}.')
+    if len(adata_gene_names) - len(harmonized_gene_names) > 0:
+        print(f'Genes excluded due to non-matching ensembl IDs: {set(adata_gene_names) - set(harmonized_gene_names)}.')
 
     adata = adata[:, adata.var.index.isin(harmonized_gene_names)].copy()
     adata.var = pd.DataFrame(
-        index=pd.Index(harmonized_gene_names, name="gene_name"),
-        data={"ensembl_id": matching_ensembl_ids})
+        index=pd.Index(harmonized_gene_names, name='gene_name'),
+        data={'ensembl_id': matching_ensembl_ids})
+
+    print(f'Filtering genes that have not occurred enough during pretraining...')
+    with open(gene_occurrence_count_file_path, 'rb') as f:
+        gene_occurrence_count_dict = pickle.load(f)
+
+    all_ensembl_ids = adata.var['ensembl_id'].tolist()
+    keep_ensembl_ids = [
+        ensembl_id for ensembl_id in all_ensembl_ids if gene_occurrence_count_dict[
+                ensembl_id] > gene_occurrence_count_filter_value]
+
+    print(f'Number of genes skipped due to not enough pretraining occurrences: {len(all_ensembl_ids) - len(keep_ensembl_ids)}.')
+    if len(all_ensembl_ids) - len(keep_ensembl_ids) > 0:
+        print(f'Genes excluded due to not enough pretraining occurrences: {set(all_ensembl_ids) - set(keep_ensembl_ids)}.')
+    adata = adata[:, adata.var['ensembl_id'].isin(keep_ensembl_ids)].copy()
+
+    print('==================================================')
+    print('STEP 3: BASIC QUALITY CONTROL...')
+    print('==================================================')
+    # Filter cells with less than min_genes_per_cell genes
+    print(f'Filtering cells with less than {min_genes_per_cell} genes.')
+    sc.pp.filter_cells(
+        adata,
+        min_genes=min_genes_per_cell)
+
+    # Filter genes with less than min_cells_per_gene cells
+    print(f'Filtering genes expressed in less than {min_cells_per_gene} cells.')
+    sc.pp.filter_genes(
+        adata,
+        min_cells=min_cells_per_gene)
 
     # Add dummy values as special values
     print('==================================================')
-    print('STEP 2: ADDING SPECIAL VALUES...')
+    print('STEP 4: ADDING SPECIAL VALUES...')
     print('==================================================')
     if 'cell_id' not in adata.obs.keys():
         adata.obs['cell_id'] = adata.obs_names
@@ -768,11 +813,6 @@ def harmonize_adata(adata: ad.AnnData,
         adata.uns['species'] = 'homo_sapiens' # just dummy values
     if 'tissue' not in adata.uns.keys():
         adata.uns['tissue'] = 'lung' # just dummy values
-
-    # Filter cells with less than min_genes_per_cell genes
-    sc.pp.filter_cells(
-        adata,
-        min_genes=min_genes_per_cell)
 
     return adata
 
@@ -879,8 +919,8 @@ def embed_dataset(dataset: Dataset,
                   batch_size: int = 128,
                   pin_memory: bool = False,
                   num_workers: int = 12,
-                   include_spatial_cell_emb: bool = True,
-                   return_token_embeddings: bool = False,
+                  include_spatial_cell_emb: bool = True,
+                  return_token_embeddings: bool = False,
                   ) -> dict:
     """
     Parameters
@@ -1006,7 +1046,7 @@ def embed_dataset(dataset: Dataset,
         cell_pos_enc=model_config['meta']['cell_pos_enc'],
         special_tokens=model_config['meta']['special_tokens'],
         sampling_strategy=None,
-        n_nonzero_tokens_list=None,
+        n_nonzero_tokens_list=[],
         include_cell_id=True,
         sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'])
 
@@ -1069,7 +1109,7 @@ def embed_dataset(dataset: Dataset,
             c_emb = cell_only_ctx[emb_layer].cpu()
             n_emb = full_ctx[emb_layer].cpu()
             if return_token_embeddings:
-                # n_emb contains embeddings for all  tokens
+                # n_emb contains embeddings for all tokens
                 all_token_emb_list.append(n_emb)
         
         # Create mask for index cell genes
@@ -1516,7 +1556,7 @@ def gene_embed_dataset(dataset: Dataset,
         cell_pos_enc=model_config['meta']['cell_pos_enc'],
         special_tokens=model_config['meta']['special_tokens'],
         sampling_strategy=None,
-        n_nonzero_tokens_list=None,
+        n_nonzero_tokens_list=[],
         include_cell_id=True,
         sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'])
 

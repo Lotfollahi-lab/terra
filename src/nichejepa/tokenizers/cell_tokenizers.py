@@ -138,6 +138,10 @@ class CellBaseTokenizer(ABC):
         File path to '.csv' file containing norm factors per gene.
     token_dictionary_file_path:
         File path to the '.pkl' file containing the token dictionary.
+    add_neigh_cell_ids:
+        If `True`, add neighbor cell IDs.
+    include_special_tokens:
+        If `True`, include special tokens.
     """
     def __init__(
             self,
@@ -180,6 +184,7 @@ class CellBaseTokenizer(ABC):
             norm_factor_file_path: Path | str = norm_factor_file_path,
             token_dictionary_file_path: Path | str = token_dictionary_file_path,
             add_neigh_cell_ids: bool = False,
+            include_special_tokens: bool = False,
             ):
         self.nproc = nproc
         self.processing_mode = processing_mode
@@ -198,6 +203,7 @@ class CellBaseTokenizer(ABC):
         self.norm_factor_file_path = norm_factor_file_path
         self.token_dictionary_file_path = token_dictionary_file_path
         self.add_neigh_cell_ids = add_neigh_cell_ids
+        self.include_special_tokens = include_special_tokens
 
         # TODO fix this for radius and delaunay
         self.seq_len_cell = int(self.model_input_size / (self.n_neighs + 1))
@@ -785,7 +791,7 @@ class CellGraphTokenizer(CellBaseTokenizer):
                      adata_dict['gene_expr_cell_neigh'][k]))
                 adata_dict['seg_tokens_neighborhood'][i] = np.hstack(
                     (adata_dict['seg_tokens_neighborhood'][i],
-                     [j + 1] * len(adata_dict['gene_tokens_cell_neigh'][k])))
+                     [j + 2] * len(adata_dict['gene_tokens_cell_neigh'][k])))
 
                 adata_dict['rel_x_coord'][i].extend([
                     (adata.obsm['spatial'][k, 0] -
@@ -833,22 +839,23 @@ class CellGraphTokenizer(CellBaseTokenizer):
         # Store values with right embedding index for count tokenizer
         # Leave space for <pad>, (optional) zero count embedding, and
         # <cls> tokens
-        spv_dict = {
-            k: v for k, v in self.token_dict.items() if k.startswith('spv_')}
-        spv_start_idx = min(spv_dict.values())
-        spv_idx_subtract = spv_start_idx - 2 - self.max_cls_tokens
-        adata_dict['batch_value'] = [
-            self.token_dict[f'spv_{batch_id_key}'] - spv_idx_subtract] * n_cells
-        adata_dict['gene_panel_value'] = [self.token_dict.get(
-            f'spv_gene_panel{len(adata.var_names)}', spv_idx_subtract) # TODO: temp solution for unused gene panels while token is not used
-            - spv_idx_subtract] * n_cells
-        adata_dict['assay_value'] = [
-            self.token_dict[
-                f'spv_{adata.uns["assay"]}'] - spv_idx_subtract] * n_cells
-        adata_dict['species_value'] = [self.token_dict[
-            f'spv_{adata.uns["species"]}'] - spv_idx_subtract] * n_cells
-        adata_dict['tissue_value'] = [self.token_dict[
-            f'spv_{adata.uns["tissue"]}'] - spv_idx_subtract] * n_cells
+        if self.include_special_tokens:
+            spv_dict = {
+                k: v for k, v in self.token_dict.items() if k.startswith('spv_')}
+            spv_start_idx = min(spv_dict.values())
+            spv_idx_subtract = spv_start_idx - 2 - self.max_cls_tokens
+            adata_dict['batch_value'] = [
+                self.token_dict[f'spv_{batch_id_key}'] - spv_idx_subtract] * n_cells
+            adata_dict['gene_panel_value'] = [self.token_dict.get(
+                f'spv_gene_panel{len(adata.var_names)}', spv_idx_subtract) # TODO: temp solution for unused gene panels while token is not used
+                - spv_idx_subtract] * n_cells
+            adata_dict['assay_value'] = [
+                self.token_dict[
+                    f'spv_{adata.uns["assay"]}'] - spv_idx_subtract] * n_cells
+            adata_dict['species_value'] = [self.token_dict[
+                f'spv_{adata.uns["species"]}'] - spv_idx_subtract] * n_cells
+            adata_dict['tissue_value'] = [self.token_dict[
+                f'spv_{adata.uns["tissue"]}'] - spv_idx_subtract] * n_cells
 
         return adata_dict
             
@@ -971,11 +978,12 @@ class CellGraphTokenizer(CellBaseTokenizer):
         #example['batch_value_token'] = [example['batch_value_token']] 
 
         # Retrieve special token values
-        example['assay_value'] = [example['assay_value']]
-        example['species_value'] = [example['species_value']]
-        example['tissue_value'] = [example['tissue_value']]
-        example['gene_panel_value'] = [example['gene_panel_value']]
-        example['batch_value'] = [example['batch_value']]
+        if self.include_special_tokens:
+            example['assay_value'] = [example['assay_value']]
+            example['species_value'] = [example['species_value']]
+            example['tissue_value'] = [example['tissue_value']]
+            example['gene_panel_value'] = [example['gene_panel_value']]
+            example['batch_value'] = [example['batch_value']]
 
         return example
 
@@ -1376,23 +1384,24 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
 
         # Store values with right embedding index for count tokenizer
         # Leave space for <pad>, <mask> and <cls> tokens
-        spv_dict = {
-            k: v for k, v in self.token_dict.items() if k.startswith('spv_')}
-        spv_start_idx = min(spv_dict.values())
-        spv_idx_subtract = (spv_start_idx - 2 - self.max_cls_tokens)
+        if self.include_special_tokens:
+            spv_dict = {
+                k: v for k, v in self.token_dict.items() if k.startswith('spv_')}
+            spv_start_idx = min(spv_dict.values())
+            spv_idx_subtract = (spv_start_idx - 2 - self.max_cls_tokens)
 
-        adata_dict['batch_value'] = [
-            self.token_dict[f'spv_{batch_id_key}'] - spv_idx_subtract] * n_cells
-        adata_dict['gene_panel_value'] = [self.token_dict.get(
-            f'spv_gene_panel{len(adata.var_names)}', spv_idx_subtract) # TODO: temp solution for unused gene panels while token is not used
-            - spv_idx_subtract] * n_cells
-        adata_dict['assay_value'] = [
-            self.token_dict[
-                f'spv_{adata.uns["assay"]}'] - spv_idx_subtract] * n_cells
-        adata_dict['species_value'] = [self.token_dict[
-            f'spv_{adata.uns["species"]}'] - spv_idx_subtract] * n_cells
-        adata_dict['tissue_value'] = [self.token_dict[
-            f'spv_{adata.uns["tissue"]}'] - spv_idx_subtract] * n_cells
+            adata_dict['batch_value'] = [
+                self.token_dict[f'spv_{batch_id_key}'] - spv_idx_subtract] * n_cells
+            adata_dict['gene_panel_value'] = [self.token_dict.get(
+                f'spv_gene_panel{len(adata.var_names)}', spv_idx_subtract) # TODO: temp solution for unused gene panels while token is not used
+                - spv_idx_subtract] * n_cells
+            adata_dict['assay_value'] = [
+                self.token_dict[
+                    f'spv_{adata.uns["assay"]}'] - spv_idx_subtract] * n_cells
+            adata_dict['species_value'] = [self.token_dict[
+                f'spv_{adata.uns["species"]}'] - spv_idx_subtract] * n_cells
+            adata_dict['tissue_value'] = [self.token_dict[
+                f'spv_{adata.uns["tissue"]}'] - spv_idx_subtract] * n_cells
 
         return adata_dict
             
@@ -1458,10 +1467,11 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
         #example['batch_value_token'] = [example['batch_value_token']]        
 
         # Retrieve special token values
-        example['assay_value'] = [example['assay_value']]
-        example['species_value'] = [example['species_value']]
-        example['tissue_value'] = [example['tissue_value']]
-        example['gene_panel_value'] = [example['gene_panel_value']]
-        example['batch_value'] = [example['batch_value']]
+        if self.include_special_tokens:
+            example['assay_value'] = [example['assay_value']]
+            example['species_value'] = [example['species_value']]
+            example['tissue_value'] = [example['tissue_value']]
+            example['gene_panel_value'] = [example['gene_panel_value']]
+            example['batch_value'] = [example['batch_value']]
 
         return example

@@ -1,7 +1,7 @@
 data:
   dataset_name: 'hst_corpus_110m'
-  model_input_size: 2816
-  n_neighs: 10
+  model_input_size: 7168
+  n_neighs: 6
   rank_cell_norm_method: null
   rank_gene_norm_method: null
   rank_count_norm_method: null
@@ -10,9 +10,9 @@ data:
   count_count_norm_method: 'shifted_log'
   raw_data_folder_path: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/silver/hst_corpus_110m'
   token_dict_folder_path: '/fsx-shared/s3/token_dictionary_homo_sapiens.pkl'
-  tokenized_data_folder_path: '/fsx-shared/s3/hst_corpus_110m/hst_corpus_110m_32_None_None_None_None_None_shifted_log_knn_10.dataset'
-  precomputed_split: '/fsx-shared/s3/hst_corpus_110m/hst_corpus_110m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_split_full.pkl'
-  precomputed_n_nonzero_tokens: '/fsx-shared/s3/hst_corpus_110m/hst_corpus_110m_32_None_None_None_None_None_shifted_log_knn_10_n_nonzero_tokens_full.pkl'
+  tokenized_data_folder_path: '/fsx-shared/s3/hst_corpus_110m/hst_corpus_110m_32_None_None_None_None_None_shifted_log_knn_6.dataset'
+  precomputed_split: '/fsx-shared/s3/hst_corpus_110m/hst_corpus_110m_32_None_None_None_None_None_shifted_log_knn_6_precomputed_split_train.pkl'
+  precomputed_n_nonzero_tokens: '/fsx-shared/s3/hst_corpus_110m/hst_corpus_110m_32_None_None_None_None_None_shifted_log_knn_6_n_nonzero_tokens_train.pkl'
   test_batch_ids: ['49_batch0']
   val_batch_ids: ['49_batch0']
   tokenizer_type: 'cell_graph'
@@ -20,11 +20,11 @@ data:
   sample_subset: False
   split: 0
   stratify: False
-  seq_len_cell: 256 # 64, 128, 256
-  seq_len_neighborhood: 2560 # 384/640, 1536/2816
-  n_segments: 11 # 7, 11; number of unique segment tokens (gene segments)
+  seq_len_cell: 1024
+  seq_len_neighborhood: 6144
+  n_segments: 7 # number of unique segment tokens (gene segments)
   sampling_strategy: null # null, 'rand_sampling', 'norm_count_rank_sampling', 'rand_sampling_rep', 'norm_count_rank_sampling_rep'
-  batch_size: 144
+  batch_size: 128
   num_workers: 16
   pin_memory: True
   sep_gene_tokens_neb: False
@@ -60,8 +60,8 @@ mask:
   per_block_mask_ratio: 0.9
   sample_segments: True
 optimization:
-  warmup: 1 # 1, 2
-  epochs: 5 # 5, 8
+  warmup: 1
+  epochs: 5
   ema:
   - 0.9995 # 0.998, 0.9995
   - 1.0

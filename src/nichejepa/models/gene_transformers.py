@@ -764,10 +764,10 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
         Parameters
         -----------
         batch:
-            Dictionary containing:
-            - tokens: Tensor containing input gene tokens with shape
-              (BATCH_SIZE, SEQ_LEN).
+            Dictionary containing sequence:
             - segments: Tensor containing segment labels with shape
+              (BATCH_SIZE, SEQ_LEN).
+            - tokens: Tensor containing input gene tokens with shape
               (BATCH_SIZE, SEQ_LEN).
             - counts: Tensor containing the counts corresponding to gene
               tokens with shape (BATCH_SIZE, SEQ_LEN).
@@ -795,8 +795,8 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
                 masks = [masks]
 
         # Get embeddings for sequence of gene tokens and segments
-        token_emb = self.token_embed(batch['tokens'])
         seg_emb = self._get_seg_emb(batch)
+        token_emb = self.token_embed(batch['tokens'])
 
         # Get value embeddings
         if self.count_encoding == 'value_bins':
@@ -812,7 +812,7 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
                     self.special_value_embed.weight[0].expand_as(value_emb),
                     value_emb)
         elif self.count_encoding == 'mlp':
-            value_emb = self.value_embed(batch['values'].unsqueeze(dim=-1))           
+            value_emb = self.value_embed(batch['values'].unsqueeze(dim=-1))
 
         # Add gene token and segment embeddings to value embeddings
         x = seg_emb + token_emb + value_emb
@@ -909,7 +909,7 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
 
         # Remove special token contents
         if self.n_special_tokens:
-            x[:, : self.n_special_tokens, :] = 0
+            x[:, :self.n_special_tokens, :] = 0
 
         full_ctx: dict[int, torch.Tensor] = self._compute_layer_emb(
             x,
@@ -1148,14 +1148,14 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
             value_emb = self.value_embed(batch['values'].unsqueeze(-1))
         else:
             raise ValueError(
-                f"Unknown count_encoding: {self.count_encoding}.") 
+                f"Unknown count_encoding: {self.count_encoding}.")
 
         # Add segment, positional, and gene embeddings to value embeddings
         x = seg_emb + pos_emb + token_emb + value_emb # [B, L, D]
 
         # Remove special token contents
         if self.n_special_tokens:
-            x[:, : self.n_special_tokens, :] = 0
+            x[:, :self.n_special_tokens, :] = 0
 
         full_ctx: dict[int, torch.Tensor] = self._compute_layer_emb(
             x,
@@ -1344,9 +1344,9 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
             Embeddings from the encoder with shape (
             BATCH_SIZE*N_CONTEXT_MASKS, CONTEXT_MASK_SIZE, EMBED_DIM).
         token_emb:
+            Token embeddings from the encoder.
         batch:
             Dictionary containing sequence:
-            - token_embed: Token embeddings from the encoder.
             - segments: Tensor containing segment labels with shape
               (BATCH_SIZE, SEQ_LEN).
         masks_enc:
@@ -1404,8 +1404,8 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
         # Repeat mask token for all batches, masks and "positions" from
         # predictor masks
         pred_tokens = self.mask_token.repeat(
-            token_embs.size(0), # BATCH_SIZE * N_TARGET_MASKS
-            token_embs.size(1), # TARGET_MASK_SIZE
+            seg_embs.size(0), # BATCH_SIZE * N_TARGET_MASKS
+            seg_embs.size(1), # TARGET_MASK_SIZE
             1)
 
         # Add gene and segment embeddings to mask tokens                  
@@ -1424,7 +1424,6 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
         # Run forward prop
         for blk in self.predictor_blocks:
             z = blk(z, masks=masks_attention)
-
         z = self.predictor_norm(z)
 
         # Return predictions for (target) mask tokens
@@ -1494,6 +1493,7 @@ class GeneTransformerCombinedPredictor(GeneTransformerBasePredictor):
             Embeddings from the encoder with shape (
             BATCH_SIZE*N_CONTEXT_MASKS, CONTEXT_MASK_SIZE, EMBED_DIM).
         token_emb:
+            Token embeddings from the encoder.
         batch:
             Dictionary containing sequence:
             - positions: Tensor containing positions with shape

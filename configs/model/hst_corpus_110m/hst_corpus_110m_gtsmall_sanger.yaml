@@ -31,6 +31,7 @@ meta:
   pred_depth: 12
   pred_emb_dim: 192 # 384
   num_heads: 6
+  mlp_ratio: 4
   special_tokens: [] # ['assay'] # ['batch'], ['assay', 'tissue', 'gene_panel', 'batch']
   pos_learnable: False
   seg_learnable: False

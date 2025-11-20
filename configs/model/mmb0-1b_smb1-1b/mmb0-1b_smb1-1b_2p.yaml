@@ -21,7 +21,7 @@ data:
   pin_memory: True
 meta:
   add_cls: False
-  gt_type: 'rank' # 'rank', 'counts', 'combined'
+  gt_type: 'counts' # 'rank', 'counts', 'combined'
   count_encoding: 'mlp' # 'value_bins', 'mlp'
   n_value_bins: 100
   enc_depth: 3 # 3
