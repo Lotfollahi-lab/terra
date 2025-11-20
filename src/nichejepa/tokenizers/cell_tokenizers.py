@@ -791,7 +791,7 @@ class CellGraphTokenizer(CellBaseTokenizer):
                      adata_dict['gene_expr_cell_neigh'][k]))
                 adata_dict['seg_tokens_neighborhood'][i] = np.hstack(
                     (adata_dict['seg_tokens_neighborhood'][i],
-                     [j + 1] * len(adata_dict['gene_tokens_cell_neigh'][k])))
+                     [j + 2] * len(adata_dict['gene_tokens_cell_neigh'][k])))
 
                 adata_dict['rel_x_coord'][i].extend([
                     (adata.obsm['spatial'][k, 0] -
