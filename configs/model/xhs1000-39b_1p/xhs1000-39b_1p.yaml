@@ -23,7 +23,7 @@ data:
   use_sampler: True
 meta:
   add_cls: False
-  gt_type: 'combined' # 'rank', 'counts'
+  gt_type: 'count' # 'rank', 'counts'
   count_encoding: 'mlp' # 'value_bins', 'mlp'
   n_value_bins: 100
   cell_pos_enc: 'coord'

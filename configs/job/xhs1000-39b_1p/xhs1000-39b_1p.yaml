@@ -19,7 +19,7 @@ artifact:
   ARTIFACT_LOCATION: "/nfs/team361/sb75/nichejepa-reproducibility/artifacts/xhs1000-39b_1p"  # Path to store the artifacts.
   WAREHOUSE_PATH: "/nfs/team361/sb75/nichejepa-reproducibility/artifacts/xhs1000-39b_1p"  # Path to store the artifacts.
   EXPERIMENT_NAME: "nichejepa_pretraining"  # Name of the experiment.
-  RUN_NAME: "xhs1000-39b_1p_sanger_oldarch_old_mask_fix_tok_coord_1"  # Name of the run.
+  RUN_NAME: "xhs1000-39b_1p_sanger_oldarch_old_mask_fix_tok_coord_3"  # Name of the run.
 
 runner_script:
   RUNNER_SCRIPT: "/nfs/team361/sb75/nichejepa/src/app/runner.sh"  # Path to the runner script.
