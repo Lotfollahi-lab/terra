@@ -51,9 +51,9 @@ class BlockMaskCollator:
                  n_segments: int,
                  seq_len_cell: int,
                  seq_len_neighborhood: int,
-                 max_special_tokens: int,
                  n_special_tokens: int,
-                 max_cls_tokens: int,
+                 max_cls_tokens: int=1, # TODO
+                 max_special_tokens: int = 105, # TODO
                  per_block_mask_ratio: float=0.5,
                  sample_segments: bool = False,
                  sample_gene_masks: bool = True,
