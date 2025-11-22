@@ -1,82 +1,91 @@
 """
-Adapted from Assran, M. et al. Self-supervised learning from images with
-a Joint-Embedding Predictive Architecture. Proc. IEEE Comput. Soc. Conf.
-Comput. Vis. Pattern Recognit. 15619–15629 (2023);
+Block masking.
+
+Adapted from Assran, M. et al. Self-supervised learning from images with a
+Joint-Embedding Predictive Architecture.
+Proc. IEEE Comput. Soc. Conf. Comput. Vis. Pattern Recognit. 15619–15629 (2023);
 https://github.com/facebookresearch/ijepa/blob/main/src/masks/multiblock.py
 (05.06.2024).
 """
 
-import time # TODO: remove
+
+from typing import List, Literal, Optional, Tuple, Union
 
 import numpy as np
-import torch 
+import torch
+
+from ..masks.utils import create_controlled_mask_context_target, configure_attention_masks
 
 
 class BlockMaskCollator:
     """
-    BlockMaskCollator class for sampling target and context block masks
-    from cell and neighborhood segments.
+    BlockMaskCollator class for sampling target and context block masks from
+    cell and neighborhood segments.
     
     Parameters
     ----------
     n_targets:
         Number of target masks to sample for each token sequence.
     n_contexts:
-        Number of context masks to sample for each token sequence.
-    n_segments:
-        Number of segments.
     seq_len_cell:
         The length of the token sequence representing the cell segment.
     seq_len_neighborhood:
-        The length of the token sequence representing the neighborhood
-        segments.
+        The length of the token sequence representing the neighborhood segments.
+    max_special_tokens:
+        Maximum number of special tokens to determine first segment
+        corresponding to a cell.
     n_special_tokens:
-        Number of special tokens in each token sequence.
+        Number of special tokens in each token sequence, including <cls> tokens.
+    max_cls_tokens:
+        Number of <cls> tokens in each token sequence.
     per_block_mask_ratio:
-        Ratio of elements to be masked in each block. A list with min
-        and max ratio can be provided, in which case a value between the
-        min and max will be sampled for each batch.
-    sample_segments:
-        If `True`, sample number of neighbors in each batch.
-    sample_gene_masks:
-        If `True`, sample a gene mask for each cell. Should be used
-        during training but not inference.
+        Ratio of elements to be masked in each block. A list with min and
+        max ratio can be provided, in which case a value between the min and
+        max will be sampled for each batch.
+    controlled_attention_pattern:
+        The pattern that the model uses to generate the attention matrix.
+    restrict_special_attention:
+        If 'True', restrict attention of special tokens to themselves
     """
     def __init__(self,
                  n_targets: int,
                  n_contexts: int,
-                 n_segments: int,
                  seq_len_cell: int,
                  seq_len_neighborhood: int,
+                 max_special_tokens: int,
                  n_special_tokens: int,
-                 per_block_mask_ratio: float = 0.5,
-                 sample_segments: bool = False,
-                 sample_gene_masks: bool = True):
+                 max_cls_tokens: int,
+                 per_block_mask_ratio: float=0.5,
+                 controlled_attention_pattern: Optional[torch.Tensor]=None,
+                 restrict_special_attention: bool=False):
         self.n_targets = n_targets
         self.n_contexts = n_contexts
-        self.n_segments = n_segments
         self.seq_len_cell = seq_len_cell
         self.seq_len_neighborhood = seq_len_neighborhood
         self.seq_len_genes = self.seq_len_cell + self.seq_len_neighborhood
         self.n_special_tokens = n_special_tokens
+        self.max_special_tokens = max_special_tokens
+        self.max_cls_tokens = max_cls_tokens
         self.per_block_mask_ratio = per_block_mask_ratio
-        self.sample_segments = sample_segments
-        self.sample_gene_masks = sample_gene_masks
+        self.controlled_attention_pattern = controlled_attention_pattern
+        self.restrict_special_attention = restrict_special_attention
 
-    def _sample_gene_mask(
-        self,
-        tokens: torch.Tensor, # [N]
-        ) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
+    def _sample_gene_mask(self,
+                          tokens: torch.Tensor,
+                          segments: torch.Tensor,
+                          ) -> Tuple[List[torch.Tensor],
+                                     List[torch.Tensor],
+                                     int]:
         """
-        Perform block masking on the sequence based on the number of
-        targets (number of blocks) and per block mask ratio. Tokens not
-        sampled in the targets will be part of the context.
+        Perform block masking on the sequence based on the number of targets
+        (number of blocks) and per block mask ratio. Tokens not sampled in the
+        targets will be part of the context.
 
         Parameters
         ----------
         tokens:
-            The token sequence that needs to be masked with dimension
-            (B, N); B: batch size, N: number of tokens.
+            The token sequence that needs to be masked with dimension (B, N);
+            B: batch size, N: number of tokens.
         segments:
             The sequence of segments to determine which <cls> tokens are
             included in the target masks.
@@ -84,8 +93,8 @@ class BlockMaskCollator:
         Returns
         ----------
         target_masks:
-            List with multiple masks indicating target token indices for
-            each block.
+            List with multiple masks indicating target token indices for each
+            block.
         context_masks:
             List with one mask indicating context token indices.
         keep_tokens_target:
@@ -93,166 +102,179 @@ class BlockMaskCollator:
         """
         # Determine mask ratio; sample if list is provided
         if isinstance(self.per_block_mask_ratio, list):
-            min_mask_ratio, max_mask_ratio = self.per_block_mask_ratio
-            steps = int(round((max_mask_ratio - min_mask_ratio) / 0.1)) + 1
-            grid = torch.linspace(min_mask_ratio, max_mask_ratio, steps=steps)
-            idx = torch.randint(0, steps, (1,), device=grid.device).item()
-            mask_ratio = float(grid[idx])
+            mask_ratios = np.arange(
+                self.per_block_mask_ratio[0],
+                self.per_block_mask_ratio[1] + 0.1, 0.1)
+            mask_ratio = np.random.choice(mask_ratios)
         else:
-            mask_ratio = float(self.per_block_mask_ratio)
+            mask_ratio = self.per_block_mask_ratio
 
-        # Get non-zero indices, excluding special tokens
-        L = tokens.numel()
-        ns_nz_mask = tokens[self.n_special_tokens:] != 0
-        nz = ns_nz_mask.nonzero(
-            as_tuple=False).squeeze(-1) + self.n_special_tokens # [K]
-        K = nz.numel()
+        # Get non-zero indices and segments excluding special tokens
+        ns_tokens = tokens[self.n_special_tokens + 1:]
+        nz_ns_indices = torch.nonzero(ns_tokens).add_(
+            self.n_special_tokens + 1).squeeze()
+        total_nz_ns = len(nz_ns_indices)
+    
+        # Initialize masks
+        target_masks = []
+        context_mask = torch.zeros(len(tokens), dtype=torch.int32)
 
-        # Split non-zero indices into n_targets chunks that cover all K
-        # elements (later chunks may be empty)
-        blocks = list(torch.tensor_split(nz, self.n_targets))
+        # Compute block length based on number of blocks; avoid zero division
+        block_length = max(1, total_nz_ns // self.n_targets)
 
-        # Initialize context as "all non-zero"
-        context_keep = torch.zeros(L, dtype=torch.bool)
-        context_keep[nz] = True
+        for i in range(self.n_targets):
+            # Determine the range of indices for the current block
+            start_idx = i * block_length
+            end_idx = min(start_idx + block_length, total_nz_ns)
+        
+            # Extract the non-zero indices for the current block and mark as
+            # context initially
+            block_nz_ns_indices = nz_ns_indices[start_idx:end_idx]
+            context_mask[block_nz_ns_indices] = 1
 
-        target_masks: list[torch.Tensor] = []
-        for b in blocks:
-            block_size = b.numel()
-            if block_size == 0:
-                target_masks.append(torch.empty(0, dtype=torch.long))
-                continue
-            num_to_mask = min(
-                int((block_size * mask_ratio) + 0.9999),
-                block_size) # ceil
-            if num_to_mask == 0:
-                target_masks.append(torch.empty(0, dtype=torch.long))
-                continue
-            sel = torch.randperm(block_size)[:num_to_mask]
-            tmask = b[sel]
-            # Remove target from context
-            context_keep[tmask] = False
-            target_masks.append(tmask)
+            # Extract segments for the current block to determine which <cls>
+            # are to be included
+            #block_segments = nz_ns_segments[start_idx: end_idx]
+            #block_unique_segments = torch.unique(block_segments)
+            #cls_tokens = [
+            #    seg - self.max_special_tokens for seg in
+            #    block_unique_segments.tolist()]
+            
+            # Determine number of elements to mask
+            block_size = len(block_nz_ns_indices)
+            num_to_mask = int(np.ceil(block_size * mask_ratio))
 
-        if self.n_contexts != 1:
-            raise ValueError(
-                "Only n_contexts == 1 is supported currently.")
+            if num_to_mask > 0:
+                # Randomly choose indices to mask within the block
+                # DON'T USE torch.rand as it could produce repeated indices
+                mask_indices = torch.randperm(block_size)[:num_to_mask]
+                target_mask = block_nz_ns_indices[mask_indices].tolist()
+                
+                # Set masked indices to 0 in the context mask
+                context_mask[target_mask] = 0
 
-        # context indices, randomized, + specials at front
-        ctx_idx = context_keep.nonzero(as_tuple=False).squeeze(-1)
-        if ctx_idx.numel() > 1:
-            ctx_idx = ctx_idx[torch.randperm(ctx_idx.numel())]
-        special_idx = torch.arange(
-            self.n_special_tokens,
-            device=tokens.device,
-            dtype=torch.long)
-        ctx_idx = torch.cat((special_idx, ctx_idx), dim=0)
+                # Add <cls> and special tokens to mask indices
+                target_mask = torch.cat((
+                    torch.arange(self.n_special_tokens + 1),
+                    torch.tensor(target_mask)))
 
-        context_masks = [ctx_idx]
+                # Append masked indices
+                target_masks.append(target_mask)
+            else:
+                # No elements to mask
+                target_masks.append(torch.tensor([]))
+
+        # We randomly permute data so if we trim last item with
+        # keep_tokens_context, we avoid always discarding the last items of a
+        # sequence
+        # DON'T USE torch.rand as it could produce repeated indice
+        context_mask = torch.nonzero(context_mask).squeeze()
+
+        split_size = len(context_mask) // self.n_contexts
+        remainder = len(context_mask) % self.n_contexts
+
+        # Split context_mask into parts, distributing the remainder elements
+        # across the first chunks
+        context_masks = []
+        start = 0
+        for i in range(self.n_contexts):
+            end = start + split_size + (1 if i < remainder else 0)
+            context_block_mask = context_mask[start:end]
+            context_block_mask = context_block_mask[
+                torch.randperm(len(context_block_mask))]
+
+            context_block_mask = torch.cat((
+                torch.arange(self.n_special_tokens + 1),
+                context_block_mask))
+
+            context_masks.append(context_block_mask)
+
+            start = end
 
         return target_masks, context_masks
 
-    def __call__(self, batch: list[dict]) -> tuple[
-            torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def __call__(self,
+                 batch: Tuple[torch.Tensor,
+                              torch.Tensor,
+                              torch.Tensor,
+                              torch.Tensor,
+                              List[str]],
+                 ) -> Tuple[torch.Tensor,
+                            torch.Tensor,
+                            torch.Tensor,
+                            torch.Tensor]:
         """
-        Collate batch and create context, target, and attention masks.
+        Create context and target masks when collating tokens into a batch.
 
         Parameters
         ----------
         batch:
-            List containing the input batch dictionaries including
-            positions, segments, gene tokens, values and cell IDs.
+            Tuple containing the input batch including gene tokens, segments,
+            positions, counts and cell IDs.
 
         Returns
         ----------
-        collated:
-            Input positions, segments, gene tokens, values and cell IDs
-            collated by batch.
-        collated_context_masks: LongTensor [B, Nctx, Lctx] (min-trimmed)
+        collated_batch:
+            Input gene tokens, segments, positions, counts and cell IDs collated
+            by batch.
+        collated_context_masks:
             Sampled context masks collated by batch.
-        collated_target_masks: LongTensor [B, Ntgt, Ltgt] (min-trimmed)
+        collated_target_masks:
             Sampled target masks collated by batch.
-        masks_attention: BoolTensor [B, 1, 1, L]
+        collated_masks_attention:
             Attention masks collated by batch.
         """
-        #t0 = time.perf_counter()
+        B = len(batch)
 
-        # Collate early for vectorized slicing
-        collated = torch.utils.data.default_collate(batch)
+        # Collate the batch
+        collated_batch = torch.utils.data.default_collate(batch)
 
-        # Sample number of neighbors ONCE per batch and slice vectorized
-        if self.sample_segments:
-            # Number of segments kept in cell graph; k in [1,
-            # n_segments]
-            k = torch.randint(low=1, high=self.n_segments+1, size=(1,)).item()
-            cutoff = self.seq_len_cell * k
+        collated_target_masks = []
+        collated_context_masks = []
+        collated_special_masks = []
+        collated_masks_attention = []
 
-            # Pad all segments not kept in cell graph
-            if 'tokens' in collated:
-                collated['tokens'][:, cutoff:] = 0
-            if 'segments' in collated:
-                collated['segments'][:, cutoff:] = 0
-            if 'positions' in collated:
-                collated['positions'][:, cutoff:] = 0
-            if 'values' in collated:
-                collated['values'][:, cutoff:] = 0.0
-            if 'rel_x_coords' in collated:
-                collated['rel_x_coords'][:, cutoff:] = float('-inf')
-            if 'rel_y_coords' in collated:
-                collated['rel_y_coords'][:, cutoff:] = float('-inf')
+        # Track the minimum length of masks across the batch
+        keep_tokens_target = self.seq_len_genes
+        keep_tokens_context = self.seq_len_genes
+        keep_tokens_special = self.n_special_tokens
 
-        tokens = collated['tokens'] # [B, N]
-        B, N = tokens.shape
+        # Store target and context masks for each observation
+        for i in range(B):
+            # Sample target and context masks for the current observation
+            target_masks, context_masks = self._sample_gene_mask(
+                tokens=batch[i][0],
+                segments=batch[i][1])
 
-        # Build attention mask once (bool, broadcast-friendly)
-        masks_attention = (
-            tokens != 0).unsqueeze(1).unsqueeze(1) # [B, 1, 1, N]
+            keep_tokens_target = min(
+                keep_tokens_target, min(mask.size(0) for mask in target_masks))
+            keep_tokens_context = min(
+                keep_tokens_context, min(mask.size(0) for mask in context_masks))
 
-        if self.sample_gene_masks:
-            # Retrieve target/context masks per cell
-            tgt_list: list[list[torch.Tensor]] = []
-            ctx_list: list[list[torch.Tensor]] = []
-            keep_tgt = self.seq_len_genes
-            keep_ctx = self.seq_len_genes
+            # Append the masks for the current observation to the collated lists
+            collated_target_masks.append(target_masks)
+            collated_context_masks.append(context_masks)
+            collated_masks_attention.append((batch[i][0] != 0).int())
 
-            for i in range(B):
-                tgt, ctx = self._sample_gene_mask(
-                    tokens=tokens[i])
-                # Track min lengths (avoid nested default_collate later)
-                if len(tgt):
-                    keep_tgt = min(keep_tgt, min(m.numel() for m in tgt))
-                if len(ctx):
-                    keep_ctx = min(keep_ctx, min(m.numel() for m in ctx))
-                tgt_list.append(tgt)
-                ctx_list.append(ctx)
+        # Trim masks to the minimum size across the batch and collate them
+        collated_target_masks = [
+            [cm[:keep_tokens_target] for cm in cm_list]
+            for cm_list in collated_target_masks]
+        collated_context_masks = [
+            [cm[:keep_tokens_context] for cm in cm_list]
+            for cm_list in collated_context_masks]
 
-            # Trim to min length and stack directly (faster than
-            # default_collate on nested lists)
-            tgt_trimmed = [
-                torch.stack([m[:keep_tgt].to(torch.long) for m in masks], dim=0
-                    ) for masks in tgt_list]
-            collated_target_masks = torch.stack(
-                tgt_trimmed, dim=0) # [B, n_tgt, keep_tgt]
-            collated_target_masks = collated_target_masks.permute(
-                1, 0, 2).contiguous() # [n_tgt, B, keep_tgt]
+        collated_target_masks = torch.utils.data.default_collate(
+            collated_target_masks)
+        collated_context_masks = torch.utils.data.default_collate(
+            collated_context_masks)        
+        collated_masks_attention = torch.utils.data.default_collate(
+            collated_masks_attention).unsqueeze(1).unsqueeze(1)
 
-            ctx_trimmed = [
-                torch.stack([m[:keep_ctx].to(torch.long) for m in masks], dim=0
-                    ) for masks in ctx_list]
-            collated_context_masks = torch.stack(
-                ctx_trimmed, dim=0) # [B, n_ctx, keep_ctx]
-            collated_context_masks = collated_context_masks.permute(
-                1, 0, 2).contiguous()  # [n_ctx, B, keep_ctx]
-        else:
-            collated_target_masks = None
-            collated_context_masks = None
+        collated_masks_attention = collated_masks_attention.expand(
+            collated_masks_attention.shape[0],
+            1,
+            collated_masks_attention.shape[-1],
+            collated_masks_attention.shape[-1]).clone()
 
-        #t1 = time.perf_counter()
-        #elapsed_ms = (t1 - t0) * 1000
-        #print(f"[Collate] Took {elapsed_ms:.3f} ms for batch size {B}")
-        #raise ValueError
-
-        return collated, \
-               collated_context_masks, \
-               collated_target_masks, \
-               masks_attention
+        return collated_batch, collated_context_masks, collated_target_masks, collated_masks_attention
