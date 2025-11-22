@@ -413,29 +413,10 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
         self.init_std = init_std
         self.api_version = api_version
 
-        # Initialize segment embeddings
-        if self.cell_pos_enc == 'segment':
-            self.seg_embed = nn.Embedding(
-                1 + n_segments + (105 if api_version == 'v1' else 0), # include <pad>
-                predictor_embed_dim,
-                padding_idx=0)
-            
-            # Prevent gradient updates and initialize with sincos embedding,
-            # including special segments
-            self.seg_embed.weight.requires_grad = False
-            seg_embed = get_1d_sincos_pos_embed(
-                embed_dim=predictor_embed_dim,
-                n_zero_pos=0,
-                n_sincos_pos=n_segments + (105 if api_version == 'v1' else 0))
-            self.seg_embed.weight[1:].copy_(torch.from_numpy(seg_embed).float())
-
         # Initialize layer to project from enc to pred embed dim
         self.predictor_embed = nn.Linear(embed_dim,
                                          predictor_embed_dim,
                                          bias=True)
-        self.token_embed_projection = nn.Linear(embed_dim,
-                                                predictor_embed_dim,
-                                                bias=True)
 
         # Initialize mask token embedding for prediction
         self.mask_token = nn.Parameter(torch.zeros(predictor_embed_dim))
@@ -460,7 +441,7 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
                                         bias=True)
 
         # Initialize mask token weights (not used)
-        # trunc_normal_(self.mask_token, std=self.init_std)
+        trunc_normal_(self.mask_token, std=self.init_std)
         
         # Initialize layer weights
         self.apply(self._init_weights)

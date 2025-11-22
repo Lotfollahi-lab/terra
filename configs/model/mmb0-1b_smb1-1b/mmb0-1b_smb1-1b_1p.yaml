@@ -30,12 +30,12 @@ data:
   sep_gene_tokens_neb: False
   use_sampler: True
 meta:
-  api_version: 'v3'
+  api_version: 'v1'
   add_cls: False
-  gt_type: 'combined' # 'rank', 'counts', 'combined'
-  count_encoding: 'mlp' # 'value_bins', 'mlp'
+  gt_type: 'counts' # 'rank', 'counts', 'combined'
+  count_encoding: 'value_bins' # 'value_bins', 'mlp'
   n_value_bins: 100
-  cell_pos_enc: 'coord'
+  cell_pos_enc: 'segment'
   enc_depth: 3 # 3
   enc_emb_dim: 192
   pred_depth: 1 # 1
