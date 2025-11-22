@@ -48,12 +48,15 @@ class BlockMaskCollator:
     def __init__(self,
                  n_targets: int,
                  n_contexts: int,
+                 n_segments: int,
                  seq_len_cell: int,
                  seq_len_neighborhood: int,
                  max_special_tokens: int,
                  n_special_tokens: int,
                  max_cls_tokens: int,
                  per_block_mask_ratio: float=0.5,
+                 sample_segments: bool = False,
+                 sample_gene_masks: bool = True
                  controlled_attention_pattern: Optional[torch.Tensor]=None,
                  restrict_special_attention: bool=False):
         self.n_targets = n_targets
