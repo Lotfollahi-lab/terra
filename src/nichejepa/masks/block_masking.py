@@ -244,8 +244,8 @@ class BlockMaskCollator:
         for i in range(B):
             # Sample target and context masks for the current observation
             target_masks, context_masks = self._sample_gene_mask(
-                tokens=batch['tokens'][i],
-                segments=batch['segments'][i])
+                tokens=collated_batch['tokens'][i],
+                segments=collated_batch['segments'][i])
 
             keep_tokens_target = min(
                 keep_tokens_target, min(mask.size(0) for mask in target_masks))
@@ -255,7 +255,7 @@ class BlockMaskCollator:
             # Append the masks for the current observation to the collated lists
             collated_target_masks.append(target_masks)
             collated_context_masks.append(context_masks)
-            collated_masks_attention.append((batch['tokens'][i] != 0).int())
+            collated_masks_attention.append((collated_batch['tokens'][i] != 0).int())
 
         # Trim masks to the minimum size across the batch and collate them
         collated_target_masks = [
