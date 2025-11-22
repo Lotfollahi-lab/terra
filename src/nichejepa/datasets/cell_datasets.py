@@ -104,35 +104,41 @@ class CellBaseDataset(Dataset):
             All attributes of the cell in the Hugging Face dataset with
             special tokens considered at sequence start.
         """
+        # Add <cls> token
+        item_dict['tokens'] = torch.cat([2, item_dict['tokens']])
+
         for spc_tk in self.special_tokens:
             item_dict['tokens'] = torch.cat(
                 [item[f'{spc_tk}_token'],
                  item_dict['tokens']])
 
             if self.gt_type != 'rank':
+                # Add <cls> token
+                item_dict['values'] = torch.cat(
+                    [0, item_dict['values']])
                 item_dict['values'] = torch.cat(
                     [item[f'{spc_tk}_value'],
                      item_dict['values']])
             
         if self.gt_type != 'counts':
-            # Add special token positions
+            # Add <cls> and special token positions
             item_dict['positions'] = torch.cat(
-                [torch.zeros(self.n_special_tokens, dtype=torch.long),
+                [torch.zeros(self.n_special_tokens + 1, dtype=torch.long),
                  item_dict['positions']])
 
-        # Add special token segments
+        # Add <cls> and special token segments
         item_dict['segments'] = torch.cat(
-            [torch.zeros(self.n_special_tokens, dtype=torch.long),
+            [torch.zeros(self.n_special_tokens + 1, dtype=torch.long),
              item_dict['segments']])
 
-        # Add special token coords
+        # Add <cls> and special token coords
         if self.cell_pos_enc == 'coord':
             item_dict['rel_x_coords'] = torch.cat(
-                [torch.full((self.n_special_tokens,),
+                [torch.full((self.n_special_tokens + 1,),
                  float('-inf'), dtype=torch.float),
                  item_dict['rel_x_coords']])   
             item_dict['rel_y_coords'] = torch.cat(
-                [torch.full((self.n_special_tokens,),
+                [torch.full((self.n_special_tokens + 1,),
                  float('-inf'), dtype=torch.float),
                  item_dict['rel_y_coords']])
 
@@ -504,7 +510,7 @@ class CellGraphDataset(CellBaseDataset):
         # Add special tokens
         if self.n_special_tokens > 0:
             item_dict = self._add_special_seq(item=item,
-                                            item_dict=item_dict)
+                                              item_dict=item_dict)
 
         # Add cell ID
         if self.include_cell_id:

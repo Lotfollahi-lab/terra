@@ -209,12 +209,12 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
             attn = attn_base.clone()
             if attn.dim() == 3: # [B, L, L] -> [B, 1, L, L]
                 attn = attn.unsqueeze(1)
-            # Never attend to special tokens
+            # Never attend to special tokens (excluding <cls>)
             if self.n_special_tokens > 0:
-                attn[..., :self.n_special_tokens] = 0
+                attn[..., 1:1 + self.n_special_tokens] = 0
             # Optionally block cross-attention from cell queries to
             # neighborhood keys
-            if cell_only:
+            if cell_only: # TODO
                 attn[
                     ...,
                     self.n_special_tokens:(self.n_special_tokens+self.seq_len_cell),
@@ -738,7 +738,7 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
                 self.n_value_bins,
                 self.embed_dim)
             self.special_value_embed = nn.Embedding(
-                1 + (1 + self.n_special_values + 105 if self.api_version == 'v1' else 0), # include only <pad>
+                1 + (1 + self.n_special_values if self.api_version == 'v4' else 0), # include only <pad>, <cls>
                 self.embed_dim,
                 padding_idx=0)
             self.value_emb_weights_projection = ValueEmbWeightsProjection(
@@ -811,6 +811,9 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
                     zero_counts_mask.unsqueeze(-1),
                     self.special_value_embed.weight[0].expand_as(value_emb),
                     value_emb)
+            
+            # <cls> token
+            value_emb[:, 0, :] = self.special_value_embed.weight[1].expand_as(value_emb)
         elif self.count_encoding == 'mlp':
             value_emb = self.value_embed(batch['values'].unsqueeze(dim=-1))
 
@@ -1414,11 +1417,14 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
         # Repeat context embeddings for all target masks
         z = z.repeat(len(masks_pred), 1, 1)
 
-        # Concatenate mask tokens and context embeddings of gene tokens
+        # Concatenate context embeddings and mask tokens (both incl. pos
+        # embedding)
         z = torch.cat([
-            pred_tokens, # target gene tokens (excl. special tokens)
-            #z # context gene tokens (incl. special tokens)
-            z[:, self.n_special_tokens:, :] # context gene tokens (excl. special tokens)
+            z[:, :1, :], # <cls> tokens
+            pred_tokens[:, 1:, :],
+            # non <cls> special tokens and target gene tokens
+            z[:, 1:, :]
+            # non <cls> special tokens and context gene tokens
             ], dim=1)
 
         # Run forward prop

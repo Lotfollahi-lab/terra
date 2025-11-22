@@ -30,7 +30,7 @@ data:
   sep_gene_tokens_neb: False
   use_sampler: True
 meta:
-  api_version: 'v1'
+  api_version: 'v4'
   add_cls: False
   gt_type: 'counts' # 'rank', 'counts', 'combined'
   count_encoding: 'value_bins' # 'value_bins', 'mlp'
@@ -73,7 +73,7 @@ optimization:
   ipe_scale: 1.25 # 1.0
   clip_grad: 2.0
 state:
-  log_freq: 20
+  log_freq: 1
   checkpoint_freq: 5
   write_tag: nichejepa
   read_timestamp: ''

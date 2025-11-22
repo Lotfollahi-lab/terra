@@ -21,7 +21,7 @@ environment:
   OUTPUT_DIR: "/nfs/team361/sb75/nichejepa-reproducibility/artifacts/mmb0-1b_smb1-1b_1p"  # Path to store the artifacts.
   LOG_DIR: "/nfs/team361/sb75/nichejepa-reproducibility/artifacts/mmb0-1b_smb1-1b_1p"
   EXPERIMENT_NAME: "nichejepa_pretraining"  # Name of the experiment.
-  RUN_NAME: "mmb0-1b_smb1-1b_1p_reconstruct_48606fa_run1"  # Name of the run.
+  RUN_NAME: "mmb0-1b_smb1-1b_1p_reconstruct_48606fa_run288137f"  # Name of the run.
 
 runner_script:
   RUNNER_SCRIPT: "/nfs/team361/sb75/nichejepa/src/app/runner.sh"  # Path to the runner script.
