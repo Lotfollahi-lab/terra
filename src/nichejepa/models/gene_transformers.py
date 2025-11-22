@@ -813,7 +813,8 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
                     value_emb)
             
             # <cls> token
-            value_emb[:, 0, :] = self.special_value_embed.weight[1].expand_as(value_emb)
+            value_emb[:, 0, :] = self.special_value_embed.weight[1].expand_as(
+                value_emb[:, 0, :])
         elif self.count_encoding == 'mlp':
             value_emb = self.value_embed(batch['values'].unsqueeze(dim=-1))
 
