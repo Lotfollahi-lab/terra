@@ -56,7 +56,7 @@ class BlockMaskCollator:
                  max_cls_tokens: int,
                  per_block_mask_ratio: float=0.5,
                  sample_segments: bool = False,
-                 sample_gene_masks: bool = True
+                 sample_gene_masks: bool = True,
                  controlled_attention_pattern: Optional[torch.Tensor]=None,
                  restrict_special_attention: bool=False):
         self.n_targets = n_targets
