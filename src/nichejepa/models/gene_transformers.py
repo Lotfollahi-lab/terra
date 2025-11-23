@@ -207,14 +207,18 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                 attn = attn.unsqueeze(1)
             # Never attend to special tokens (excluding <cls>)
             if self.n_special_tokens > 0:
-                attn[..., 1:1 + self.n_special_tokens] = 0
-            # Optionally block cross-attention from cell queries to
+                attn[..., 1: 1 + self.n_special_tokens] = 0
+            # Optionally block cross-attention from <cls> token and cell queries to
             # neighborhood keys
-            if cell_only: # TODO
+            if cell_only:
                 attn[
                     ...,
-                    self.n_special_tokens:(self.n_special_tokens+self.seq_len_cell),
-                    (self.n_special_tokens+self.seq_len_cell):] = 0
+                    0,
+                    (1 + self.n_special_tokens + self.seq_len_cell):] = 0
+                attn[
+                    ...,
+                    1 + self.n_special_tokens: (1 + self.n_special_tokens + self.seq_len_cell),
+                    (1 + self.n_special_tokens + self.seq_len_cell):] = 0
 
         #if cell_only:
         #    x[:, (self.n_special_tokens+self.seq_len_cell):, :] = 0
@@ -225,6 +229,7 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
 
         # Run forward prop and store embeddings for each specified layer
         out: dict[int, torch.Tensor] = {}
+        cls_out: dict[int, torch.Tensor] = {} 
         for i, blk in enumerate(self.blocks, start=1):
             x = blk(x, masks=attn)
             if i == len(self.blocks) and (self.norm is not None):
@@ -232,11 +237,12 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                 x = self.norm(x)
             if i in layers:
                 # Remove special tokens from output
-                out[i] = x[:, self.n_special_tokens:, :]
+                cls_out[i] = x[:, 0, :]
+                out[i] = x[:, 1 + self.n_special_tokens:, :]
             if i == max_layer:
                 break
 
-        return out
+        return out, cls_out
 
     def _get_seg_emb(
             self,
@@ -907,13 +913,13 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
         if self.n_special_tokens:
             x[:, 1: 1 + self.n_special_tokens, :] = 0
 
-        full_ctx: dict[int, torch.Tensor] = self._compute_layer_emb(
+        full_ctx, cls_full_ctx = self._compute_layer_emb(
             x,
             masks_attention,
             layers,
             masks,
             cell_only=False)
-        cell_only_ctx: dict[int, torch.Tensor] = self._compute_layer_emb(
+        cell_only_ctx, cls_cell_only_ctx = self._compute_layer_emb(
             x,
             masks_attention,
             layers,

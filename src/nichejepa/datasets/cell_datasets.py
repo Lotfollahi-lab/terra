@@ -105,8 +105,10 @@ class CellBaseDataset(Dataset):
             special tokens considered at sequence start.
         """
         # Add <cls> token
-        item_dict['tokens'] = torch.cat([2, item_dict['tokens']])
-        item_dict['values'] = torch.cat([0, item_dict['values']])
+        item_dict['tokens'] = torch.cat(
+            [torch.tensor([2], dtype=torch.long), item_dict['tokens']])
+        item_dict['values'] = torch.cat(
+            [torch.tensor([0.0], dtype=torch.float32), item_dict['values']])
 
         for spc_tk in self.special_tokens:
             item_dict['tokens'] = torch.cat(
@@ -506,9 +508,9 @@ class CellGraphDataset(CellBaseDataset):
                     value=float('-inf'))                     
 
         # Add special tokens
-        if self.n_special_tokens > 0:
-            item_dict = self._add_special_seq(item=item,
-                                              item_dict=item_dict)
+        item_dict = self._add_special_seq(
+            item=item,
+            item_dict=item_dict)
 
         # Add cell ID
         if self.include_cell_id:
