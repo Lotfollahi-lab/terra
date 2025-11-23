@@ -106,6 +106,7 @@ class CellBaseDataset(Dataset):
         """
         # Add <cls> token
         item_dict['tokens'] = torch.cat([2, item_dict['tokens']])
+        item_dict['values'] = torch.cat([0, item_dict['values']])
 
         for spc_tk in self.special_tokens:
             item_dict['tokens'] = torch.cat(
@@ -113,9 +114,6 @@ class CellBaseDataset(Dataset):
                  item_dict['tokens']])
 
             if self.gt_type != 'rank':
-                # Add <cls> token
-                item_dict['values'] = torch.cat(
-                    [0, item_dict['values']])
                 item_dict['values'] = torch.cat(
                     [item[f'{spc_tk}_value'],
                      item_dict['values']])
@@ -123,12 +121,12 @@ class CellBaseDataset(Dataset):
         if self.gt_type != 'counts':
             # Add <cls> and special token positions
             item_dict['positions'] = torch.cat(
-                [torch.zeros(self.n_special_tokens + 1, dtype=torch.long),
+                [torch.zeros(self.n_special_tokens + 1, dtype=torch.long), # incl. <cls> token
                  item_dict['positions']])
 
         # Add <cls> and special token segments
         item_dict['segments'] = torch.cat(
-            [torch.zeros(self.n_special_tokens + 1, dtype=torch.long),
+            [torch.zeros(self.n_special_tokens + 1, dtype=torch.long), # incl. <cls> token
              item_dict['segments']])
 
         # Add <cls> and special token coords

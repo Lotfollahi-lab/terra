@@ -68,6 +68,7 @@ class BlockMaskCollator:
         self.max_special_tokens = max_special_tokens
         self.max_cls_tokens = max_cls_tokens
         self.per_block_mask_ratio = per_block_mask_ratio
+        self.sample_gene_masks = sample_gene_masks
         self.controlled_attention_pattern = controlled_attention_pattern
         self.restrict_special_attention = restrict_special_attention
 
@@ -230,43 +231,48 @@ class BlockMaskCollator:
         # Collate the batch
         collated_batch = torch.utils.data.default_collate(batch)
 
-        collated_target_masks = []
-        collated_context_masks = []
-        collated_special_masks = []
+        if self.sample_gene_masks:
 
-        # Track the minimum length of masks across the batch
-        keep_tokens_target = self.seq_len_genes
-        keep_tokens_context = self.seq_len_genes
-        keep_tokens_special = self.n_special_tokens
+            collated_target_masks = []
+            collated_context_masks = []
+            collated_special_masks = []
 
-        # Store target and context masks for each observation
-        for i in range(B):
-            # Sample target and context masks for the current observation
-            target_masks, context_masks = self._sample_gene_mask(
-                tokens=collated_batch['tokens'][i],
-                segments=collated_batch['segments'][i])
+            # Track the minimum length of masks across the batch
+            keep_tokens_target = self.seq_len_genes
+            keep_tokens_context = self.seq_len_genes
+            keep_tokens_special = self.n_special_tokens
 
-            keep_tokens_target = min(
-                keep_tokens_target, min(mask.size(0) for mask in target_masks))
-            keep_tokens_context = min(
-                keep_tokens_context, min(mask.size(0) for mask in context_masks))
+            # Store target and context masks for each observation
+            for i in range(B):
+                # Sample target and context masks for the current observation
+                target_masks, context_masks = self._sample_gene_mask(
+                    tokens=collated_batch['tokens'][i],
+                    segments=collated_batch['segments'][i])
 
-            # Append the masks for the current observation to the collated lists
-            collated_target_masks.append(target_masks)
-            collated_context_masks.append(context_masks)
+                keep_tokens_target = min(
+                    keep_tokens_target, min(mask.size(0) for mask in target_masks))
+                keep_tokens_context = min(
+                    keep_tokens_context, min(mask.size(0) for mask in context_masks))
 
-        # Trim masks to the minimum size across the batch and collate them
-        collated_target_masks = [
-            [cm[:keep_tokens_target] for cm in cm_list]
-            for cm_list in collated_target_masks]
-        collated_context_masks = [
-            [cm[:keep_tokens_context] for cm in cm_list]
-            for cm_list in collated_context_masks]
+                # Append the masks for the current observation to the collated lists
+                collated_target_masks.append(target_masks)
+                collated_context_masks.append(context_masks)
 
-        collated_target_masks = torch.utils.data.default_collate(
-            collated_target_masks)
-        collated_context_masks = torch.utils.data.default_collate(
-            collated_context_masks)
+            # Trim masks to the minimum size across the batch and collate them
+            collated_target_masks = [
+                [cm[:keep_tokens_target] for cm in cm_list]
+                for cm_list in collated_target_masks]
+            collated_context_masks = [
+                [cm[:keep_tokens_context] for cm in cm_list]
+                for cm_list in collated_context_masks]
+
+            collated_target_masks = torch.utils.data.default_collate(
+                collated_target_masks)
+            collated_context_masks = torch.utils.data.default_collate(
+                collated_context_masks)
+        else:
+            collated_target_masks = None
+            collated_context_masks = None
 
         masks_attention = (collated_batch['tokens'] != 0).unsqueeze(1).unsqueeze(1) # [B, 1, 1, N]
 

@@ -359,7 +359,8 @@ def infer(args: dict,
 
         # Aggregate gene embeddings into cell and neighborhood
         # embeddings
-        ns_tokens = udata['tokens'][:, n_special_tokens:]
+        ns_tokens = udata['tokens'][:, n_special_tokens + 1:]
+        cls_tokens = udata['tokens'][:, 0]
 
         # Exclude masked tokens from aggregation
         if masked_tokens is not None:
