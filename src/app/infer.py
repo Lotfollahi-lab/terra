@@ -380,7 +380,7 @@ def infer(args: dict,
         with torch.cuda.amp.autocast(dtype=torch.bfloat16,
                                      enabled=args['meta']['use_bfloat16']):
 
-            full_ctx, cell_only_ctx = return_layer_emb_fn(
+            full_ctx, cell_only_ctx, cls_full_ctx, cls_cell_only_ctx = return_layer_emb_fn(
                 layers=emb_layers,
                 batch=udata,
                 masks_attention=masks_attention,
@@ -391,35 +391,43 @@ def infer(args: dict,
             neighborhood_emb_list = []
 
             for l in emb_layers:
-                cell_emb_list.append(cell_only_ctx[l].cpu())
-                neighborhood_emb_list.append(full_ctx[l].cpu())
+                if agg_type == 'cls':
+                    cell_emb_list.append(cls_cell_only_ctx[l].cpu())
+                    neighborhood_emb_list.append(cls_full_ctx[l].cpu())
+                else:
+                    cell_emb_list.append(cell_only_ctx[l].cpu())
+                    neighborhood_emb_list.append(full_ctx[l].cpu())
 
-        # Aggregate gene embeddings into cell and neighborhood embeddings
-        cell_mask = create_binary_selection_mask(
-            ns_tokens,
-            selection_type="agg_cell",
-            excluded_tokens=agg_excluded_tokens,
-            seq_len_cell=seq_len_cell,
-            top_k=top_k).cpu()
-        if tokenizer_type == 'cell_neighborhood':
-            neighborhood_mask = create_binary_selection_mask(
+        if agg_type != 'cls':
+            # Create mask to aggregate gene embeddings into cell and neighborhood embeddings
+            cell_mask = create_binary_selection_mask(
                 ns_tokens,
-                selection_type="agg_neighborhood",
+                selection_type="agg_cell",
                 excluded_tokens=agg_excluded_tokens,
                 seq_len_cell=seq_len_cell,
                 top_k=top_k).cpu()
-        elif tokenizer_type == 'cell_graph':
-            neighborhood_mask = create_binary_selection_mask(
-                ns_tokens,
-                selection_type="agg_graph",
-                excluded_tokens=agg_excluded_tokens,
-                seq_len_cell=seq_len_cell,
-                top_k=top_k,
-                n_segments=n_segments).cpu()
+            if tokenizer_type == 'cell_neighborhood':
+                neighborhood_mask = create_binary_selection_mask(
+                    ns_tokens,
+                    selection_type="agg_neighborhood",
+                    excluded_tokens=agg_excluded_tokens,
+                    seq_len_cell=seq_len_cell,
+                    top_k=top_k).cpu()
+            elif tokenizer_type == 'cell_graph':
+                neighborhood_mask = create_binary_selection_mask(
+                    ns_tokens,
+                    selection_type="agg_graph",
+                    excluded_tokens=agg_excluded_tokens,
+                    seq_len_cell=seq_len_cell,
+                    top_k=top_k,
+                    n_segments=n_segments).cpu()
 
         for i, (c_emb, n_emb) in enumerate(zip(cell_emb_list, neighborhood_emb_list)):
-            # Average gene embeddings into cell and neighborhood embedding 
-            if agg_type == 'avg':
+            # Get cell and neighborhood embeddings
+            if agg_type == 'cls':
+                cell_emb = c_emb
+                neighborhood_emb = n_emb
+            elif agg_type == 'avg':
                 cell_emb = compute_mean_unmasked_emb(c_emb, cell_mask)
                 if include_spatial_cell_emb:
                     spatial_cell_emb = compute_mean_unmasked_emb(n_emb, cell_mask)

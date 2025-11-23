@@ -689,20 +689,20 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
         if self.n_special_tokens:
             x[:, : self.n_special_tokens, :] = 0
 
-        full_ctx: dict[int, torch.Tensor] = self._compute_layer_emb(
+        full_ctx, cls_full_ctx = self._compute_layer_emb(
             x,
             masks_attention,
             layers,
             masks,
             cell_only=False)
-        cell_only_ctx: dict[int, torch.Tensor] = self._compute_layer_emb(
+        cell_only_ctx, cls_cell_only_ctx = self._compute_layer_emb(
             x,
             masks_attention,
             layers,
             masks,
             cell_only=True) if need_cell_only_context else None
 
-        return full_ctx, cell_only_ctx
+        return full_ctx, cell_only_ctx, cls_full_ctx, cls_cell_only_ctx
 
 
 class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
@@ -926,7 +926,7 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
             masks,
             cell_only=True) if need_cell_only_context else None
 
-        return full_ctx, cell_only_ctx
+        return full_ctx, cell_only_ctx, cls_full_ctx, cls_cell_only_ctx
 
 
 class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
@@ -1159,20 +1159,20 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
         if self.n_special_tokens:
             x[:, :self.n_special_tokens, :] = 0
 
-        full_ctx: dict[int, torch.Tensor] = self._compute_layer_emb(
+        full_ctx, cls_full_ctx = self._compute_layer_emb(
             x,
             masks_attention,
             layers,
             masks,
             cell_only=False)
-        cell_only_ctx: dict[int, torch.Tensor] = self._compute_layer_emb(
+        cell_only_ctx, cls_cell_only_ctx = self._compute_layer_emb(
             x,
             masks_attention,
             layers,
             masks,
             cell_only=True) if need_cell_only_context else None
 
-        return full_ctx, cell_only_ctx
+        return full_ctx, cell_only_ctx, cls_full_ctx, cls_cell_only_ctx
 
 
 class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
