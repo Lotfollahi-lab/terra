@@ -87,8 +87,8 @@ class CellBaseDataset(Dataset):
                          item_dict: dict,
                          ) -> dict:
         """
-        Add special tokens to sequence and update positions, segments,
-        and values.
+        Add <cls> token and special tokens to token sequence and update
+        segments, positions, and values.
 
         Parameters
         -----------
@@ -96,7 +96,7 @@ class CellBaseDataset(Dataset):
             Index of the cell in the Hugging Face dataset.
         item_dict:
             All attributes of the cell in the Hugging Face dataset,
-            including positions, segments, tokens and values.
+            including tokens, segments, positions, and values.
 
         Returns
         -----------
@@ -104,12 +104,6 @@ class CellBaseDataset(Dataset):
             All attributes of the cell in the Hugging Face dataset with
             special tokens considered at sequence start.
         """
-        # Add <cls> token
-        item_dict['tokens'] = torch.cat(
-            [torch.tensor([2], dtype=torch.long), item_dict['tokens']])
-        item_dict['values'] = torch.cat(
-            [torch.tensor([0.0], dtype=torch.float32), item_dict['values']])
-
         for spc_tk in self.special_tokens:
             item_dict['tokens'] = torch.cat(
                 [item[f'{spc_tk}_token'],
@@ -141,6 +135,12 @@ class CellBaseDataset(Dataset):
                 [torch.full((self.n_special_tokens + 1,),
                  float('-inf'), dtype=torch.float),
                  item_dict['rel_y_coords']])
+
+        # Add <cls> token
+        item_dict['tokens'] = torch.cat(
+            [torch.tensor([2], dtype=torch.long), item_dict['tokens']])
+        item_dict['values'] = torch.cat(
+            [torch.tensor([0.0], dtype=torch.float32), item_dict['values']])
 
         return item_dict
 
