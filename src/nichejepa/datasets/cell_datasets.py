@@ -102,8 +102,9 @@ class CellBaseDataset(Dataset):
         -----------
         item_dict:
             All attributes of the cell in the Hugging Face dataset with
-            special tokens considered at sequence start.
+            <cls> token and special tokens considered at sequence start.
         """
+        # TODO: add <cls> token and special tokens from token dict directly (1 value per row)
         for spc_tk in self.special_tokens:
             item_dict['tokens'] = torch.cat(
                 [item[f'{spc_tk}_token'],
@@ -117,12 +118,12 @@ class CellBaseDataset(Dataset):
         if self.gt_type != 'counts':
             # Add <cls> and special token positions
             item_dict['positions'] = torch.cat(
-                [torch.zeros(self.n_special_tokens + 1, dtype=torch.long), # incl. <cls> token
+                [torch.zeros(self.n_special_tokens + 1, dtype=torch.long),
                  item_dict['positions']])
 
         # Add <cls> and special token segments
         item_dict['segments'] = torch.cat(
-            [torch.zeros(self.n_special_tokens + 1, dtype=torch.long), # incl. <cls> token
+            [torch.zeros(self.n_special_tokens + 1, dtype=torch.long),
              item_dict['segments']])
 
         # Add <cls> and special token coords
@@ -262,14 +263,7 @@ class CellBaseDataset(Dataset):
             segment_values:
                 List of values for a given segment.
             """
-            # TODO: Fix tokenization index after removal of 100 <cls> tokens
-            #seg_tokens = torch.where(
-            #    item['seg_tokens'] != 0,
-            #    item['seg_tokens'] - 104,
-            #    item['seg_tokens'])
-
-            # Only keep gene tokens, values, and coords of specified
-            # segment
+            # Only keep tokens, values, and coords of specified segment
             curr_seg_mask = item['seg_tokens'] == segment
             next_seg_mask = (item['seg_tokens'] == (segment + 1))
             segment_start_idx = torch.nonzero(
@@ -368,24 +362,20 @@ class CellGraphDataset(CellBaseDataset):
         # Retrieve Hugging Face item once
         item = self.dataset[item]
 
-        # Expand spatial coordinates (TODO: if statement to support old API)
+        # Expand spatial coordinates
         if 'rel_x_coord' in item.keys():
-            if len(item['rel_x_coord']) != len(item['gene_tokens']):
-                item['rel_x_coord'] = torch.repeat_interleave(
-                    item['rel_x_coord'], self.seq_len_cell)
-                item['rel_y_coord'] = torch.repeat_interleave(
-                    item['rel_y_coord'], self.seq_len_cell)
+            item['rel_x_coord'] = torch.repeat_interleave(
+                item['rel_x_coord'], self.seq_len_cell)
+            item['rel_y_coord'] = torch.repeat_interleave(
+                item['rel_y_coord'], self.seq_len_cell)
 
-        # Add segment to item (TODO: if statement to support old API)
-        if 'seg_tokens' not in item.keys():
-            seg_tokens = torch.arange(1, self.n_segments + 1)
-            seg_tokens = torch.repeat_interleave(
-                seg_tokens, self.seq_len_cell)
-            # Mask out positions where gene_tokens == 0
-            seg_tokens = seg_tokens * (item['gene_tokens'] != 0).long()
-            item['seg_tokens'] = seg_tokens
-
-        # TODO: add special tokens from token dict directly (1 value per row)
+        # Add segment to item
+        seg_tokens = torch.arange(1, self.n_segments + 1)
+        seg_tokens = torch.repeat_interleave(
+            seg_tokens, self.seq_len_cell)
+        # Mask out positions where gene_tokens == 0
+        seg_tokens = seg_tokens * (item['gene_tokens'] != 0).long()
+        item['seg_tokens'] = seg_tokens
 
         # Get (sampled) gene tokens, positions, segments, and values for
         # index cell segment
@@ -422,12 +412,6 @@ class CellGraphDataset(CellBaseDataset):
 
         # Get (sampled) gene tokens, positions, segments and values for
         # neighbor cell segments
-        # TODO: Fix tokenization index after removal of 100 <cls> tokens
-        #seg_tokens = torch.where(
-        #    item['seg_tokens'] != 0,
-        #    item['seg_tokens'] - 104,
-        #    item['seg_tokens'])
-
         for segment in torch.unique(item['seg_tokens']):
             if segment.item() > 1: # neighbor cell segments
                 segment_tokens, \
