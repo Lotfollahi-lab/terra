@@ -30,7 +30,6 @@ data:
   sep_gene_tokens_neb: False
   use_sampler: True
 meta:
-  api_version: 'v4'
   add_cls: False
   gt_type: 'counts' # 'rank', 'counts', 'combined'
   count_encoding: 'value_bins' # 'value_bins', 'mlp'

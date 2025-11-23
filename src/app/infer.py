@@ -171,11 +171,6 @@ def infer(args: dict,
     special_tokens = args['meta']['special_tokens']
     use_bfloat16 = args['meta']['use_bfloat16']
     use_flash_attention = args['meta']['use_flash_attention']
-    
-    if 'api_version' in args['meta'].keys():
-        api_version = args['meta']['api_version']
-    else:
-        api_version = 'v3'
 
     dataset_name = args['data']['dataset_name']
     token_dict_folder_path = args['data']['token_dict_folder_path']
@@ -270,15 +265,11 @@ def infer(args: dict,
         num_heads=num_heads,
         mlp_ratio=mlp_ratio,
         use_flash_attention=use_flash_attention,
-        api_version=api_version,
         sep_gene_tokens_neb=sep_gene_tokens_neb,
         predict_gene=predict_gene,
         pos_learnable=pos_learnable)
 
-    if api_version != 'v3':
-        return_layer_emb_fn = target_encoder.return_layer_emb
-    else:
-        return_layer_emb_fn = target_encoder.backbone.return_layer_emb
+    return_layer_emb_fn = target_encoder.backbone.return_layer_emb
 
     # Initialize mask collator
     if block_masking:
@@ -1013,15 +1004,11 @@ def embed_dataset(dataset: Dataset,
         num_heads=model_config['meta']['num_heads'],
         mlp_ratio=model_config['meta']['mlp_ratio'],
         use_flash_attention=model_config['meta']['use_flash_attention'],
-        api_version=model_config['meta']['api_version'],
         sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'],
         predict_gene=model_config['meta']['predict_gene'],
         pos_learnable=model_config['meta']['pos_learnable'])
 
-    if model_config['meta']['api_version'] != 'v3':
-        return_layer_emb_fn = target_encoder.return_layer_emb
-    else:
-        return_layer_emb_fn = target_encoder.backbone.return_layer_emb
+    return_layer_emb_fn = target_encoder.backbone.return_layer_emb
 
     # Create mask collator
     mask_collator = BlockMaskCollator(
@@ -1525,13 +1512,9 @@ def gene_embed_dataset(dataset: Dataset,
         num_heads=model_config['meta']['num_heads'],
         mlp_ratio=model_config['meta']['mlp_ratio'],
         use_flash_attention=model_config['meta']['use_flash_attention'],
-        api_version=model_config['meta']['api_version'],
         sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'])
 
-    if model_config['meta']['api_version'] != 'v3':
-        return_layer_emb_fn = target_encoder.return_layer_emb
-    else:
-        return_layer_emb_fn = target_encoder.backbone.return_layer_emb
+    return_layer_emb_fn = target_encoder.backbone.return_layer_emb
 
     # Create mask collator
     mask_collator = BlockMaskCollator(

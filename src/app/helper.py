@@ -167,7 +167,6 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
                mlp_ratio: float = 4.0,
                use_flash_attention: bool = True,
                use_layer_norm: bool = True,
-               api_version: Literal['v1', 'v2', 'v3'] = 'v4',
                sep_gene_tokens_neb: bool = False,
                predict_gene: bool = True,
                pos_learnable: bool = False,
@@ -239,11 +238,9 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
         mlp_ratio=mlp_ratio,
         use_flash_attention=use_flash_attention,
         use_layer_norm=use_layer_norm,
-        api_version=api_version,
         sep_gene_tokens_neb=sep_gene_tokens_neb,
         pos_learnable=pos_learnable)
-    if api_version == 'v3' or api_version == 'v4':
-        encoder = EncoderMultiMaskWrapper(encoder)
+    encoder = EncoderMultiMaskWrapper(encoder)
     predictor = gt.__dict__["init_gt_predictor"](
         predictor_type=gt_type,
         n_special_values=n_special_values,
@@ -258,11 +255,9 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
         mlp_ratio=mlp_ratio,
         use_flash_attention=use_flash_attention,
         use_layer_norm=use_layer_norm,
-        api_version=api_version,
         predict_gene=predict_gene,
         pos_learnable=pos_learnable)
-    if api_version == 'v3' or api_version == 'v4':
-        predictor = PredictorMultiMaskWrapper(predictor)
+    predictor = PredictorMultiMaskWrapper(predictor)
 
     def init_weights(m):
         if isinstance(m, torch.nn.Linear):
@@ -306,7 +301,6 @@ def init_opt(encoder: gt.GeneTransformerBaseEncoder,
              final_lr: float = 0.0,
              use_bfloat16: bool = False,
              ipe_scale: float = 1.25,
-             api_version: Literal['v1', 'v2', 'v3', 'v4'] = 'v4',
              ) -> tuple[torch.optim.AdamW,
                         torch.cuda.amp.GradScaler,
                         WarmupCosineSchedule,
@@ -329,7 +323,6 @@ def init_opt(encoder: gt.GeneTransformerBaseEncoder,
     final_lr:
     use_bfloat16:
     ipe_scale:
-    api_version:
 
     Returns
     -----------

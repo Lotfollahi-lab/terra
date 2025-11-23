@@ -252,10 +252,7 @@ def finetune(args: dict,
         use_layer_norm=use_layer_norm,
         sep_gene_tokens_neb=sep_gene_tokens_neb)
 
-    if api_version != 'v3':
-        return_layer_emb_fn = target_encoder.return_layer_emb
-    else:
-        return_layer_emb_fn = target_encoder.backbone.return_layer_emb
+    return_layer_emb_fn = target_encoder.backbone.return_layer_emb
 
     # Initialize dataset, dataloader and sampler
     cell_dataset = init_cell_dataset(
