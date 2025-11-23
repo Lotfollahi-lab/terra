@@ -118,7 +118,7 @@ class BlockMaskCollator:
     
         # Initialize masks
         target_masks = []
-        context_mask = torch.zeros(len(tokens), dtype=torch.int32)
+        context_mask = torch.zeros(len(tokens), dtype=torch.bool)
 
         # Compute block length based on number of blocks; avoid zero division
         block_length = max(1, total_nz_ns // self.n_targets)
@@ -149,7 +149,7 @@ class BlockMaskCollator:
                 # Randomly choose indices to mask within the block
                 # DON'T USE torch.rand as it could produce repeated indices
                 mask_indices = torch.randperm(block_size)[:num_to_mask]
-                target_mask = block_nz_ns_indices[mask_indices].tolist()
+                target_mask = block_nz_ns_indices[mask_indices]
                 
                 # Set masked indices to 0 in the context mask
                 context_mask[target_mask] = 0
@@ -157,7 +157,7 @@ class BlockMaskCollator:
                 # Add <cls> and special tokens to mask indices
                 target_mask = torch.cat((
                     torch.arange(self.n_special_tokens + 1),
-                    torch.tensor(target_mask)))
+                    target_mask))
 
                 # Append masked indices
                 target_masks.append(target_mask)
@@ -233,7 +233,6 @@ class BlockMaskCollator:
         collated_target_masks = []
         collated_context_masks = []
         collated_special_masks = []
-        collated_masks_attention = []
 
         # Track the minimum length of masks across the batch
         keep_tokens_target = self.seq_len_genes
@@ -255,7 +254,6 @@ class BlockMaskCollator:
             # Append the masks for the current observation to the collated lists
             collated_target_masks.append(target_masks)
             collated_context_masks.append(context_masks)
-            collated_masks_attention.append((collated_batch['tokens'][i] != 0).int())
 
         # Trim masks to the minimum size across the batch and collate them
         collated_target_masks = [
@@ -268,14 +266,8 @@ class BlockMaskCollator:
         collated_target_masks = torch.utils.data.default_collate(
             collated_target_masks)
         collated_context_masks = torch.utils.data.default_collate(
-            collated_context_masks)        
-        collated_masks_attention = torch.utils.data.default_collate(
-            collated_masks_attention).unsqueeze(1).unsqueeze(1)
+            collated_context_masks)
 
-        collated_masks_attention = collated_masks_attention.expand(
-            collated_masks_attention.shape[0],
-            1,
-            collated_masks_attention.shape[-1],
-            collated_masks_attention.shape[-1]).clone()
+        masks_attention = (collated_batch['tokens'] != 0).unsqueeze(1).unsqueeze(1) # [B, 1, 1, N]
 
-        return collated_batch, collated_context_masks, collated_target_masks, collated_masks_attention
+        return collated_batch, collated_context_masks, collated_target_masks, masks_attention
