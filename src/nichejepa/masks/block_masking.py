@@ -40,10 +40,6 @@ class BlockMaskCollator:
         Ratio of elements to be masked in each block. A list with min and
         max ratio can be provided, in which case a value between the min and
         max will be sampled for each batch.
-    controlled_attention_pattern:
-        The pattern that the model uses to generate the attention matrix.
-    restrict_special_attention:
-        If 'True', restrict attention of special tokens to themselves
     """
     def __init__(self,
                  n_targets: int,
@@ -56,9 +52,7 @@ class BlockMaskCollator:
                  max_special_tokens: int = 105, # TODO
                  per_block_mask_ratio: float=0.5,
                  sample_segments: bool = False,
-                 sample_gene_masks: bool = True,
-                 controlled_attention_pattern: Optional[torch.Tensor]=None,
-                 restrict_special_attention: bool=False):
+                 sample_gene_masks: bool = True):
         self.n_targets = n_targets
         self.n_contexts = n_contexts
         self.seq_len_cell = seq_len_cell
@@ -69,8 +63,6 @@ class BlockMaskCollator:
         self.max_cls_tokens = max_cls_tokens
         self.per_block_mask_ratio = per_block_mask_ratio
         self.sample_gene_masks = sample_gene_masks
-        self.controlled_attention_pattern = controlled_attention_pattern
-        self.restrict_special_attention = restrict_special_attention
 
     def _sample_gene_mask(self,
                           tokens: torch.Tensor,
@@ -230,6 +222,26 @@ class BlockMaskCollator:
 
         # Collate the batch
         collated_batch = torch.utils.data.default_collate(batch)
+
+        # Sample number of neighbors ONCE per batch and slice vectorized
+        if self.sample_segments:
+            # Number of segments kept in cell graph; k in [1, n_segments]
+            k = torch.randint(low=1, high=self.n_segments + 1, size=(1,)).item()
+            cutoff = 1 + n_special_tokens + self.seq_len_cell * k
+
+            # Pad all segments not kept in cell graph
+            if 'tokens' in collated_batch:
+                collated_batch['tokens'][:, cutoff:] = 0
+            if 'segments' in collated_batch:
+                collated_batch['segments'][:, cutoff:] = 0
+            if 'positions' in collated_batch:
+                collated_batch['positions'][:, cutoff:] = 0
+            if 'values' in collated_batch:
+                collated_batch['values'][:, cutoff:] = 0.0
+            if 'rel_x_coords' in collated_batch:
+                collated_batch['rel_x_coords'][:, cutoff:] = float('-inf')
+            if 'rel_y_coords' in collated_batch:
+                collated_batch['rel_y_coords'][:, cutoff:] = float('-inf')
 
         if self.sample_gene_masks:
 
