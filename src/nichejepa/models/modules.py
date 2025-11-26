@@ -220,7 +220,6 @@ class ClassificationModel(nn.Module):
     def __init__(
             self,
             base_model: nn.Module,
-            agg_type: Literal['avg', 'weighted_avg'],
             num_classes: int,
             use_mlp: bool = False,
             hidden_dim: int = 512
@@ -232,8 +231,6 @@ class ClassificationModel(nn.Module):
         -----------
         base_model:
             The base model whose output is used for classification.
-        agg_type:
-            The type of aggregation to use for padding/non-padding tokens.
         num_classes:
             The number of output classes for classification.
         use_mlp:
@@ -244,7 +241,6 @@ class ClassificationModel(nn.Module):
         super(ClassificationModel, self).__init__()
 
         self.base_model = base_model
-        self.agg_type = agg_type
         self.embed_dim = self.base_model.backbone.embed_dim
 
         if use_mlp:
@@ -262,8 +258,7 @@ class ClassificationModel(nn.Module):
             self,
             udata: dict,
             masks_attention: torch.Tensor,
-            cell_mask: torch.Tensor,
-            neighborhood_mask: torch.Tensor | None = None,
+            cell_mask: torch.Tensor = None,
         ) -> torch.Tensor:
         """
         Forward pass through the classification head.
@@ -272,38 +267,23 @@ class ClassificationModel(nn.Module):
         - udata (dict): The input dictionary containing the batch data.
         - masks_attention (Tensor): The attention masks.
         - cell_mask (Tensor): The cell mask.
-        - neighborhood_mask (Tensor | None): The neighborhood mask. If None,
-          the neighborhood mask is not used.
         
         Returns:
         - Tensor: The class logits.
         """
         # h.shape = (<batch_size>, <seq_len>, <embedding_dim>)
         h, _= self.base_model(batch=udata, masks_attention=masks_attention)
-
-        # Normalize over feature dim
-        h = F.layer_norm(h, (h.size(-1),))
         
-        # Aggregate gene embeddings into cell and neighborhood embeddings
+        # Aggregate gene embeddings into cell embeddings
         # h.shape = (<batch_size>, <embedding_dim>)
-        try:
-            # TODO: Confirm about spatial_cell_emb
-            if self.agg_type == 'avg':
-                h = compute_mean_unmasked_emb(h, cell_mask)
-            elif self.agg_type == 'weighted_avg':
-                h_weights = compute_unmasked_rank_based_weights(
-                    udata['tokens'], # TODO: Confirm correctness
-                    cell_mask)
-                h = compute_mean_unmasked_emb(
-                    h * h_weights.unsqueeze(-1),
-                    cell_mask)
-        except KeyError:
-            # Fall back to mean pooling if mask-based aggregation fails
-            h = h.mean(dim=1)
+        h = compute_mean_unmasked_emb(h, cell_mask)
         
         # Project gene embeddings into logits
-        # logits.shape = (<batch_size>, <num_classes>)
+        # logits.shape = (<batch_size>, <num_classes>)        
         logits = self.classification_head(h)
+        
+        # Normalize over logits dimension
+        logits = F.layer_norm(logits, (logits.size(-1),))
 
         return logits
 
