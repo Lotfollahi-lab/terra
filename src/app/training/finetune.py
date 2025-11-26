@@ -299,28 +299,20 @@ def finetune(
     # -------------------------------------------------------------------- #
     # get finetune hyperparameters
     use_peft = args['finetune']['use_peft']
-    peft_method = args['finetune']['peft_method']
-    peft_rank = args['finetune']['peft_rank']
-    peft_alpha = args['finetune']['peft_alpha']
-    peft_dropout = args['finetune']['peft_dropout']
-    peft_bias = args['finetune']['peft_bias']
-    peft_task_type = args['finetune']['peft_task_type']
-    try:
-        peft_target_modules = args['finetune']['peft_target_modules']
-    except KeyError:
-        peft_target_modules = None
 
-    use_mlp = args['finetune']['use_mlp']
-    hidden_dim = args['finetune']['hidden_dim']
-    lr = args['finetune']['lr']
-    num_epochs = args['finetune']['num_epochs']
-    selection_type = args['finetune']['selection_type']
-    agg_type = args['finetune']['agg_type']
-    agg_excluded_tokens = args['finetune']['excluded_tokens']
-    top_k = args['finetune']['top_k']
-    
     # apply PEFT-adapter if specified
     if use_peft:
+        peft_method = args['finetune']['peft_method']
+        peft_rank = args['finetune']['peft_rank']
+        peft_alpha = args['finetune']['peft_alpha']
+        peft_dropout = args['finetune']['peft_dropout']
+        peft_bias = args['finetune']['peft_bias']
+        peft_task_type = args['finetune']['peft_task_type']
+        try:
+            peft_target_modules = args['finetune']['peft_target_modules']
+        except KeyError:
+            peft_target_modules = None
+        
         peft_target_encoder = apply_peft(
             target_encoder=target_encoder,
             peft_method=peft_method,
@@ -337,10 +329,17 @@ def finetune(
             p.requires_grad = False
         logger.info(f"Target encoder parameters are frozen.")
 
+    use_mlp = args['finetune']['use_mlp']
+    hidden_dim = args['finetune']['hidden_dim']
+    lr = args['finetune']['lr']
+    num_epochs = args['finetune']['num_epochs']
+    selection_type = args['finetune']['selection_type']
+    agg_excluded_tokens = args['finetune']['excluded_tokens']
+    top_k = args['finetune']['top_k']
+    
     # apply a linear layer or MLP to the output of the PEFT target encoder if PEFT is applied, otherwise apply to the output of the target encoder
     model = ClassificationModel(
         base_model=peft_target_encoder if use_peft else target_encoder,
-        agg_type=agg_type,
         num_classes=num_classes,
         use_mlp=use_mlp,
         hidden_dim=hidden_dim
@@ -365,6 +364,7 @@ def finetune(
     # -------------------------------------------------------------------- #
     model_name = "Zeroshot" if not use_peft else "Finetune"
     model_name += "+Linear" if not use_mlp else "MLP"
+    logger.info(f"Model name: {model_name}")
     
     # Save checkpoint function
     def save_checkpoint(
@@ -411,7 +411,7 @@ def finetune(
         correct_preds = 0
         total_preds = 0
 
-        for _, (udata, _, _, masks_attention) in tqdm(enumerate(loader)):
+        for itr, (udata, _, _, masks_attention) in tqdm(enumerate(loader)):
             for key in udata.keys():
                 if key != 'cell_id':
                     udata[key] = udata[key].to(device, non_blocking=True)
@@ -423,20 +423,11 @@ def finetune(
             cell_mask = create_binary_selection_mask(
                 ns_tokens,
                 selection_type=selection_type,
-                excluded_tokens=agg_excluded_tokens,
+                excluded_tokens=agg_excluded_tokens, # None
                 seq_len_cell=model_config['data']['seq_len_cell'],
-                top_k=top_k).to(device)
-            if selection_type == 'agg_graph':
-                neighborhood_mask = create_binary_selection_mask(
-                    ns_tokens,
-                    selection_type=selection_type,
-                    excluded_tokens=agg_excluded_tokens,
-                    seq_len_cell=model_config['data']['seq_len_cell'],
-                    top_k=top_k,
-                    n_segments=model_config['data']['n_segments']).to(device)
-            else:
-                neighborhood_mask = None
-                    
+                top_k=top_k, # None
+            )
+            
             optimizer.zero_grad()
 
             # Forward pass
@@ -444,7 +435,6 @@ def finetune(
                 udata=udata,
                 masks_attention=masks_attention,
                 cell_mask=cell_mask,
-                neighborhood_mask=neighborhood_mask
             )
 
             # Get labels for this batch by matching cell IDs
@@ -474,7 +464,8 @@ def finetune(
                 correct_preds += (preds == labels).sum().item()
                 total_preds += labels.size(0)
                 
-            # break
+            # if itr > 5:
+                # break
 
         epoch_loss = running_loss / len(loader)
         epoch_accuracy = correct_preds / total_preds
