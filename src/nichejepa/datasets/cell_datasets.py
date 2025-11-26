@@ -139,7 +139,7 @@ class CellBaseDataset(Dataset):
 
         # Add <cls> token
         item_dict['tokens'] = torch.cat(
-            [torch.tensor([2], dtype=torch.long), item_dict['tokens']])
+            [item['cls_tokens'], item_dict['tokens']])
         item_dict['values'] = torch.cat(
             [torch.tensor([0.0], dtype=torch.float32), item_dict['values']])
 
@@ -362,6 +362,13 @@ class CellGraphDataset(CellBaseDataset):
         # Retrieve Hugging Face item once
         item = self.dataset[item]
 
+        # Add <cls> and special tokens
+        item['cls_tokens'] = torch.tensor([2], dtype=torch.long)
+        item['tissue_token'] = torch.tensor([103], dtype=torch.long)
+        item['assay_token'] = torch.tensor([104], dtype=torch.long)
+        item['gene_panel_token'] = torch.tensor([105], dtype=torch.long)
+        item['batch_token'] = torch.tensor([106], dtype=torch.long)
+
         # Expand spatial coordinates
         if 'rel_x_coord' in item.keys():
             item['rel_x_coord'] = torch.repeat_interleave(
@@ -525,6 +532,13 @@ class CellNeighborhoodDataset(CellBaseDataset):
 
         # Retrieve Hugging Face item once
         item = self.dataset[item]
+
+        # Add <cls> and special tokens
+        item['cls_tokens'] = torch.tensor([2], dtype=torch.long)
+        item['tissue_token'] = torch.tensor([103], dtype=torch.long)
+        item['assay_token'] = torch.tensor([104], dtype=torch.long)
+        item['gene_panel_token'] = torch.tensor([105], dtype=torch.long)
+        item['batch_token'] = torch.tensor([106], dtype=torch.long)
         
         # Get (sampled) gene tokens, positions, segments, and values
         gene_tokens_cell, \
