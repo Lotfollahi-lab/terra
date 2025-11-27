@@ -699,6 +699,7 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
         # <pad> tokens
         batch['tokens'][:, self.max_cls_tokens:self.n_special_tokens] = 0
         batch['segments'][:, self.max_cls_tokens:self.n_special_tokens] = 0
+        batch['values'][:, self.max_cls_tokens:self.n_special_tokens] = 0.0
 
         # Get embeddings for sequence of tokens and segments
         token_emb = self.token_embed(batch['tokens'])

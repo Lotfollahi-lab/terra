@@ -55,7 +55,8 @@ class BlockMaskCollator:
                  max_cls_tokens: int,
                  per_block_mask_ratio: float=0.5,
                  sample_segments: bool = False,
-                 new_spc: bool=False):
+                 new_spc: bool=False,
+                 restrict_special_attention: bool=False):
         self.n_targets = n_targets
         self.n_contexts = n_contexts
         self.seq_len_cell = seq_len_cell
@@ -67,6 +68,7 @@ class BlockMaskCollator:
         self.per_block_mask_ratio = per_block_mask_ratio
         self.sample_segments = sample_segments
         self.new_spc = new_spc
+        self.restrict_special_attention = restrict_special_attention
 
     def _sample_gene_mask(self,
                           tokens: torch.Tensor,
@@ -254,6 +256,26 @@ class BlockMaskCollator:
         # Build attention mask
         collated_masks_attention = (
             tokens != 0).unsqueeze(1).unsqueeze(1) # [B, 1, 1, N]
+
+        if self.restrict_special_attention:
+            collated_masks_attention = collated_masks_attention.expand(
+                collated_masks_attention.shape[0],
+                1,
+                collated_masks_attention.shape[-1],
+                collated_masks_attention.shape[-1]).clone()
+
+            for i in range(self.max_cls_tokens, self.n_special_tokens):
+                # Special tokens only attent to themselves
+                collated_masks_attention[
+                    :,
+                    :,
+                    i,
+                    :i] = 0
+                collated_masks_attention[
+                    :,
+                    :,
+                    i,
+                    (i+1):] = 0
 
         collated_target_masks = []
         collated_context_masks = []

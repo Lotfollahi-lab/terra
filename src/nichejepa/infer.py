@@ -125,6 +125,10 @@ def infer(args: dict,
     context_mask_size = args['mask']['context_mask_size']
     target_mask_size = args['mask']['target_mask_size']
     per_block_mask_ratio = args['mask']['per_block_mask_ratio']
+    if 'restrict_special_attention' in args['meta'].keys():
+        restrict_special_attention = args['meta']['restrict_special_attention']
+    else:
+        restrict_special_attention = False
 
     r_file = args['state']['read_checkpoint']
     tag = args['state']['write_tag']
@@ -195,7 +199,8 @@ def infer(args: dict,
             max_special_tokens=max_special_tokens,
             n_special_tokens=n_special_tokens,
             max_cls_tokens=max_cls_tokens,
-            per_block_mask_ratio=per_block_mask_ratio)
+            per_block_mask_ratio=per_block_mask_ratio,
+            restrict_special_attention=restrict_special_attention)
     else:
         mask_collator = RandomMaskCollator(
             n_targets=n_targets,
