@@ -217,7 +217,8 @@ def infer(args: dict,
         tokenizer_type=tokenizer_type,
         gt_type=gt_type,
         special_tokens=special_tokens,
-        sampling_strategy=None)
+        sampling_strategy=None,
+        include_cell_id=True)
 
     loader = init_dataloader_and_sampler(
         cell_dataset=cell_dataset,
@@ -251,14 +252,13 @@ def infer(args: dict,
 
     for itr, (udata, _, _, masks_attention) in tqdm(enumerate(loader)):
         # Load gene tokens and segmentation label to the specified device
-        tokens = udata[0].to(device, non_blocking=True)
-        segments = udata[1].to(device, non_blocking=True)
-        positions = udata[2].to(device, non_blocking=True)
-        counts = udata[3].to(device, non_blocking=True)
+        for key, val in udata.items():
+            if key != 'cell_id':
+                udata[key] = val.to(device, non_blocking=True)
         masks_attention = masks_attention.to(device, non_blocking=True)
 
         # Collect cell IDs to join metadata
-        all_cell_ids.extend(udata[-1])
+        all_cell_ids.extend(udata['cell_id'])
 
         # Retrieve gene embeddings from different layers
         with torch.cuda.amp.autocast(dtype=torch.bfloat16,
@@ -266,23 +266,14 @@ def infer(args: dict,
 
             if masked_tokens is not None:
                 mask_indices = torch.isin(
-                    tokens,
-                    torch.tensor(masked_tokens, device=tokens.device)
+                    udata["tokens"],
+                    torch.tensor(masked_tokens, device=udata["tokens"].device)
                     ).unsqueeze(1).unsqueeze(1).expand(-1, -1, 1108, -1) # temp
                 masks_attention[mask_indices] = 0
 
-            if gt_type == 'rank':
-                emb_list = target_encoder.module.return_multi_layer_emb(
-                    positions=positions,
-                    segments=segments,
-                    tokens=tokens,
-                    masks_attention=masks_attention)
-            elif gt_type == 'counts':
-                emb_list = target_encoder.module.return_multi_layer_emb(
-                    tokens=tokens,
-                    segments=segments,
-                    counts=counts,
-                    masks_attention=masks_attention)
+            emb_list = target_encoder.module.return_multi_layer_emb(
+                batch=udata,
+                masks_attention=masks_attention)
         
             if feature_norm:
                 # Normalize last layer like in training
@@ -294,21 +285,21 @@ def infer(args: dict,
             # Keep only <cls> token; at the moment there is only 1 <cls> token
             if agg_type == 'cls':
                 cell_mask = create_binary_selection_mask(
-                    tokens,
+                    udata["tokens"],
                     selection_type='cls_0',
                     seq_len_cell=seq_len_cell,
                     n_special_tokens=n_special_tokens,
                     max_cls_tokens=max_cls_tokens)
                 if tokenizer_type == 'cell_neighborhood':
                     neighborhood_mask = create_binary_selection_mask(
-                        tokens,
+                        udata["tokens"],
                         selection_type='cls_1',
                         seq_len_cell=seq_len_cell,
                         n_special_tokens=n_special_tokens,
                         max_cls_tokens=max_cls_tokens)
                 elif tokenizer_type == 'cell_graph':
                     neighborhood_mask = create_binary_selection_mask(
-                        tokens,
+                        udata["tokens"],
                         selection_type='cls_all',
                         seq_len_cell=seq_len_cell,
                         n_special_tokens=n_special_tokens,
@@ -322,14 +313,14 @@ def infer(args: dict,
             # Keep elements relevant to cell embedding
             elif (agg_type == "avg") or (agg_type == "weighted_avg"):
                 cell_mask = create_binary_selection_mask(
-                    tokens,
+                    udata["tokens"],
                     selection_type="agg_cell",
                     excluded_tokens=agg_excluded_tokens,
                     seq_len_cell=seq_len_cell,
                     n_special_tokens=n_special_tokens,
                     max_cls_tokens=max_cls_tokens)
                 neighborhood_mask = create_binary_selection_mask(
-                    tokens,
+                    udata["tokens"],
                     selection_type="agg_neighborhood",
                     excluded_tokens=agg_excluded_tokens,
                     seq_len_cell=seq_len_cell,
@@ -366,7 +357,7 @@ def infer(args: dict,
             if i == (len(emb_list) - 1):
                 for gene_id in cell_gene_ids:
                     gene_emb = retrieve_gene_emb(
-                        tokens=tokens,
+                        tokens=udata["tokens"],
                         emb=emb,
                         gene_id=gene_id,
                         gene_type="cell",
@@ -378,7 +369,7 @@ def infer(args: dict,
                         all_cell_gene_emb_dict[gene_id].append(gene_emb)
                 for gene_id in neighborhood_gene_ids:
                     gene_emb = retrieve_gene_emb(
-                        tokens=tokens,
+                        tokens=udata["tokens"],
                         emb=emb,
                         gene_id=gene_id,
                         gene_type="neighborhood",

@@ -657,9 +657,7 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
 
     @torch.no_grad()
     def return_multi_layer_emb(self,
-                               tokens: torch.Tensor,
-                               segments: torch.Tensor,
-                               counts: torch.Tensor,
+                               batch: dict[torch.Tensor],
                                masks: Optional[Union[
                                    List[torch.Tensor], torch.Tensor]]=None,
                                masks_attention: Optional[torch.Tensor]=None, 
@@ -699,28 +697,27 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
 
         # During inference, replace special tokens (except <cls> tokens) with
         # <pad> tokens
-        if self.n_special_tokens > 2:
-            tokens[:, self.max_cls_tokens:self.n_special_tokens] = 0
-            segments[:, self.max_cls_tokens:self.n_special_tokens] = 0
+        batch['tokens'][:, self.max_cls_tokens:self.n_special_tokens] = 0
+        batch['segments'][:, self.max_cls_tokens:self.n_special_tokens] = 0
 
         # Get embeddings for sequence of tokens and segments
-        token_emb = self.token_embed(tokens)
-        seg_emb = self.seg_embed(segments)
+        token_emb = self.token_embed(batch['tokens'])
+        seg_emb = self.seg_embed(batch['segments'])
 
         # Get value embeddings
         value_emb_weights = self.value_emb_weights_projection(
-            counts.unsqueeze(dim=-1))
+            batch['values'].unsqueeze(dim=-1))
         value_emb = torch.matmul(value_emb_weights, self.value_embed.weight)
 
         # Assign padding value embedding to 0 counts 
-        zero_counts_mask = counts == 0.0
+        zero_counts_mask = batch['values'] == 0.0
         zero_value_embed = self.special_value_embed(
-            torch.tensor(0, device=tokens.device)).to(value_emb.dtype)
+            torch.tensor(0, device=batch['tokens'].device)).to(value_emb.dtype)
         value_emb[zero_counts_mask] = zero_value_embed
         
         # Assign special value embeddings to <cls> tokens
         cls_value_embed = self.special_value_embed(
-            counts[:, :self.max_cls_tokens].int()).to(value_emb.dtype)
+            batch['values'][:, :self.max_cls_tokens].int()).to(value_emb.dtype)
         value_emb[:, :self.max_cls_tokens, :] = cls_value_embed
 
         # Assign zero value embeddings to other special tokens
