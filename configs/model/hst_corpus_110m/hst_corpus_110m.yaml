@@ -29,7 +29,7 @@ data:
   pin_memory: True
   sep_gene_tokens_neb: False
   use_sampler: True
-  n_special_values: 1000 ## 7 + 99
+  n_special_values: 633 ## 1 + 631 + 1
   vocab_size: 23407
 meta:
   api_version: 'v3'
@@ -39,11 +39,11 @@ meta:
   count_encoding: 'value_bins' # 'value_bins', 'mlp'
   n_value_bins: 100
   cell_pos_enc: 'segment'
-  enc_depth: 3
+  enc_depth: 6
   enc_emb_dim: 768
-  pred_depth: 1
+  pred_depth: 3
   pred_emb_dim: 768
-  num_heads: 3
+  num_heads: 8
   mlp_ratio: 4
   special_tokens: ['batch'] # ['batch'] # ['batch', 'assay'] # ['batch'] []
   pos_learnable: False
@@ -76,7 +76,7 @@ optimization:
   weight_decay: 0.04
   final_weight_decay: 0.4
   ipe_scale: 1.0
-  clip_grad: 2.0
+  clip_grad: 100.0
 state:
   log_freq: 20
   checkpoint_freq: 5

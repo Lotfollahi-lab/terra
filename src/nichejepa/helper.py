@@ -1,20 +1,23 @@
 """
-Adapted from Assran, M. et al. Self-supervised learning from images with a
-Joint-Embedding Predictive Architecture. Proc. IEEE Comput. Soc. Conf. Comput.
-Vis. Pattern Recognit. 15619–15629 (2023);
-https://github.com/facebookresearch/ijepa/blob/main/src/helper.py (05.06.2024).
+Adapted from Assran, M. et al. Self-supervised learning from images with
+a Joint-Embedding Predictive Architecture. Proc. IEEE Comput. Soc. Conf.
+Comput. Vis. Pattern Recognit. 15619–15629 (2023);
+https://github.com/facebookresearch/ijepa/blob/main/src/helper.py
+(05.06.2024).
 """
 
 import logging
 import sys
-from typing import Literal, Optional, Tuple
+from typing import Literal
 
 import torch
 
 import nichejepa.models.gene_transformers as gt
-from .models.utils import trunc_normal_
-from .utils.schedulers import (CosineWDSchedule,
-                               WarmupCosineSchedule)
+from nichejepa.models.multimask import (EncoderMultiMaskWrapper,
+                                        PredictorMultiMaskWrapper)
+from nichejepa.models.utils import trunc_normal_
+from nichejepa.utils.schedulers import (CosineWDSchedule,
+                                        WarmupCosineSchedule)
 
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
@@ -27,8 +30,9 @@ def load_checkpoint(device: str,
                     predictor: gt.GeneTransformerBasePredictor,
                     target_encoder: gt.GeneTransformerBaseEncoder,
                     opt: torch.optim.AdamW,
-                    scaler: torch.cuda.amp.GradScaler
-                    ) -> Tuple[gt.GeneTransformerBaseEncoder,
+                    scaler: torch.cuda.amp.GradScaler,
+                    is_training: bool = True,
+                    ) -> tuple[gt.GeneTransformerBaseEncoder,
                                gt.GeneTransformerBasePredictor,
                                gt.GeneTransformerBaseEncoder,
                                torch.optim.AdamW,
@@ -46,55 +50,71 @@ def load_checkpoint(device: str,
     encoder:
         Initialized GeneTransformerEncoder module to encode contexts.
     predictor:
-        Initialized GeneTransformerPredictor module to predict targets from
-        contexts.
+        Initialized GeneTransformerPredictor module to predict targets
+        from contexts.
     target_encoder:
         Initialized GeneTransformerEncoder module to encode targets.
     opt:
         Torch optimizer.
     scaler:
         Torch scaler for automatic mixed precision training.
+    is_training:
+        If 'True', load state dict into DDP module.
 
     Returns
     -----------
     encoder:
-        GeneTransformerEncoder module to encode contexts, loaded with state from
-        checkpoint.
+        GeneTransformerEncoder module to encode contexts, loaded with
+        state from checkpoint.
     predictor:
-        GeneTransformerPredictor module to predict targets from contexts, loaded
-        with state from checkpoint.
+        GeneTransformerPredictor module to predict targets from
+        contexts, loaded with state from checkpoint.
     target_encoder:
-        GeneTransformerEncoder module to encode targets, loaded with state from
-        checkpoint.
+        GeneTransformerEncoder module to encode targets, loaded with
+        state from checkpoint.
     opt:
         Torch optimizer, loaded with stete from checkpoint.
     scaler:
-        Torch scaler for automatic mixed precision training, loaded with state
-        from checkpoint.
+        Torch scaler for automatic mixed precision training, loaded with
+        state from checkpoint.
     epoch:
         Number of epochs from checkpoint.
     """
     try:
         checkpoint = torch.load(r_path, map_location=torch.device(device))
 
-        epoch = checkpoint['epoch']
+        if ('zero_epoch_tracking' in checkpoint.keys()) and not ('iter_number' in checkpoint.keys()):
+            epoch = checkpoint['epoch'] + 1
+        else: # for backwards compatibility
+            epoch = checkpoint['epoch']
+
+        if 'iter_number' in checkpoint.keys():
+            iter_number = checkpoint['iter_number']
+        else:
+            iter_number = None
 
         # Load state into context encoder
-        pretrained_dict = checkpoint['encoder']
-        msg = encoder.load_state_dict(pretrained_dict)
-        logger.info(
-            f'Loaded pretrained encoder from epoch {epoch} with msg: {msg}.')
+        if encoder is not None:
+            pretrained_dict = checkpoint['encoder']
+            msg = encoder.load_state_dict(pretrained_dict)
+            logger.info(
+                f'Loaded pretrained encoder from epoch {epoch} with msg: {msg}.')
 
         # Load state into predictor
-        pretrained_dict = checkpoint['predictor']
-        msg = predictor.load_state_dict(pretrained_dict)
-        logger.info(
-            f'Loaded pretrained predictor from epoch {epoch} with msg: {msg}.')
+        if predictor is not None:
+            pretrained_dict = checkpoint['predictor']
+            msg = predictor.load_state_dict(pretrained_dict)
+            logger.info(
+                f'Loaded pretrained predictor from epoch {epoch} with msg: {msg}.')
 
         # Load state into target encoder
         if target_encoder is not None:
             print(list(checkpoint.keys()))
             pretrained_dict = checkpoint['target_encoder']
+            if not is_training:
+                pretrained_dict = {
+                    key.replace("module.", ""): value for key, value in 
+                    pretrained_dict.items()}
             msg = target_encoder.load_state_dict(pretrained_dict)
             logger.info(
                 f'Loaded pretrained target encoder from epoch {epoch} with msg:'
@@ -114,8 +134,9 @@ def load_checkpoint(device: str,
     except Exception as e:
         logger.info(f'Encountered exception when loading checkpoint: {e}.')
         epoch = 0
+        iter_number = None
 
-    return encoder, predictor, target_encoder, opt, scaler, epoch
+    return encoder, predictor, target_encoder, opt, scaler, epoch, iter_number
 
 
 def init_model(gt_type: Literal['rank', 'count'],
@@ -126,15 +147,19 @@ def init_model(gt_type: Literal['rank', 'count'],
                max_special_tokens: int,
                n_special_tokens: int,
                n_segments: int,
-               n_special_values: Optional[int]=None,
-               enc_emb_dim: int=768, 
-               enc_depth: int=12,
-               pred_emb_dim: int=384,
-               pred_depth: int=6,
-               pos_learnable: bool=False,
-               seg_learnable: bool=False,
-               new_spc: bool=False,
-               ) -> Tuple[gt.GeneTransformerBaseEncoder,
+               n_special_values: int | None = None,
+               enc_emb_dim: int = 768, 
+               enc_depth: int = 12,
+               pred_emb_dim: int = 384,
+               pred_depth: int = 6,
+               num_heads: int = 8,
+               mlp_ratio: float = 4.0,
+               use_flash_attention: bool = True,
+               use_layer_norm: bool = True,
+               pos_learnable: bool = False,
+               seg_learnable: bool = False,
+               new_spc: bool = False,
+               ) -> tuple[gt.GeneTransformerBaseEncoder,
                           gt.GeneTransformerBasePredictor]:
     """
     Initialize model.
@@ -189,7 +214,12 @@ def init_model(gt_type: Literal['rank', 'count'],
         seg_learnable=seg_learnable,
         embed_dim=enc_emb_dim,
         depth=enc_depth,
+        num_heads=num_heads,
+        mlp_ratio=mlp_ratio,
+        use_flash_attention=use_flash_attention,
+        use_layer_norm=use_layer_norm,
         new_spc=new_spc)
+    encoder = EncoderMultiMaskWrapper(encoder)
     predictor = gt.__dict__["init_gt_predictor"](
         predictor_type=gt_type,
         embed_dim=enc_emb_dim,
@@ -201,7 +231,12 @@ def init_model(gt_type: Literal['rank', 'count'],
         seg_learnable=seg_learnable,
         predictor_embed_dim=pred_emb_dim,
         depth=pred_depth,
+        num_heads=num_heads,
+        mlp_ratio=mlp_ratio,
+        use_flash_attention=use_flash_attention,
+        use_layer_norm=use_layer_norm,
         new_spc=new_spc)
+    predictor = PredictorMultiMaskWrapper(predictor)
 
     def init_weights(m):
         if isinstance(m, torch.nn.Linear):
@@ -221,6 +256,14 @@ def init_model(gt_type: Literal['rank', 'count'],
     encoder.to(device)
     predictor.to(device)
     logger.info(encoder)
+    logger.info(predictor)
+    
+    def count_parameters(model):
+        return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    logger.info(f'Encoder number of parameters: {count_parameters(encoder)}')
+    logger.info(
+        f'Predictor number of parameters: {count_parameters(predictor)}')
     
     return encoder, predictor
 
@@ -232,12 +275,12 @@ def init_opt(encoder: gt.GeneTransformerBaseEncoder,
              ref_lr: float,
              warmup: int,
              num_epochs: int,
-             wd: float=1e-6,
-             final_wd: float=1e-6,
-             final_lr: float=0.0,
-             use_bfloat16: bool=False,
-             ipe_scale: float=1.25
-             ) -> Tuple[torch.optim.AdamW,
+             wd: float = 1e-6,
+             final_wd: float = 1e-6,
+             final_lr: float = 0.0,
+             use_bfloat16: bool = False,
+             ipe_scale: float = 1.25
+             ) -> tuple[torch.optim.AdamW,
                         torch.cuda.amp.GradScaler,
                         WarmupCosineSchedule,
                         CosineWDSchedule]:
@@ -282,7 +325,7 @@ def init_opt(encoder: gt.GeneTransformerBaseEncoder,
 
     # Initialize optimizer with decoupled weight decay
     logger.info('Initializing optimizer: AdamW.')
-    optimizer = torch.optim.AdamW(param_groups)
+    optimizer = torch.optim.AdamW(param_groups, fused=True)
 
     # Initialize learning rate scheduler
     logger.info('Initializing learning rate scheduler: WarmupCosineSchedule.')
@@ -307,6 +350,7 @@ def init_opt(encoder: gt.GeneTransformerBaseEncoder,
     # represented in FP16
     logger.info('Initializing automatic mixed precision training scaler: '
                 'GradScaler.')
-    scaler = torch.cuda.amp.GradScaler() if use_bfloat16 else None
+    #scaler = torch.cuda.amp.GradScaler() if use_bfloat16 else None
+    scaler = None # GradScaler should not be used for bfloat16
     
     return optimizer, scaler, scheduler, wd_scheduler
