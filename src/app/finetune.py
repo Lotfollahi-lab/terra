@@ -64,11 +64,102 @@ def parse_arguments():
     return args
 
 
-# @torch.no_grad()
+@torch.no_grad()
+def validate(
+        model,
+        val_loader,
+        val_label_lookup,
+        criterion,
+        device,
+        n_special_tokens,
+        model_config,
+        selection_type,
+        agg_excluded_tokens,
+        top_k
+    ):
+    """
+    Run validation and return loss and accuracy.
+    
+    Parameters
+    ----------
+    model:
+        The model to validate.
+    val_loader:
+        Validation dataloader.
+    val_label_lookup:
+        Label lookup dictionary for validation data.
+    criterion:
+        Loss function.
+    device:
+        Device to run validation on.
+    n_special_tokens:
+        Number of special tokens.
+    model_config:
+        Model configuration dictionary.
+    selection_type:
+        Selection type for cell mask creation.
+    agg_excluded_tokens:
+        Excluded tokens for aggregation.
+    top_k:
+        Top k for selection.
+    
+    Returns
+    -------
+    val_loss:
+        Average validation loss.
+    val_accuracy:
+        Validation accuracy.
+    """
+    model.eval()
+    val_loss = 0.0
+    val_correct = 0
+    val_total = 0
+    
+    for udata, _, _, masks_attention in val_loader:
+        for key in udata.keys():
+            if key != 'cell_id':
+                udata[key] = udata[key].to(device, non_blocking=True)
+        masks_attention = masks_attention.to(device, non_blocking=True)
+        
+        ns_tokens = udata['tokens'][:, n_special_tokens:]
+        cell_mask = create_binary_selection_mask(
+            ns_tokens,
+            selection_type=selection_type,
+            excluded_tokens=agg_excluded_tokens,
+            seq_len_cell=model_config['data']['seq_len_cell'],
+            top_k=top_k,
+        )
+        
+        logits = model(
+            udata=udata,
+            masks_attention=masks_attention,
+            cell_mask=cell_mask,
+        )
+        
+        labels = torch.tensor(
+            val_label_lookup[udata['cell_id']].values,
+            dtype=torch.long,
+            device=device
+        )
+        
+        loss = criterion(logits, labels)
+        val_loss += loss.item()
+        
+        preds = torch.argmax(logits, dim=1)
+        val_correct += (preds == labels).sum().item()
+        val_total += labels.size(0)
+    
+    model.train()
+    
+    return val_loss / len(val_loader), val_correct / val_total
+
+
 def finetune(
         args: dict,
-        adata: AnnData,
-        dataset: Dataset,
+        train_adata: AnnData,
+        train_dataset: Dataset,
+        val_adata: AnnData | None = None,
+        val_dataset: Dataset | None = None,
         save_folder_path: str | None = None,
         LOCAL_RANK: int | None = None,
         WORLD_RANK: int | None = None,
@@ -80,12 +171,14 @@ def finetune(
     -----------
     args:
         Dictionary containing the hyperparams from the config file.
-    adata:
+    train_adata:
         AnnData object containing labels for the finetune training dataset.
-    dataset:
+    train_dataset:
         Finetune training dataset.
-    emb_layer:
-        Layer for which to retrieve the embedding.
+    val_adata:
+        AnnData object containing labels for the validation dataset (optional).
+    val_dataset:
+        Validation dataset (optional).
     save_folder_path:
         Path for saving model artifacts.
     LOCAL_RANK:
@@ -166,8 +259,8 @@ def finetune(
         sample_gene_masks=False)
         
     # Create torch dataset
-    cell_dataset = init_cell_dataset(
-        dataset=dataset,
+    train_cell_dataset = init_cell_dataset(
+        dataset=train_dataset,
         vocab_size=vocab_size,
         seq_len_cell=model_config['data']['seq_len_cell'],
         seq_len_neighborhood=model_config['data']['seq_len_neighborhood'],
@@ -181,8 +274,8 @@ def finetune(
         sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'])
 
     # Initialize dataloader
-    loader, _ = init_dataloader_and_sampler(
-        cell_dataset=cell_dataset,
+    train_loader, _ = init_dataloader_and_sampler(
+        cell_dataset=train_cell_dataset,
         batch_size=args['data']['batch_size'],
         distributed=False,
         world_size=1,
@@ -194,32 +287,83 @@ def finetune(
         persistent_workers=False)
 
     # -------------------------------------------------------------------- #
+    # PREPARE VALIDATION DATASET AND DATALOADER
+    # -------------------------------------------------------------------- #
+    val_loader = None
+    val_label_lookup = None
+    if val_dataset is not None and val_adata is not None:
+        logger.info("Preparing validation dataset and dataloader...")
+        
+        # Create validation cell dataset
+        val_cell_dataset = init_cell_dataset(
+            dataset=val_dataset,
+            vocab_size=vocab_size,
+            seq_len_cell=model_config['data']['seq_len_cell'],
+            seq_len_neighborhood=model_config['data']['seq_len_neighborhood'],
+            tokenizer_type=model_config['data']['tokenizer_type'],
+            gt_type=model_config['meta']['gt_type'],
+            cell_pos_enc=model_config['meta']['cell_pos_enc'],
+            special_tokens=model_config['meta']['special_tokens'],
+            sampling_strategy=None,
+            n_nonzero_tokens_list=None,
+            include_cell_id=True,
+            sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'])
+        
+        # Initialize validation dataloader
+        val_loader, _ = init_dataloader_and_sampler(
+            cell_dataset=val_cell_dataset,
+            batch_size=args['data']['batch_size'],
+            distributed=False,
+            world_size=1,
+            rank=0,
+            collate_fn=mask_collator,
+            pin_memory=args['data']['pin_memory'],
+            num_workers=args['data']['num_workers'],
+            drop_last=False,
+            persistent_workers=False)
+        
+        logger.info(f"Validation dataset size: {len(val_dataset)} samples")
+    else:
+        logger.info("No validation dataset provided. Skipping validation.")
+
+    # -------------------------------------------------------------------- #
     # PREPARE LABELS
     # -------------------------------------------------------------------- #
     logger.info("Preparing labels...")
     label_name = args['data']['label_name']
     
-    # Assert required columns exist in adata.obs
-    assert 'cell_id' in adata.obs.columns, f"'cell_id' not found in adata.obs.columns. Available columns: {adata.obs.columns.tolist()}"
-    assert label_name in adata.obs.columns, f"'{label_name}' not found in adata.obs.columns. Available columns: {adata.obs.columns.tolist()}"
+    # Assert required columns exist in train_adata.obs
+    assert 'cell_id' in train_adata.obs.columns, f"'cell_id' not found in train_adata.obs.columns. Available columns: {train_adata.obs.columns.tolist()}"
+    assert label_name in train_adata.obs.columns, f"'{label_name}' not found in train_adata.obs.columns. Available columns: {train_adata.obs.columns.tolist()}"
     
     # Assert that label_name contains integer values (required for CrossEntropyLoss)
-    label_dtype = adata.obs[label_name].dtype
+    label_dtype = train_adata.obs[label_name].dtype
     assert pd.api.types.is_integer_dtype(label_dtype), (
         f"Labels in '{label_name}' must be integers, but got dtype: {label_dtype}. "
         f"Please encode string labels to integer class indices."
     )
     
     # Create label lookup dictionary indexed by cell_id (do once before training loop)
-    label_lookup = adata.obs.set_index('cell_id')[label_name]
+    label_lookup = train_adata.obs.set_index('cell_id')[label_name]
     logger.info(f"Label lookup: {label_lookup}")
+
+    # Create validation label lookup if validation data is provided
+    if val_adata is not None:
+        assert 'cell_id' in val_adata.obs.columns, f"'cell_id' not found in val_adata.obs.columns."
+        assert label_name in val_adata.obs.columns, f"'{label_name}' not found in val_adata.obs.columns."
+        val_label_dtype = val_adata.obs[label_name].dtype
+        assert pd.api.types.is_integer_dtype(val_label_dtype), (
+            f"Validation labels in '{label_name}' must be integers, but got dtype: {val_label_dtype}."
+        )
+        val_label_lookup = val_adata.obs.set_index('cell_id')[label_name]
+        logger.info(f"Validation label lookup created with {len(val_label_lookup)} entries")
 
     # set number of classes
     try:
-        num_classes = adata.uns[f'{label_name}_num_classes']
+        num_classes = train_adata.uns[f'{label_name}_num_classes']
     except KeyError:
-        num_classes = adata.obs[label_name].nunique()
-        logger.warning(f"Number of classes not found in adata.uns. Using adata.obs[{label_name}].nunique() instead.")
+        num_classes = train_adata.obs[label_name].nunique()
+        logger.warning(f"Number of classes not found in train_adata.uns. Using train_adata.obs[{label_name}].nunique() instead.")
     logger.info(f"Number of classes: {num_classes}")
 
     # -------------------------------------------------------------------- #
@@ -354,8 +498,10 @@ def finetune(
     # Save checkpoint function
     def save_checkpoint(
             epoch,
-            epoch_loss,
-            epoch_accuracy,
+            train_loss,
+            train_accuracy,
+            val_loss=None,
+            val_accuracy=None,
         ):
         """
         Save checkpoint.
@@ -363,18 +509,24 @@ def finetune(
         ----------
         epoch:
             Epoch number.
-        epoch_loss:
-            Loss for the epoch.
-        epoch_accuracy:
-            Accuracy for the epoch.
+        train_loss:
+            Training loss for the epoch.
+        train_accuracy:
+            Training accuracy for the epoch.
+        val_loss:
+            Validation loss for the epoch (optional).
+        val_accuracy:
+            Validation accuracy for the epoch (optional).
         """
         save_dict = {
                         'model': model.state_dict(),
                         'opt': optimizer.state_dict(),
                         'epoch': epoch,
                         'zero_epoch_tracking': True,
-                        'loss': epoch_loss,
-                        'accuracy': epoch_accuracy,
+                        'train_loss': train_loss,
+                        'train_accuracy': train_accuracy,
+                        'val_loss': val_loss,
+                        'val_accuracy': val_accuracy,
                         'batch_size': args['data']['batch_size'],
                         'world_size': 1,
                         'lr': lr,
@@ -390,13 +542,18 @@ def finetune(
     # -------------------------------------------------------------------- #
     # TRAINING LOOP
     # -------------------------------------------------------------------- #
+    # Track best validation metrics
+    best_val_loss = float('inf')
+    best_val_accuracy = 0.0
+    
     for epoch in range(num_epochs):
         logger.info(f"Epoch {epoch}")
-        running_loss = 0.0
-        correct_preds = 0
-        total_preds = 0
+        model.train()  # Ensure training mode
+        train_running_loss = 0.0
+        train_correct_preds = 0
+        train_total_preds = 0
 
-        for itr, (udata, _, _, masks_attention) in tqdm(enumerate(loader)):
+        for itr, (udata, _, _, masks_attention) in tqdm(enumerate(train_loader)):
             for key in udata.keys():
                 if key != 'cell_id':
                     udata[key] = udata[key].to(device, non_blocking=True)
@@ -431,34 +588,70 @@ def finetune(
             )
 
             # Compute the loss
-            loss = criterion(
+            train_loss_batch = criterion(
                 input=logits,
                 target=labels
             )
 
             # Backward pass and optimization
-            loss.backward()
+            train_loss_batch.backward()
             optimizer.step()
 
             # Track statistics
-            running_loss += loss.item()
+            train_running_loss += train_loss_batch.item()
             
             # Track accuracy
             with torch.no_grad():
                 preds = torch.argmax(logits, dim=1)
-                correct_preds += (preds == labels).sum().item()
-                total_preds += labels.size(0)
+                train_correct_preds += (preds == labels).sum().item()
+                train_total_preds += labels.size(0)
                 
             # if itr > 5:
                 # break
 
-        epoch_loss = running_loss / len(loader)
-        epoch_accuracy = correct_preds / total_preds
-
-        logger.info(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}, Accuracy: {epoch_accuracy:.4f}")
-
-        save_checkpoint(epoch, epoch_loss, epoch_accuracy)
+        train_loss = train_running_loss / len(train_loader)
+        train_accuracy = train_correct_preds / train_total_preds
         
+        # Validation
+        val_loss = None
+        val_accuracy = None
+        if val_loader is not None:
+            val_loss, val_accuracy = validate(
+                model=model,
+                val_loader=val_loader,
+                val_label_lookup=val_label_lookup,
+                criterion=criterion,
+                device=device,
+                n_special_tokens=n_special_tokens,
+                model_config=model_config,
+                selection_type=selection_type,
+                agg_excluded_tokens=agg_excluded_tokens,
+                top_k=top_k
+            )
+            
+            # Track best validation metrics
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+            if val_accuracy > best_val_accuracy:
+                best_val_accuracy = val_accuracy
+        
+        # Logging
+        if val_loss is not None:
+            logger.info(
+                f"Epoch [{epoch+1}/{num_epochs}], "
+                f"Train Loss: {train_loss:.4f}, Train Acc: {train_accuracy:.4f}, "
+                f"Val Loss: {val_loss:.4f}, Val Acc: {val_accuracy:.4f}"
+            )
+        else:
+            logger.info(
+                f"Epoch [{epoch+1}/{num_epochs}], "
+                f"Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.4f}"
+            )
+
+        save_checkpoint(epoch, train_loss, train_accuracy, val_loss, val_accuracy)
+    
+    if val_loader is not None:
+        logger.info(f"Best validation loss: {best_val_loss:.4f}, Best validation accuracy: {best_val_accuracy:.4f}")
     logger.info(f"Finetuning completed.")
 
 
@@ -468,22 +661,40 @@ if __name__ == '__main__':
     args = parse_arguments()
     
     # load finetune dataset (tokenized)
-    dataset = load_from_disk(args['data']['finetune_dataset'])
-    cols = [c for c in dataset.column_names]
-    dataset.set_format(
+    train_dataset = load_from_disk(args['data']['finetune_dataset'])
+    cols = [c for c in train_dataset.column_names]
+    train_dataset.set_format(
         type="torch",
         columns=cols,
         output_all_columns=True
     )
-    logger.info(f"Finetune training dataset sample: {dataset[0]}")
+    logger.info(f"Finetune training dataset sample: {train_dataset[0]}")
 
     # load finetune adata (labels)
-    adata = sc.read_h5ad(args['data']['finetune_adata'])
-    logger.info(f"Finetune training adata: {adata}")
+    train_adata = sc.read_h5ad(args['data']['finetune_adata'])
+    logger.info(f"Finetune training adata: {train_adata}")
+
+    # Load validation data (optional)
+    val_dataset = None
+    val_adata = None
+    if 'val_dataset' in args['data'] and 'val_adata' in args['data']:
+        val_dataset = load_from_disk(args['data']['val_dataset'])
+        val_dataset.set_format(
+            type="torch",
+            columns=cols,
+            output_all_columns=True
+        )
+        val_adata = sc.read_h5ad(args['data']['val_adata'])
+        logger.info(f"Validation dataset loaded: {len(val_dataset)} samples")
+        logger.info(f"Validation adata: {val_adata}")
+    else:
+        logger.info("No validation dataset specified in config. Training without validation.")
 
     # finetune model
     finetune(
         args=args,
-        dataset=dataset,
-        adata=adata,
+        train_dataset=train_dataset,
+        train_adata=train_adata,
+        val_dataset=val_dataset,
+        val_adata=val_adata,
     )
