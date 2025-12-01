@@ -12,7 +12,8 @@ from typing import Literal
 
 import torch
 import torch.nn as nn
-from peft import get_peft_model, LoraConfig
+from peft import LoraConfig
+from peft.tuners.lora import LoraModel
 
 import nichejepa.models.gene_transformers as gt
 from nichejepa.models.multimask import (EncoderMultiMaskWrapper,
@@ -67,7 +68,7 @@ def apply_peft(
     - If target_encoder object is an EncoderMultiMaskWrapper, PEFT is applied to the backbone, i.e. gt.GeneTransformerBaseEncoder,
     and a new EncoderMultiMaskWrapper object is instantiated with the PEFT model as the backbone.
     """
-    # build PEFT config
+    # Build PEFT config
     if peft_method == 'lora':
         if not peft_target_modules:
             peft_target_modules = [
@@ -85,26 +86,43 @@ def apply_peft(
             lora_alpha=peft_alpha,
             lora_dropout=peft_dropout,
             bias=peft_bias,
-            task_type=peft_task_type,
+            task_type=None,
             target_modules=peft_target_modules
             )
+    else:
+        raise ValueError(f"PEFT method {peft_method} is not supported.")
 
     # apply PEFT to the target encoder
     if isinstance(target_encoder, EncoderMultiMaskWrapper):
-        # if target_encoder object is an EncoderMultiMaskWrapper, apply PEFT to the backbone, i.e. gt.GeneTransformerBaseEncoder
-        logger.info("Target encoder is an EncoderMultiMaskWrapper. Applying PEFT to the backbone...")
-        peft_encoder = get_peft_model(
-            target_encoder.backbone,
-            peft_config
-        )
-        # and instantiate a new EncoderMultiMaskWrapper object with the PEFT model as the backbone
-        logger.info("Instantiating a new EncoderMultiMaskWrapper object with the PEFT model as the backbone...")
-        peft_target_encoder = EncoderMultiMaskWrapper(peft_encoder)
-        logger.info(peft_target_encoder.backbone.print_trainable_parameters())
 
+        peft_target_encoder = LoraModel(
+            model=target_encoder,
+            peft_config=peft_config,
+            adapter_name="default"
+        )
+        logger.info(f"PEFT target encoder type: {type(peft_target_encoder)}")
+        logger.info(f"PEFT target encoder base model type: {type(peft_target_encoder.model)}")
+
+        total_params = 0
+        trainable_params = 0
+
+        for name, p in peft_target_encoder.named_parameters():
+            num = p.numel()
+            total_params += num
+            if p.requires_grad and "lora_" in name.lower():
+                trainable_params += num
+            elif p.requires_grad and "lora_" not in name.lower():
+                logger.info(f"Parameter {name} is trainable.")
+                raise ValueError(f"Parameter {name} is trainable but not a LoRA parameter.")
+            elif not p.requires_grad and "lora_" in name.lower():
+                logger.info(f"Parameter {name} is not trainable.")
+                raise ValueError(f"Parameter {name} is not trainable but is a LoRA parameter.")
+        
+        logger.info(f"Total params: {total_params:,} | Trainable (LoRA) params: {trainable_params:,} ({trainable_params/total_params*100:.2f}%)")
     else:
         raise ValueError(f"Target encoder is of type {type(target_encoder)}. PEFT is not supported for this type of encoder.")
-    return target_encoder
+
+    return peft_target_encoder
 
 
 
