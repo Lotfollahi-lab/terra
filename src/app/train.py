@@ -6,7 +6,6 @@ https://github.com/facebookresearch/ijepa/blob/main/src/train.py (05.06.2024).
 """
 
 import os
-import pickle
 
 """
 # -- FOR DISTRIBUTED TRAINING ENSURE ONLY 1 DEVICE VISIBLE PER PROCESS
@@ -29,26 +28,28 @@ from datetime import datetime
 import datasets
 import numpy as np
 import pandas as pd
+import pickle
 import torch
 import torch.nn.functional as F
+import torch.profiler
 import wandb
 from datasets import load_from_disk
 from torch.nn.parallel import DistributedDataParallel
 from tqdm import tqdm
 
-from nichejepa.datasets.cell_datasets import make_cell_dataset
-from nichejepa.datasets.dataloaders import init_dataloader_and_sampler
-from nichejepa.helper import init_model, init_opt, load_checkpoint
-from nichejepa.masks.random_masking import RandomMaskCollator
-from nichejepa.masks.block_masking  import BlockMaskCollator
-from nichejepa.masks.utils import apply_masks
-from nichejepa.models.utils import repeat_interleave_batch
-from nichejepa.utils.distributed import init_distributed
-from nichejepa.utils.logging import (AverageMeter,
+from app.helper import init_model, init_opt, load_checkpoint
+from nichejepa.datasets_new.cell_datasets import init_cell_dataset
+from nichejepa.datasets_new.dataloaders import init_dataloader_and_sampler
+from nichejepa.masks_new.block_masking  import BlockMaskCollator
+from nichejepa.masks_new.cell_masking import CellMaskCollator
+from nichejepa.masks_new.utils import apply_masks
+from nichejepa.models_new.utils import repeat_interleave_batch
+from nichejepa.utils_new.distributed import init_distributed
+from nichejepa.utils_new.logging import (AverageMeter,
                                      CSVLogger,
                                      grad_logger)
 
-# os.environ["NCCL_ASYNC_ERROR_HANDLING"] = "1" # Better error propagation
+os.environ["NCCL_ASYNC_ERROR_HANDLING"] = "1" # Better error propagation
 
 _GLOBAL_SEED = 0
 
@@ -105,9 +106,8 @@ def train(args: dict,
 
     # Load params from config file
     dataset_name = args['data']['dataset_name']
+    token_dict_folder_path = args['data']['token_dict_folder_path']
     tokenizer_type = args['data']['tokenizer_type']
-    n_special_values = args['data']['n_special_values']
-    vocab_size = args['data']['vocab_size']
     seq_len_cell = args['data']['seq_len_cell']
     seq_len_neighborhood = args['data']['seq_len_neighborhood']
     n_segments = args['data']['n_segments']
@@ -115,54 +115,66 @@ def train(args: dict,
     batch_size = args['data']['batch_size']
     num_workers = args['data']['num_workers']
     pin_memory = args['data']['pin_memory']
-    if 'precomputed_n_nonzero_tokens' in args['data'].keys():
-        if args['data']['precomputed_n_nonzero_tokens']:
-            with open(args['data']['precomputed_n_nonzero_tokens'], "rb") as f: 
-                n_nonzero_tokens = pickle.load(f)
-                if args['data']['chunk_dataset']:
-                    chunk_size = 12508671
-                    n_nonzero_tokens_list = []
-                    for start in range(0, len(n_nonzero_tokens), chunk_size):
-                        end = min(start + chunk_size, len(n_nonzero_tokens))
-                        n_nonzero_tokens_list.append(
-                            n_nonzero_tokens[start: end])
-        else:
-            n_nonzero_tokens = None
-    else:
-        n_nonzero_tokens = None
 
+    if 'sep_gene_tokens_neb' in args['data'].keys():
+        sep_gene_tokens_neb = args['data']['sep_gene_tokens_neb']
+    else:
+        sep_gene_tokens_neb = False
+
+    if 'use_sampler' in args['data'].keys():
+        use_sampler = args['data']['use_sampler']
+    else:
+        use_sampler = False
+
+    add_cls = args['meta']['add_cls']
     gt_type = args['meta']['gt_type']
+    count_encoding = args['meta']['count_encoding']
+    n_value_bins = args['meta']['n_value_bins']
+    if 'cell_pos_enc' in args['meta'].keys():
+        cell_pos_enc = args['meta']['cell_pos_enc']
+    else:
+        cell_pos_enc = 'segment'
     enc_depth = args['meta']['enc_depth'] 
     enc_emb_dim = args['meta']['enc_emb_dim']    
     pred_depth = args['meta']['pred_depth']
     pred_emb_dim = args['meta']['pred_emb_dim']
-    special_tokens = args['meta']['special_tokens']
-    pos_learnable = args['meta']['pos_learnable']
-    seg_learnable = args['meta']['seg_learnable']
-    use_bfloat16 = args['meta']['use_bfloat16']
-    if 'new_spc' in args['meta'].keys():
-        new_spc = args['meta']['new_spc']
+    if 'num_heads' in args['meta'].keys():
+        num_heads = args['meta']['num_heads']
     else:
-        new_spc = False
+        num_heads = 8
+    if 'mlp_ratio' in args['meta'].keys():
+        mlp_ratio = args['meta']['mlp_ratio']
+    else:
+        mlp_ratio = 4.0
     if 'loss_fn_type' in args['meta'].keys():
         loss_fn_type = args['meta']['loss_fn_type']
     else:
         loss_fn_type = 'l1'
+    if 'predict_gene' in args['meta'].keys():
+        predict_gene = args['meta']['predict_gene']
+    else:
+        predict_gene = True
+    if 'pos_learnable' in args['meta'].keys():
+        pos_learnable = args['meta']['pos_learnable']
+    else:
+        pos_learnable = False
+    special_tokens = args['meta']['special_tokens']
+    use_bfloat16 = args['meta']['use_bfloat16']
+    use_flash_attention = args['meta']['use_flash_attention']
+    use_layer_norm = args['meta']['use_layer_norm']
 
     n_contexts = args['mask']['n_contexts']
     n_targets = args['mask']['n_targets']
     block_masking = args['mask']['block_masking']
+    cell_masking = args['mask']['cell_masking']
     context_mask_size = args['mask']['context_mask_size']
     target_mask_size = args['mask']['target_mask_size']
     per_block_mask_ratio = args['mask']['per_block_mask_ratio']
-    if 'restrict_special_attention' in args['mask'].keys():
-        restrict_special_attention = args['mask']['restrict_special_attention']
-    else:
-        restrict_special_attention = False
     if 'sample_segments' in args['mask'].keys():
         sample_segments = args['mask']['sample_segments']
     else:
         sample_segments = False
+    targets_list = args['mask']['targets_list']
 
     warmup = args['optimization']['warmup']
     num_epochs = args['optimization']['epochs']
@@ -177,14 +189,6 @@ def train(args: dict,
     final_wd = float(args['optimization']['final_weight_decay'])
     ipe_scale = args['optimization']['ipe_scale'] # scheduler scale factor
     clip_grad = args['optimization']['clip_grad']
-    if 'lambda_var' in args['optimization'].keys():
-        lambda_var = args['optimization']['lambda_var']
-    else:
-        lambda_var = 1.0
-    if 'lambda_cov' in args['optimization'].keys():
-        lambda_cov = args['optimization']['lambda_cov']
-    else:
-        lambda_cov = 0.1
 
     log_freq = args['state']['log_freq']
     checkpoint_freq = args['state']['checkpoint_freq']
@@ -192,22 +196,41 @@ def train(args: dict,
     write_tag = args['state']['write_tag']
     load_model = args['state']['load_checkpoint'] or resume_preempt
     r_file = args['state']['read_checkpoint']
+    load_folder_path = args['state']['folder_path']
+    use_profiler = args['state'].get('use_profiler', False)
+
+    if 'precomputed_epoch_n_nonzero_tokens' in args['data'].keys():
+        with open(args['data']['precomputed_epoch_n_nonzero_tokens'], "rb") as f: 
+            epoch_n_nonzero_tokens = pickle.load(f)
+    elif args['data']['precomputed_n_nonzero_tokens']:
+        with open(args['data']['precomputed_n_nonzero_tokens'], "rb") as f: 
+            n_nonzero_tokens = pickle.load(f)
+    else:
+        n_nonzero_tokens = None
+
+    # Load token dict and get token dict-specfic params
+    with open(token_dict_folder_path, 'rb') as file:
+        token_dict = pickle.load(file)
+    vocab_size = len(token_dict)
+    n_special_values = sum(
+        1 for key in token_dict if "spv" in key) # this only works now because of the dummy special values
+    max_special_tokens = sum(
+        1 for key in token_dict if "cls" in key) + sum(
+        1 for key in token_dict if "spt" in key)
 
     # Define tokenizer-specific params
     if tokenizer_type == 'cell_neighborhood':
-        max_special_tokens = 7
-        max_cls_tokens = args['meta']['n_cls']
-        special_tokens = ['cls_cell', 'cls_neighborhood'] + special_tokens
+        if add_cls:
+            special_tokens = ['cls_0', 'cls_1'] + special_tokens            
     elif tokenizer_type == 'cell_graph':
-        max_special_tokens = 105
-        max_cls_tokens = args['meta']['n_cls']
-        special_tokens = [
-            f'cls_{i}' for i in range(max_cls_tokens)] + special_tokens
+        if add_cls:
+            special_tokens = [
+                f'cls_{i}' for i in range(n_segments)] + special_tokens
 
     # Get token sequence length and number of special tokens
     n_special_tokens = len(special_tokens)
     seq_len = seq_len_cell + seq_len_neighborhood + n_special_tokens
-
+    
     # Initialize torch distributed backend
     world_size, rank = init_distributed()
     logger.info(f'Initialized (rank/world-size) {rank}/{world_size}.')
@@ -244,15 +267,25 @@ def train(args: dict,
         load_path = os.path.join(
             load_folder_path, r_file) if r_file is not None else latest_path
 
+    # Initialize csv logger
+    #if rank==0:
+    #    csv_logger = CSVLogger(log_file,
+    #                       ('%d', 'epoch'),
+    #                       ('%d', 'itr'),
+    #                       ('%.5f', 'loss'),
+    #                       ('%.5f', 'mask-A'),
+    #                       ('%.5f', 'mask-B'),
+    #                       ('%d', 'time (ms)'))
 
     # Initialize encoder, predictor and target encoder
     encoder, predictor = init_model(
         gt_type=gt_type,
+        count_encoding=count_encoding,
+        n_value_bins=n_value_bins,
+        cell_pos_enc=cell_pos_enc,
         device=device,
         vocab_size=vocab_size,
         seq_len=seq_len,
-        max_cls_tokens=max_cls_tokens,
-        max_special_tokens=max_special_tokens,
         n_special_tokens=n_special_tokens,
         n_segments=n_segments,
         n_special_values=n_special_values,
@@ -260,9 +293,13 @@ def train(args: dict,
         enc_depth=enc_depth,
         pred_emb_dim=pred_emb_dim,
         pred_depth=pred_depth,
-        pos_learnable=pos_learnable,
-        seg_learnable=seg_learnable,
-        new_spc=new_spc)
+        num_heads=num_heads,
+        mlp_ratio=mlp_ratio,
+        use_flash_attention=use_flash_attention,
+        use_layer_norm=use_layer_norm,
+        sep_gene_tokens_neb=sep_gene_tokens_neb,
+        predict_gene=predict_gene,
+        pos_learnable=pos_learnable)
     target_encoder = copy.deepcopy(encoder)
 
     # Initialize mask collator
@@ -273,53 +310,54 @@ def train(args: dict,
             n_segments=n_segments,
             seq_len_cell=seq_len_cell,
             seq_len_neighborhood=seq_len_neighborhood,
-            max_special_tokens=max_special_tokens,
             n_special_tokens=n_special_tokens,
-            max_cls_tokens=max_cls_tokens,
             per_block_mask_ratio=per_block_mask_ratio,
-            restrict_special_attention=restrict_special_attention,
-            sample_segments=sample_segments)
-    else:
-        mask_collator = RandomMaskCollator(
+            sample_segments=sample_segments,
+            sample_gene_masks=True)
+    elif cell_masking:
+       mask_collator = CellMaskCollator(
             n_targets=n_targets,
             n_contexts=n_contexts,
             n_segments=n_segments,
             seq_len_cell=seq_len_cell,
             seq_len_neighborhood=seq_len_neighborhood,
             n_special_tokens=n_special_tokens,
-            target_mask_size=target_mask_size,
-            context_mask_size=context_mask_size,)
+            per_block_mask_ratio=per_block_mask_ratio,
+            targets_list=targets_list)
     
     # Initialize train and test datasets, dataloaders and samplers
     if isinstance(train_dataset, list):
         train_cell_datasets = []
-        for d, nz in zip(train_dataset, n_nonzero_tokens_list):
-            cell_d = make_cell_dataset(
+        for d, nz in zip(train_dataset, epoch_n_nonzero_tokens):
+            cell_d = init_cell_dataset(
                 dataset=d,
                 vocab_size=vocab_size,
                 seq_len_cell=seq_len_cell,
                 seq_len_neighborhood=seq_len_neighborhood,
-                max_cls_tokens=max_cls_tokens,
-                max_special_tokens=max_special_tokens,
                 tokenizer_type=tokenizer_type,
                 gt_type=gt_type,
+                cell_pos_enc=cell_pos_enc,
                 special_tokens=special_tokens,
                 sampling_strategy=sampling_strategy,
-                n_nonzero_tokens_list=nz)
+                n_nonzero_tokens_list=nz,
+                include_cell_id=False,
+                sep_gene_tokens_neb=sep_gene_tokens_neb)
             train_cell_datasets.append(cell_d)
+
     else:
-        train_cell_dataset = make_cell_dataset(
+        train_cell_dataset = init_cell_dataset(
             dataset=train_dataset,
             vocab_size=vocab_size,
             seq_len_cell=seq_len_cell,
             seq_len_neighborhood=seq_len_neighborhood,
-            max_cls_tokens=max_cls_tokens,
-            max_special_tokens=max_special_tokens,
             tokenizer_type=tokenizer_type,
             gt_type=gt_type,
+            cell_pos_enc=cell_pos_enc,
             special_tokens=special_tokens,
             sampling_strategy=sampling_strategy,
-            n_nonzero_tokens_list=n_nonzero_tokens)
+            n_nonzero_tokens_list=n_nonzero_tokens,
+            include_cell_id=False,
+            sep_gene_tokens_neb=sep_gene_tokens_neb)
 
     if isinstance(train_dataset, list):
         train_loaders = []
@@ -328,28 +366,29 @@ def train(args: dict,
             train_loader, train_sampler = init_dataloader_and_sampler(
                 cell_dataset=cell_d,
                 batch_size=batch_size,
-                distributed=True,
+                distributed=use_sampler,
                 world_size=world_size,
                 rank=rank,
                 collate_fn=mask_collator,
                 pin_memory=pin_memory,
                 num_workers=num_workers,
-                drop_last=False,
+                drop_last=True,
                 prefetch_factor=(4 if num_workers > 0 else None),
                 persistent_workers=False)
             train_loaders.append(train_loader)
             train_samplers.append(train_sampler)
+
     else:
         train_loader, train_sampler = init_dataloader_and_sampler(
             cell_dataset=train_cell_dataset,
             batch_size=batch_size,
-            distributed=True,
+            distributed=use_sampler,
             world_size=world_size,
             rank=rank,
             collate_fn=mask_collator,
             pin_memory=pin_memory,
             num_workers=num_workers,
-            drop_last=False,
+            drop_last=True,
             prefetch_factor=(4 if num_workers > 0 else None),
             persistent_workers=False)
 
@@ -370,15 +409,62 @@ def train(args: dict,
         ipe_scale=ipe_scale,
         use_bfloat16=use_bfloat16)
     
-    encoder = DistributedDataParallel(encoder, static_graph=True)
-    predictor = DistributedDataParallel(predictor, static_graph=True)
+    #encoder = torch.compile(encoder)
+    #predictor = torch.compile(predictor)
 
+    if use_profiler and WORLD_RANK == 0:
+
+        def trace_handler(p):
+            cpu_output = p.key_averages(group_by_stack_n=5).table(
+                sort_by="cpu_time_total", row_limit=100)
+            logger.info(f"Profiler CPU output: {cpu_output}.")
+            gpu_output = p.key_averages(group_by_stack_n=5).table(
+                sort_by="cuda_time_total", row_limit=100)
+            logger.info(f"Profiler CPU output: {cpu_output}.")
+            logger.info(f"Profiler GPU output: {gpu_output}.")
+            p.export_chrome_trace(
+                os.path.join(
+                    save_folder_path,
+                    "profiler_logs/trace_" + str(p.step_num) + ".json"))
+
+        profiler = torch.profiler.profile(
+            activities=[
+                torch.profiler.ProfilerActivity.CPU,
+                torch.profiler.ProfilerActivity.CUDA,
+            ],
+            schedule=torch.profiler.schedule(
+                wait=10,
+                warmup=1,
+                active=3,
+                repeat=1),
+            on_trace_ready=trace_handler,
+            record_shapes=False,
+            profile_memory=False,
+            with_stack=True,
+        )
+        profiler.start()
+
+    encoder = DistributedDataParallel(
+        encoder,
+        static_graph=True,
+        device_ids=[LOCAL_RANK],
+        output_device=LOCAL_RANK,
+        gradient_as_bucket_view=True,
+        broadcast_buffers=False)
+    predictor = DistributedDataParallel(
+        predictor,
+        static_graph=True,
+        device_ids=[LOCAL_RANK],
+        output_device=LOCAL_RANK,
+        gradient_as_bucket_view=True,
+        broadcast_buffers=False)
     for p in target_encoder.parameters():
         p.requires_grad = False
 
     # Define momentum schedule
-    momentum_scheduler = (ema[0] + i*(ema[1]-ema[0])/(ipe*num_epochs*ipe_scale)
-                          for i in range(int(ipe*num_epochs*ipe_scale)+1))
+    momentum_scheduler = (
+        ema[0] + i*(ema[1]-ema[0])/(ipe*num_epochs*ipe_scale)
+        for i in range(int(ipe*num_epochs*ipe_scale)+1))
 
     start_epoch = 0
     # Load training checkpoint
@@ -395,6 +481,7 @@ def train(args: dict,
             scheduler.step()
             wd_scheduler.step()
             next(momentum_scheduler)
+            #mask_collator.step()
 
     def save_checkpoint(epoch, iter_number=None):
         save_dict = {'encoder': encoder.state_dict(),
@@ -420,25 +507,30 @@ def train(args: dict,
 
     # Run training loop
     for epoch in range(start_epoch, num_epochs):
-        logger.info(f"Epoch {epoch + 1}")
-
+        logger.info(f"Epoch {epoch}")
         if isinstance(train_dataset, list):
             logger.info(f"Using train loader and sampler from epoch {epoch}.")
             train_loader = train_loaders[epoch]
-            train_sampler = train_samplers[epoch]
+            train_sampler = train_samplers[epoch] 
 
         # Update distributed dataloader epoch
         train_sampler.set_epoch(epoch)
 
         loss_meter = AverageMeter()
+        #maskA_meter = AverageMeter()
+        #maskB_meter = AverageMeter()
 
-        for itr, (udata, masks_enc, masks_pred, masks_attention) in enumerate(
-        train_loader):
+        for itr, (udata, masks_enc, masks_pred, masks_attention) in enumerate(train_loader):
             for key, val in udata.items():
                 udata[key] = val.to(device, non_blocking=True)
             masks_enc = [u.to(device, non_blocking=True) for u in masks_enc]
             masks_pred = [u.to(device, non_blocking=True) for u in masks_pred]
             masks_attention = masks_attention.to(device, non_blocking=True)
+
+            assert len(masks_enc) == 1, 'Currently require num encoder masks = 1'
+
+            #maskA_meter.update(len(masks_enc[0][0]))
+            #maskB_meter.update(len(masks_pred[0][0]))
 
             if WORLD_RANK == 0 and (itr % log_freq == 0):
                 compute_grad_stats = True
@@ -452,33 +544,25 @@ def train(args: dict,
             with torch.cuda.amp.autocast(dtype=torch.bfloat16, enabled=use_bfloat16):
                 # Forward pass of target encoder
                 with torch.no_grad():
-                    h = target_encoder(
+                    h, _ = target_encoder(
                         batch=udata, masks_attention=masks_attention)
                     h = F.layer_norm(h, (h.size(-1),))
                     h = apply_masks(h, masks_pred, concat=False)
 
                 # Forward pass of context encoder
-                z = encoder(batch=udata,
-                            masks=masks_enc,
-                            masks_attention=None)
+                z, token_emb = encoder(
+                    batch=udata,
+                    masks=masks_enc,
+                    masks_attention=None)
 
                 # Forward pass of predictor
-                if gt_type == 'rank':
-                    z = predictor(z=z,
-                                    batch=udata,
-                                    masks_enc=masks_enc,
-                                    masks_pred=masks_pred,
-                                    enc_seg_embed=encoder.module.backbone.seg_embed,
-                                    enc_pos_embed=encoder.module.backbone.pos_embed,
-                                    masks_attention=None)
-                elif gt_type == 'counts':
-                    z = predictor(z=z,
-                                    batch=udata,
-                                    masks_enc=masks_enc,
-                                    masks_pred=masks_pred,
-                                    enc_seg_embed=encoder.module.backbone.seg_embed,
-                                    enc_token_embed=encoder.module.backbone.token_embed,
-                                    masks_attention=None)
+                z = predictor(
+                    z=z,
+                    token_emb=token_emb,
+                    batch=udata,
+                    masks_enc=masks_enc,
+                    masks_pred=masks_pred,
+                    masks_attention=None)
 
                 # Compute loss
                 loss_exp = 1.0
@@ -490,31 +574,6 @@ def train(args: dict,
                         loss += torch.mean(
                             torch.abs(zi - hi)**loss_exp) / loss_exp
                 loss /= len(masks_pred)
-
-                # ----------------------------------------------------
-                # VICReg-style variance + covariance regularization
-                # ----------------------------------------------------
-
-                all_z = torch.cat(z, dim=0)
-                all_z = all_z.reshape(-1, all_z.shape[-1])
-
-                # ----- variance loss -----
-                def variance_loss(z, gamma=1.0, eps=1e-4):
-                    std = z.std(dim=0) + eps
-                    return torch.mean(torch.relu(gamma - std))
-
-                # ----- covariance loss -----
-                def covariance_loss(z):
-                    z = z - z.mean(dim=0)
-                    N, D = z.shape
-                    cov = (z.T @ z) / (N - 1)
-                    off_diag = cov - torch.diag(torch.diag(cov))
-                    return (off_diag**2).sum() / D
-
-                loss_var = variance_loss(all_z)
-                loss_cov = covariance_loss(all_z)
-
-                loss = loss + lambda_var * loss_var + lambda_cov * loss_cov
 
             # Step 2: backward pass and step
             _enc_norm, _pred_norm = 0., 0.
@@ -532,6 +591,9 @@ def train(args: dict,
                     predictor.parameters(), clip_grad)
             optimizer.step()
             optimizer.zero_grad(set_to_none=True)
+
+            if use_profiler and WORLD_RANK == 0:
+                profiler.step()
 
             # Step 3: momentum update of target encoder
             with torch.no_grad():
@@ -554,6 +616,40 @@ def train(args: dict,
 
             loss_meter.update(float(loss))
 
+            # Logging
+            #def log_stats():
+            #    csv_logger.log(epoch,
+            #                   itr,
+            #                   loss,
+            #                   grad_stats.global_norm,
+            #                   grad_stats_pred.global_norm,
+            #                   maskA_meter.val,
+            #                   maskB_meter.val,
+            #                   etime)
+            #    if (itr % log_freq == 0) or np.isnan(loss) or np.isinf(loss):
+            #        logger.info('[%d, %5d] loss: %.3f '
+            #                    'masks: %.1f %.1f '
+            #                    '[wd: %.2e] [lr: %.2e] '
+            #                    '[mem: %.2e] '
+            #                    '(%.1f ms)'
+            #                    % (epoch, itr,
+            #                       loss_meter.avg,
+            #                       maskA_meter.avg,
+            #                       maskB_meter.avg,
+            #                       _new_wd,
+            #                       _new_lr,
+            #                       torch.cuda.max_memory_allocated() / 1024.**2,
+            #                       time_meter.avg))
+            #
+            #        if grad_stats is not None:
+            #            logger.info(
+            #                '[%d, %5d] grad_stats: [%.2e %.2e] (%.2e, %.2e)'
+            #                % (epoch, itr,
+            #                grad_stats.first_layer,
+            #                grad_stats.last_layer,
+            #                grad_stats.min,
+            #                grad_stats.max))
+
             #log_stats()
             if WORLD_RANK == 0 and (itr % log_freq == 0):
                 wandb.log({
@@ -571,3 +667,7 @@ def train(args: dict,
         # -- Save Checkpoint after every epoch
         logger.info('avg. loss %.3f' % loss_meter.avg)
         save_checkpoint(epoch)
+
+    if use_profiler and WORLD_RANK == 0 :
+        # Close profiler
+        profiler.stop()

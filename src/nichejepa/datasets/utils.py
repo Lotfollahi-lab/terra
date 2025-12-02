@@ -53,7 +53,7 @@ def get_ensembl_ids(gene_names: List,
 
 
 def prepare_dataset(args: dict,
-                    split_dataset: bool=True
+                    split_dataset: bool=True,
                     ) -> Union[Tuple[datasets.Dataset, datasets.Dataset],
                                datasets.Dataset]:
     """
@@ -94,7 +94,17 @@ def prepare_dataset(args: dict,
         with open(args['data']['precomputed_split'], 'rb') as f:
             indices = pickle.load(f)
         dataset = dataset.select(indices)
-        return dataset, dataset
+        if args['data'].get('chunk_dataset'):
+            chunk_size = 12508671
+            chunks = []
+            for start in range(0, len(dataset), chunk_size):
+                end = min(start + chunk_size, len(dataset))
+                indices = list(range(start, end))
+                chunk = dataset.select(indices)
+                chunks.append(chunk)
+            return chunks, None
+        else:
+            return dataset, dataset
 
     # Sample subset if specified
     if args['data']['sample_subset']:

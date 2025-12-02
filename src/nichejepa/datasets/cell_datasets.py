@@ -378,11 +378,11 @@ class CellGraphDataset(CellBaseDataset):
             item=item,
             item_dict=item_dict)
 
-        item_dict['tokens'] = torch.tensor(item_dict['tokens'])
-        item_dict['segments'] = torch.tensor(item_dict['segments']).long()
+        item_dict['tokens'] = torch.as_tensor(item_dict['tokens'])
+        item_dict['segments'] = torch.as_tensor(item_dict['segments']).long()
         if self.gt_type != 'counts':
-            item_dict['positions'] = torch.tensor(item_dict['positions'])
-        item_dict['values'] = torch.tensor(item_dict['values'])
+            item_dict['positions'] = torch.as_tensor(item_dict['positions'])
+        item_dict['values'] = torch.as_tensor(item_dict['values'])
 
         # Add cell ID
         if self.include_cell_id:

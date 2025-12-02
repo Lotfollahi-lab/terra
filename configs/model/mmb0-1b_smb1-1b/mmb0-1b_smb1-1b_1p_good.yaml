@@ -77,6 +77,8 @@ optimization:
   final_weight_decay: 0.4
   ipe_scale: 1.0
   clip_grad: 100.0
+  lambda_var: 0.5
+  lambda_cov: 0.05
 state:
   log_freq: 20
   checkpoint_freq: 5

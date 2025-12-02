@@ -26,11 +26,12 @@ data:
   sampling_strategy: null
   batch_size: 16 # 32 # 32
   num_workers: 16 # 16, 24
-  pin_memory: True
+  pin_memory: True # True, False
   sep_gene_tokens_neb: False
   use_sampler: True
   n_special_values: 1000
   vocab_size: 23407
+  chunk_dataset: True
 meta:
   api_version: 'v3'
   add_cls: True
@@ -66,7 +67,7 @@ mask:
   restrict_special_attention: False
 optimization:
   warmup: 1
-  epochs: 5
+  epochs: 30
   ema:
   - 0.9764319982153814 # 0.9764319982153814
   - 1.0
@@ -78,7 +79,7 @@ optimization:
   ipe_scale: 1.0
   clip_grad: 100.0
   lambda_var: 1.0
-  lambda_cov: 0.1
+  lambda_cov: 0.05
 state:
   log_freq: 20
   checkpoint_freq: 1
