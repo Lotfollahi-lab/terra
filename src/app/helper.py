@@ -105,12 +105,14 @@ def apply_peft(
 
         total_params = 0
         trainable_params = 0
+        lora_modules = []
 
         for name, p in peft_target_encoder.named_parameters():
             num = p.numel()
             total_params += num
             if p.requires_grad and "lora_" in name.lower():
                 trainable_params += num
+                lora_modules.append(name)
             elif p.requires_grad and "lora_" not in name.lower():
                 logger.info(f"Parameter {name} is trainable.")
                 raise ValueError(f"Parameter {name} is trainable but not a LoRA parameter.")
@@ -118,6 +120,7 @@ def apply_peft(
                 logger.info(f"Parameter {name} is not trainable.")
                 raise ValueError(f"Parameter {name} is not trainable but is a LoRA parameter.")
         
+        logger.info(f"LoRA modules: {lora_modules}")
         logger.info(f"Total params: {total_params:,} | Trainable (LoRA) params: {trainable_params:,} ({trainable_params/total_params*100:.2f}%)")
     else:
         raise ValueError(f"Target encoder is of type {type(target_encoder)}. PEFT is not supported for this type of encoder.")

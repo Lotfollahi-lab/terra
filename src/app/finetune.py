@@ -475,6 +475,33 @@ def finetune(
     )
     model.to(device)
     
+    total_params = 0
+    trainable_params = 0
+    lora_params = 0
+    non_lora_params = 0
+    lora_modules = []
+    non_lora_modules = []
+
+    for name, p in model.named_parameters():
+        num = p.numel()
+        total_params += num
+        if p.requires_grad and "lora_" in name.lower():
+            trainable_params += num
+            lora_params += num
+            lora_modules.append(name)
+        elif p.requires_grad and "lora_" not in name.lower():
+            trainable_params += num
+            non_lora_params += num
+            non_lora_modules.append(name)
+            logger.info(f"Parameter {name} is trainable but not a LoRA parameter.")
+        elif not p.requires_grad and "lora_" in name.lower():
+            logger.info(f"Parameter {name} is not trainable but is a LoRA parameter.")
+    
+    logger.info(f"LoRA modules: {lora_modules}")
+    logger.info(f"Non-LoRA modules: {non_lora_modules}")
+    logger.info(f"Total params: {total_params:,} | Trainable params: {trainable_params:,} ({trainable_params/total_params*100:.2f}%)")
+    logger.info(f"LoRA params: {lora_params:,} | Non-LoRA params: {non_lora_params:,} ({non_lora_params/total_params*100:.2f}%)")
+
     # -------------------------------------------------------------------- #
     # PREPARE TRAINING INGREDIENTS
     # -------------------------------------------------------------------- #
