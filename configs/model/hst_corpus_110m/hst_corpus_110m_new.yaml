@@ -29,6 +29,8 @@ data:
   pin_memory: True
   sep_gene_tokens_neb: False
   use_sampler: True
+  n_special_values: 1000
+  nz_spc: True
 meta:
   api_version: 'v3'
   add_cls: False

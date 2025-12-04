@@ -10,7 +10,7 @@ job_requirement:
   MEM_NODE: 816 # 960  # Memory allocated per node (in GB).
   
 infiniband:
-  NCCL_IB_DISABLE: 0  # 1: Disable InfiniBand, 0: Enable InfiniBand
+  NCCL_IB_DISABLE: 1  # 1: Disable InfiniBand, 0: Enable InfiniBand
 
 environment:
   ENV_PATH: "/nfs/users/nfs_s/sb75/.venvs/nichejepa"  # Path to the environment to be activated.
@@ -21,7 +21,7 @@ artifact:
   OUTPUT_DIR: "/nfs/team361/sb75/nichejepa-reproducibility/artifacts/hst_corpus_110m"  # Path to store the artifacts.
   LOG_DIR: "/nfs/team361/sb75/nichejepa-reproducibility/artifacts/hst_corpus_110m"
   EXPERIMENT_NAME: "nichejepa_pretraining"  # Name of the experiment.
-  RUN_NAME: "hst_corpus_110m_full_run_105"  # Name of the run.
+  RUN_NAME: "hst_corpus_110m_full_run_107"  # Name of the run.
 
 runner_script:
   RUNNER_SCRIPT: "/nfs/team361/sb75/nichejepa/src/app/runner.sh"  # Path to the runner script.

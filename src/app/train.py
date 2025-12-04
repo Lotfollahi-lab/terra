@@ -122,6 +122,11 @@ def train(args: dict,
     else:
         sep_gene_tokens_neb = False
 
+    if 'nz_spc' in args['data'].keys():
+        nz_spc = args['data']['nz_spc']
+    else:
+        nz_spc = False
+
     if 'use_sampler' in args['data'].keys():
         use_sampler = args['data']['use_sampler']
     else:
@@ -221,8 +226,9 @@ def train(args: dict,
     with open(token_dict_folder_path, 'rb') as file:
         token_dict = pickle.load(file)
     vocab_size = len(token_dict)
-    n_special_values = sum(
-        1 for key in token_dict if "spv" in key) # this only works now because of the dummy special values
+    #n_special_values = sum(
+    #    1 for key in token_dict if "spv" in key) # this only works now because of the dummy special values
+    n_special_values = args['data']['n_special_values']
     max_special_tokens = sum(
         1 for key in token_dict if "cls" in key) + sum(
         1 for key in token_dict if "spt" in key)
@@ -314,7 +320,8 @@ def train(args: dict,
         use_layer_norm=use_layer_norm,
         sep_gene_tokens_neb=sep_gene_tokens_neb,
         predict_gene=predict_gene,
-        pos_learnable=pos_learnable)
+        pos_learnable=pos_learnable,
+        nz_spc=nz_spc)
     target_encoder = copy.deepcopy(encoder)
 
     # Initialize mask collator
@@ -356,7 +363,8 @@ def train(args: dict,
                 sampling_strategy=sampling_strategy,
                 n_nonzero_tokens_list=nz,
                 include_cell_id=False,
-                sep_gene_tokens_neb=sep_gene_tokens_neb)
+                sep_gene_tokens_neb=sep_gene_tokens_neb,
+                nz_spc=nz_spc)
             train_cell_datasets.append(cell_d)
 
     else:
@@ -372,7 +380,8 @@ def train(args: dict,
             sampling_strategy=sampling_strategy,
             n_nonzero_tokens_list=n_nonzero_tokens,
             include_cell_id=False,
-            sep_gene_tokens_neb=sep_gene_tokens_neb)
+            sep_gene_tokens_neb=sep_gene_tokens_neb,
+            nz_spc=nz_spc)
 
     if isinstance(train_dataset, list):
         train_loaders = []

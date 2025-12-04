@@ -69,7 +69,9 @@ class CellBaseDataset(Dataset):
             'tissue_value']
         if not include_cell_id:
             exclude_cols += ['cell_id']
-        dataset = dataset.remove_columns(exclude_cols)
+        for col in exclude_cols:
+            if col in dataset.features.keys():
+                dataset = dataset.remove_columns(col)
 
         self.dataset = dataset
         self.len = len(self.dataset)

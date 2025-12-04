@@ -24,19 +24,20 @@ data:
   seq_len_neighborhood: 640 # 2560, 640, 10240
   n_segments: 11
   sampling_strategy: null
-  batch_size: 256 # 32
+  batch_size: 32 # 32
   num_workers: 16 
   pin_memory: True
   sep_gene_tokens_neb: False
   use_sampler: True
-  n_special_values: 7 ## 7 + 99
+  n_special_values: 200
   vocab_size: 23407
+  nz_spc: True
 meta:
   api_version: 'v3'
   add_cls: False
   n_cls: 1
-  gt_type: 'counts' # 'rank', 'counts', 'combined'
-  count_encoding: 'value_bins' # 'value_bins', 'mlp'
+  gt_type: 'combined' # 'rank', 'counts', 'combined'
+  count_encoding: 'mlp' # 'value_bins', 'mlp'
   n_value_bins: 100
   cell_pos_enc: 'segment'
   enc_depth: 3
@@ -66,7 +67,7 @@ mask:
   restrict_special_attention: False
 optimization:
   warmup: 3
-  epochs: 300
+  epochs: 100
   ema:
   - 0.9764319982153814 # 0.9764319982153814
   - 1.0
@@ -77,8 +78,8 @@ optimization:
   final_weight_decay: 0.4
   ipe_scale: 1.0
   clip_grad: 100.0
-  lambda_var: 0.5
-  lambda_cov: 0.05
+  lambda_var: 0.
+  lambda_cov: 0.
 state:
   log_freq: 20
   checkpoint_freq: 5

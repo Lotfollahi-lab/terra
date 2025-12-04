@@ -23,6 +23,7 @@ class CellBaseDataset(Dataset):
                  n_nonzero_tokens_list: list[int] | None = None,
                  include_cell_id: bool = False,
                  sep_gene_tokens_neb: bool = False,
+                 nz_spc: bool = True,
                  ):
         """
         Torch CellBaseDataset class.
@@ -92,6 +93,7 @@ class CellBaseDataset(Dataset):
             self.n_nz_tokens = list(self.dataset['n_nonzero_tokens'])
         self.include_cell_id = include_cell_id
         self.sep_gene_tokens_neb = sep_gene_tokens_neb
+        self.nz_spc = nz_spc
 
     def __len__(self) -> int:
         return self.len
@@ -129,15 +131,32 @@ class CellBaseDataset(Dataset):
                      item_dict['values']])
             
         if self.gt_type != 'counts':
-            # Add special token positions
-            item_dict['positions'] = torch.cat(
-                [torch.zeros(self.n_special_tokens, dtype=torch.long),
-                 item_dict['positions']])
+            if self.nz_spc:
+                # Add special token positions
+                item_dict['positions'] = torch.cat(
+                    [torch.arange(
+                        self.n_special_tokens,
+                        self.n_special_tokens + 1,
+                        dtype=torch.long),
+                    item_dict['positions']])
+            else:
+                # Add special token positions
+                item_dict['positions'] = torch.cat(
+                    [torch.zeros(self.n_special_tokens, dtype=torch.long),
+                    item_dict['positions']])
 
         # Add special token segments
-        item_dict['segments'] = torch.cat(
-            [torch.zeros(self.n_special_tokens, dtype=torch.long),
-             item_dict['segments']])
+        if self.nz_spc:
+            item_dict['segments'] = torch.cat(
+                [torch.arange(
+                    self.n_special_tokens,
+                    self.n_special_tokens + 1,
+                    dtype=torch.long),
+                item_dict['segments']])
+        else:
+            item_dict['segments'] = torch.cat(
+                [torch.zeros(self.n_special_tokens, dtype=torch.long),
+                item_dict['segments']])
 
         # Add special token coords
         if self.cell_pos_enc == 'coord':
@@ -523,16 +542,21 @@ class CellGraphDataset(CellBaseDataset):
         # Add special tokens
         if self.n_special_tokens > 0:
             item_dict = self._add_special_seq(item=item,
-                                            item_dict=item_dict)
+                                              item_dict=item_dict)
 
         # Add cell ID
         if self.include_cell_id:
             item_dict['cell_id'] = item['cell_id']
             
-        print(item_dict['tokens'])
-        print(item_dict['values'])
-        print(item_dict['segments'])
-        print(item_dict['positions'])
+        if self.nz_spc:
+            item_dict['segments'][
+                (item_dict['segments'] != 0) & (
+                    torch.arange(len(item_dict['segments'])
+                    ) >= self.n_special_tokens)] += 1
+        #print(item_dict['tokens'])
+        #print(item_dict['values'])
+        #print(item_dict['segments'])
+        #print(item_dict['positions'])
         
         return item_dict
 

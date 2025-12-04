@@ -259,6 +259,9 @@ class BlockMaskCollator:
         #print(f"[Collate] Took {elapsed_ms:.3f} ms for batch size {B}")
         #raise ValueError
 
+        #print(collated_context_masks[0])
+        #print(collated_target_masks[0])
+
         return collated, \
                collated_context_masks, \
                collated_target_masks, \

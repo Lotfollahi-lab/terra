@@ -194,6 +194,11 @@ def infer(args: dict,
     else:
         sep_gene_tokens_neb = False
 
+    if 'nz_spc' in args['data'].keys():
+        nz_spc = args['data']['nz_spc']
+    else:
+        nz_spc = False
+
     n_contexts = args['mask']['n_contexts']
     n_targets = args['mask']['n_targets']
     block_masking = args['mask']['block_masking']
@@ -216,7 +221,9 @@ def infer(args: dict,
     with open(token_dict_folder_path, 'rb') as file:
         token_dict = pickle.load(file)
     vocab_size = len(token_dict)
-    n_special_values = sum(1 for key in token_dict if "spv" in key)
+    #n_special_values = sum(
+    #    1 for key in token_dict if "spv" in key) # this only works now because of the dummy special values
+    n_special_values = args['data']['n_special_values']
     max_special_tokens = sum(1 for key in token_dict if "cls" in key) + sum(
         1 for key in token_dict if "spt" in key)
 
@@ -273,7 +280,8 @@ def infer(args: dict,
         api_version=api_version,
         sep_gene_tokens_neb=sep_gene_tokens_neb,
         predict_gene=predict_gene,
-        pos_learnable=pos_learnable)
+        pos_learnable=pos_learnable,
+        nz_spc=nz_spc)
 
     if api_version != 'v3':
         return_layer_emb_fn = target_encoder.return_layer_emb
@@ -316,7 +324,8 @@ def infer(args: dict,
         sampling_strategy=None,
         n_nonzero_tokens_list=[],
         include_cell_id=True,
-        sep_gene_tokens_neb=sep_gene_tokens_neb)
+        sep_gene_tokens_neb=sep_gene_tokens_neb,
+        nz_spc=nz_spc)
 
     loader, _ = init_dataloader_and_sampler(
         cell_dataset=cell_dataset,
