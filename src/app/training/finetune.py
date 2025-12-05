@@ -533,8 +533,8 @@ def finetune(
     # -------------------------------------------------------------------- #
     # SAVE CHECKPOINT FUNCTION
     # -------------------------------------------------------------------- #
-    model_name = "Zeroshot" if not use_peft else "Finetune"
-    model_name += "+Linear" if not use_mlp else "MLP"
+    model_name = "Linear-Probing" if not use_mlp else "MLP-Probing"
+    model_name = f"LoRA + {model_name}" if use_peft else model_name
     logger.info(f"Model name: {model_name}")
     
     # Save checkpoint function
