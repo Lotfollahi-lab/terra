@@ -1,5 +1,8 @@
 import anndata as ad
-import squidpy as sq
+try:
+    import squidpy as sq
+except:
+    print("Could not import squidpy...")
 
 
 def construct_neighbor_graph(adata: ad.AnnData,

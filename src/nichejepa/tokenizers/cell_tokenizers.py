@@ -70,7 +70,10 @@ import anndata as ad
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
-import squidpy as sq
+try:
+    import squidpy as sq
+except:
+    print("Could not import squidpy...")
 from datasets import Dataset
 
 from ..preprocessors.filters import filter_cells

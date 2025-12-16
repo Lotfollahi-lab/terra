@@ -221,9 +221,11 @@ def infer(args: dict,
     with open(token_dict_folder_path, 'rb') as file:
         token_dict = pickle.load(file)
     vocab_size = len(token_dict)
-    #n_special_values = sum(
-    #    1 for key in token_dict if "spv" in key) # this only works now because of the dummy special values
-    n_special_values = args['data']['n_special_values']
+    if args['data'].get('n_special_values'):
+        n_special_values = args['data']['n_special_values']
+    else:
+        n_special_values = sum(
+            1 for key in token_dict if "spv" in key) # this only works now because of the dummy special values
     max_special_tokens = sum(1 for key in token_dict if "cls" in key) + sum(
         1 for key in token_dict if "spt" in key)
 
@@ -991,7 +993,9 @@ def embed_dataset(dataset: Dataset,
     with open(token_dictionary_file_path, 'rb') as file:
         token_dict = pickle.load(file)
     vocab_size = len(token_dict)
-    n_special_values = sum(1 for key in token_dict if "spv" in key)
+    #n_special_values = sum(
+    #    1 for key in token_dict if "spv" in key) # this only works now because of the dummy special values
+    n_special_values = model_config['data'].get('n_special_values', 0)
 
     print('==================================================')
     print('STEP 2: GENERATING EMBEDDINGS...')
@@ -1025,7 +1029,8 @@ def embed_dataset(dataset: Dataset,
         api_version=model_config['meta']['api_version'],
         sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'],
         predict_gene=model_config['meta']['predict_gene'],
-        pos_learnable=model_config['meta']['pos_learnable'])
+        pos_learnable=model_config['meta']['pos_learnable'],
+        nz_spc=model_config['data'].get('nz_spc', False))
 
     if model_config['meta']['api_version'] != 'v3':
         return_layer_emb_fn = target_encoder.return_layer_emb
@@ -1289,6 +1294,7 @@ def harmonize_tokenize_embed_pipeline(
         adata: ad.AnnData,
         sample_key: str | None,
         model_folder_path: str,
+        cache_directory_path: str,
         gene_perturb_df: pd.DataFrame | None = None,               
         nproc: int = 4,
         processing_mode: Literal['sequential',
@@ -1300,7 +1306,10 @@ def harmonize_tokenize_embed_pipeline(
         top_k: int | None = None,
         batch_size: int = 128,
         pin_memory: bool = False,
-        num_workers: int = 12
+        num_workers: int = 12,
+        use_generator: bool = True,
+        add_neigh_cell_ids: bool = False,
+        min_cells_per_gene: int = 0,
         ) -> ad.AnnData:
     """
     Harmonize, tokenize and embed an AnnData object.
@@ -1314,6 +1323,8 @@ def harmonize_tokenize_embed_pipeline(
     model_folder_path:
         Path to the folder containing the model config, token dictionary, and
         normalization factors.
+    cache_directory_path:
+        Path where the cache is stored during dataset creation.
     gene_perturb_df:
         DataFrame with perturbation data, e.g.
         ```
@@ -1341,9 +1352,14 @@ def harmonize_tokenize_embed_pipeline(
     batch_size:
         Dataloader param.
     pin_memory:
-        Dataloader param.
+        Dataloader param.  
     num_workers:
         Number of workers used for model inference.
+    use_generator:
+        Whether to use generator for dataset creation.  
+    add_neigh_cell_ids:
+        Whether neighbor cell IDs should be stored in tokenized data (used for
+        perturbations).    
 
     Returns:
     -----------
@@ -1351,24 +1367,34 @@ def harmonize_tokenize_embed_pipeline(
         A harmonized AnnData object with embeddings stored in `adata.obsm`.
     """
     datasets = []
+    adata.obs_names_make_unique()
     if sample_key:
         samples = adata.obs[sample_key].unique().tolist()
+        idx_list = []
+        gene_list = []
 
         for sample in samples:
             adata_sample = adata[adata.obs[sample_key] == sample]
             print(f"Start processing sample: {sample}...")
             print(f"Harmonizing sample {sample}...")
-            adata_sample = harmonize_adata(adata_sample)
+            adata_sample = harmonize_adata(
+                adata_sample,
+                min_cells_per_gene=min_cells_per_gene)
+            idx_list.extend(adata_sample.obs.index.tolist())
+            gene_list.extend(adata_sample.var.index.tolist())
             print(f"Harmonized sample {sample}.")
 
             print(f"Tokenizing sample {sample}...")
             dataset_sample = tokenize_adata(
                 adata=adata_sample,
-                model_folder_path=model_folder_path,             
+                model_folder_path=model_folder_path,
+                cache_directory_path=cache_directory_path,             
                 nproc=nproc,
                 processing_mode=processing_mode)
             datasets.append(dataset_sample)
             print(f"Tokenized sample {sample}.")
+
+        adata = adata[idx_list, list(set(gene_list))]
 
         print(f"Concatenating tokenized data...")
         dataset = concatenate_datasets(datasets)
@@ -1377,15 +1403,20 @@ def harmonize_tokenize_embed_pipeline(
     else:
         print("No `sample_key` specified. Start processing entire AnnData.")
         print(f"Harmonizing AnnData...")
-        adata = harmonize_adata(adata)
+        adata = harmonize_adata(
+            adata,
+            min_cells_per_gene=min_cells_per_gene)
         print(f"Harmonized AnnData.")
 
         print(f"Tokenizing AnnData.")
         dataset = tokenize_adata(
             adata=adata,
-            model_folder_path=model_folder_path,             
+            model_folder_path=model_folder_path,
+            cache_directory_path=cache_directory_path,         
             nproc=nproc,
-            processing_mode=processing_mode)        
+            processing_mode=processing_mode,
+            add_neigh_cell_ids=add_neigh_cell_ids,
+            use_generator=use_generator)        
 
     if save_dataset_path:
         print(f"Saving tokenized data...")
