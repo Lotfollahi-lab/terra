@@ -133,6 +133,8 @@ def linear_classifier(
     for epoch in range(n_epochs):
         model.train()
         train_loss = 0
+        train_correct = 0
+        train_total = 0
         for batch_features, batch_labels in train_loader:
             batch_features = batch_features.to(device)
             batch_labels = batch_labels.to(device)
@@ -143,13 +145,22 @@ def linear_classifier(
             loss.backward()
             optimizer.step()
             train_loss += loss.item()
+            
+            # Track accuracy
+            _, predicted = torch.max(outputs, 1)
+            train_correct += (predicted == batch_labels).sum().item()
+            train_total += batch_labels.size(0)
 
+        train_loss /= len(train_loader)
+        train_acc = train_correct / train_total
         scheduler.step()
         
         # --- Early stopping on validation set (if provided) ---
         if has_val:
             model.eval()
             val_loss = 0
+            val_correct = 0
+            val_total = 0
             with torch.no_grad():
                 for batch_features, batch_labels in val_loader:
                     batch_features = batch_features.to(device)
@@ -158,9 +169,15 @@ def linear_classifier(
                     outputs = model(batch_features)
                     loss = criterion(outputs, batch_labels)
                     val_loss += loss.item()
+                    
+                    # Track accuracy
+                    _, predicted = torch.max(outputs, 1)
+                    val_correct += (predicted == batch_labels).sum().item()
+                    val_total += batch_labels.size(0)
 
             val_loss /= len(val_loader)
-            print(f"Epoch {epoch+1}: Train Loss = {train_loss:.4f}, Val Loss = {val_loss:.4f}")
+            val_acc = val_correct / val_total
+            print(f"Epoch {epoch+1}: Train Loss = {train_loss:.4f}, Train Acc = {train_acc:.4f}, Val Loss = {val_loss:.4f}, Val Acc = {val_acc:.4f}")
 
             # Early stopping check
             if val_loss < best_val_loss:
@@ -173,8 +190,8 @@ def linear_classifier(
                     print(f"Early stopping at epoch {epoch+1}")
                     break
         else:
-            # No validation set - just print train loss
-            print(f"Epoch {epoch+1}: Train Loss = {train_loss:.4f}")
+            # No validation set - just print train loss and accuracy
+            print(f"Epoch {epoch+1}: Train Loss = {train_loss:.4f}, Train Acc = {train_acc:.4f}")
 
     # --- Load best model before evaluation (only if we did early stopping) ---
     if has_val and best_model_state is not None:
