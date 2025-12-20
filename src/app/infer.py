@@ -209,6 +209,10 @@ def infer(args: dict,
     context_mask_size = args['mask']['context_mask_size']
     target_mask_size = args['mask']['target_mask_size']
     per_block_mask_ratio = args['mask']['per_block_mask_ratio']
+    if 'restrict_special_attention' in args['meta'].keys():
+        restrict_special_attention = args['meta']['restrict_special_attention']
+    else:
+        restrict_special_attention = False
     if 'targets_list' in args['mask'].keys():
         targets_list = args['mask']['targets_list']
     else:
@@ -301,7 +305,8 @@ def infer(args: dict,
             n_special_tokens=n_special_tokens,
             per_block_mask_ratio=per_block_mask_ratio,
             sample_segments=False,
-            sample_gene_masks=False)
+            sample_gene_masks=False,
+            restrict_special_attention=restrict_special_attention)
     elif cell_masking:
        mask_collator = CellMaskCollator(
             n_targets=n_targets,
@@ -1047,7 +1052,8 @@ def embed_dataset(dataset: Dataset,
         n_special_tokens=n_special_tokens,
         per_block_mask_ratio=model_config['mask']['per_block_mask_ratio'],
         sample_segments=False,
-        sample_gene_masks=False)
+        sample_gene_masks=False,
+        restrict_special_attention=model_config['mask']['restrict_special_attention'])
         
     # Create torch dataset
     cell_dataset = init_cell_dataset(
@@ -1887,7 +1893,7 @@ def get_gene_embed(
     batch_size: int = 128,
     pin_memory: bool = False,
     num_workers: int = 12,
-    include_spatial_cell_emb: bool = True,
+    include_spatial_cell_emb: bool = False,
 ) -> dict[str, np.ndarray]:
     """
     Retrieve gene embeddings for specified cell and neighborhood gene IDs.

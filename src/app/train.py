@@ -176,6 +176,10 @@ def train(args: dict,
     context_mask_size = args['mask']['context_mask_size']
     target_mask_size = args['mask']['target_mask_size']
     per_block_mask_ratio = args['mask']['per_block_mask_ratio']
+    if 'restrict_special_attention' in args['mask'].keys():
+        restrict_special_attention = args['mask']['restrict_special_attention']
+    else:
+        restrict_special_attention = False
     if 'sample_segments' in args['mask'].keys():
         sample_segments = args['mask']['sample_segments']
     else:
@@ -335,7 +339,8 @@ def train(args: dict,
             n_special_tokens=n_special_tokens,
             per_block_mask_ratio=per_block_mask_ratio,
             sample_segments=sample_segments,
-            sample_gene_masks=True)
+            sample_gene_masks=True,
+            restrict_special_attention=restrict_special_attention)
     elif cell_masking:
        mask_collator = CellMaskCollator(
             n_targets=n_targets,

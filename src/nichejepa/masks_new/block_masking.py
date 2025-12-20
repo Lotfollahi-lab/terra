@@ -51,7 +51,8 @@ class BlockMaskCollator:
                  n_special_tokens: int,
                  per_block_mask_ratio: float = 0.5,
                  sample_segments: bool = False,
-                 sample_gene_masks: bool = True):
+                 sample_gene_masks: bool = True,
+                 restrict_special_attention: bool = False):
         self.n_targets = n_targets
         self.n_contexts = n_contexts
         self.n_segments = n_segments
@@ -62,6 +63,7 @@ class BlockMaskCollator:
         self.per_block_mask_ratio = per_block_mask_ratio
         self.sample_segments = sample_segments
         self.sample_gene_masks = sample_gene_masks
+        self.restrict_special_attention = restrict_special_attention
 
     def _sample_gene_mask(
         self,
@@ -214,6 +216,21 @@ class BlockMaskCollator:
         # Build attention mask once (bool, broadcast-friendly)
         masks_attention = (
             tokens != 0).unsqueeze(1).unsqueeze(1) # [B, 1, 1, N]
+
+        if self.restrict_special_attention:
+            masks_attention = masks_attention.expand(
+                masks_attention.shape[0],
+                1,
+                masks_attention.shape[-1],
+                masks_attention.shape[-1]).clone()
+
+            for i in range(self.n_special_tokens):
+                # Special tokens only attent to themselves
+                masks_attention[
+                    :,
+                    :,
+                    i,
+                    (i+1):] = 0
 
         if self.sample_gene_masks:
             # Retrieve target/context masks per cell
