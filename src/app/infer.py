@@ -1053,7 +1053,7 @@ def embed_dataset(dataset: Dataset,
         per_block_mask_ratio=model_config['mask']['per_block_mask_ratio'],
         sample_segments=False,
         sample_gene_masks=False,
-        restrict_special_attention=model_config['mask']['restrict_special_attention'])
+        restrict_special_attention=model_config['meta']['restrict_special_attention'])
         
     # Create torch dataset
     cell_dataset = init_cell_dataset(

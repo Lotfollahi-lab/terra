@@ -65,7 +65,6 @@ bsub <<EOF
 #BSUB -q "${QUEUE}"
 #BSUB -gpu "num=$NUM_GPUS_NODE:gmem=80000:mode=exclusive_process:block=yes"
 #BSUB -M ${MEM_NODE}G
-#BSUB -m "farm-gpu0501 farm-gpu0502 farm-gpu0503 farm-gpu0504 farm-gpu0505 farm-gpu0506 farm-gpu0508 farm-gpu0509"
 #BSUB -R "select[mem>${MEM_NODE}G] rusage[mem=${MEM_NODE}G] span[ptile=$NUM_PROCESSES_NODE]"
 #BSUB -U mlteam_burnin_beta
 

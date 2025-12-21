@@ -208,22 +208,29 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
 
         attn = None
         if attn_base is not None:
-            attn = attn_base.clone()
-            if attn.dim() == 3: # [B, L, L] -> [B, 1, L, L]
-                attn = attn.unsqueeze(1)
+            if attn_base.size(2) == 1: # [B, 1, 1, L] -> [B, 1, L, L]
+                attn = attn_base.expand(-1, -1, attn_base.size(-1), -1).clone()
+            else:
+                attn = attn_base.clone()
             # Never attend to special tokens
             if self.n_special_tokens > 0:
-                attn[..., :self.n_special_tokens] = 0
+                attn[:, :, :, :self.n_special_tokens] = False
             # Optionally block cross-attention from cell queries to
             # neighborhood keys
             if cell_only:
                 attn[
-                    ...,
+                    :,
+                    :,
                     self.n_special_tokens:(self.n_special_tokens+self.seq_len_cell),
-                    (self.n_special_tokens+self.seq_len_cell):] = 0
+                    (self.n_special_tokens+self.seq_len_cell):] = False
 
         if cell_only:
-            x[:, (self.n_special_tokens+self.seq_len_cell):, :] = 0
+            x[:, (self.n_special_tokens+self.seq_len_cell):, :] = False
+
+            #torch.set_printoptions(profile="full")
+            #print(attn.shape)
+            #print(attn[0, :, 1, :])
+            #print(attn[0, :, 513, :])
 
         # Mask token embeddings if masks are provided
         if masks is not None:

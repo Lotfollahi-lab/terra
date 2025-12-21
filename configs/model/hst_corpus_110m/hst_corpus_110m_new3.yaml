@@ -45,7 +45,7 @@ meta:
   pred_emb_dim: 192 # 384, 192, 384
   num_heads: 6 # 12
   mlp_ratio: 4
-  special_tokens: [] # ['batch'] # ['batch', 'assay'] # ['batch'] []
+  special_tokens: ['batch'] # ['batch'] # ['batch', 'assay'] # ['batch'] []
   pos_learnable: False
   seg_learnable: False
   use_bfloat16: True

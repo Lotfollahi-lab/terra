@@ -1,6 +1,6 @@
 data:
-  dataset_name: 'mmb0-1b_smb1-1b_1p'
-  model_input_size: 704 # 2816, 704, 11264
+  dataset_name: 'hst_corpus_110m'
+  model_input_size: 2816 # 2816, 704, 11264
   n_neighs: 10
   rank_cell_norm_method: null
   rank_gene_norm_method: null
@@ -8,29 +8,28 @@ data:
   count_cell_norm_method: null
   count_gene_norm_method: null
   count_count_norm_method: 'shifted_log'
-  raw_data_folder_path: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/silver/mmb0-1b_smb1-1b_1p'
-  token_dict_folder_path: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/tokenizer/token_dictionary_mus_musculus.pkl'
-  tokenized_data_folder_path: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/gold/cell-graph-tokenizer/mmb0-1b_smb1-1b_1p/mmb0-1b_smb1-1b_1p_32_None_None_None_None_None_shifted_log_knn_10_704.dataset' # '/lustre/scratch126/cellgen/lotfollahi/DATASETS/gold/cell-graph-tokenizer/mmb0-1b_smb1-1b_1p/mmb0-1b_smb1-1b_1p_32_None_None_None_None_None_shifted_log_knn_10_2816.dataset', '/lustre/scratch126/cellgen/lotfollahi/DATASETS/gold/cell-graph-tokenizer/mmb0-1b_smb1-1b_1p/mmb0-1b_smb1-1b_1p_32_None_None_None_None_None_shifted_log_knn_10_704.dataset', '/lustre/scratch126/cellgen/lotfollahi/DATASETS/gold/cell-graph-tokenizer/mmb0-1b_smb1-1b_1p/mmb0-1b_smb1-1b_1p_32_None_None_None_None_None_shifted_log_knn_10_11264.dataset'
-  precomputed_split: null
-  precomputed_n_nonzero_tokens: null
-  test_batch_ids: null
-  val_batch_ids: null
+  raw_data_folder_path: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/silver/hst_corpus_110m'
+  token_dict_folder_path: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/tokenizer/token_dictionary_homo_sapiens.pkl'
+  tokenized_data_folder_path: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/gold/cell-graph-tokenizer/hst_corpus_110m/hst_corpus_110m_32_None_None_None_None_None_shifted_log_knn_10.dataset'
+  precomputed_split: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/tokenizer/hst_corpus_110m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_split_full.pkl'
+  precomputed_n_nonzero_tokens: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/tokenizer/hst_corpus_110m_32_None_None_None_None_None_shifted_log_knn_10_n_nonzero_tokens_full.pkl'
+  test_batch_ids: ['49_batch0']
+  val_batch_ids: ['49_batch0']
   tokenizer_type: 'cell_graph'
   random_state: 0
   sample_subset: False
   split: 0
   stratify: False
-  seq_len_cell: 64 # 256, 64, 1024
-  seq_len_neighborhood: 640 # 2560, 640, 10240
-  n_segments: 11
-  sampling_strategy: null
-  batch_size: 512 # 32
-  num_workers: 16 
+  seq_len_cell: 256 # 64, 128, 256
+  seq_len_neighborhood: 2560 # 384/640, 1536/2816
+  n_segments: 11 # 7, 11; number of unique segment tokens (gene segments)
+  sampling_strategy: null # null, 'rand_sampling', 'norm_count_rank_sampling', 'rand_sampling_rep', 'norm_count_rank_sampling_rep'
+  batch_size: 16 # 256, 128, 288
+  num_workers: 16
   pin_memory: True
   sep_gene_tokens_neb: False
   use_sampler: True
-  n_special_values: 200
-  vocab_size: 23407
+  n_special_values: 1000
   nz_spc: True
 meta:
   api_version: 'v3'
@@ -40,11 +39,11 @@ meta:
   count_encoding: 'mlp' # 'value_bins', 'mlp'
   n_value_bins: 100
   cell_pos_enc: 'segment'
-  enc_depth: 3
-  enc_emb_dim: 768
-  pred_depth: 1
-  pred_emb_dim: 768 # 384
-  num_heads: 8
+  enc_depth: 12
+  enc_emb_dim: 384 # 384, 768
+  pred_depth: 12 # 12
+  pred_emb_dim: 192 # 384, 192, 384
+  num_heads: 6 # 12
   mlp_ratio: 4
   special_tokens: ['batch'] # ['batch'] # ['batch', 'assay'] # ['batch'] []
   pos_learnable: False
@@ -66,26 +65,27 @@ mask:
   sample_segments: True
   restrict_special_attention: False
 optimization:
-  warmup: 3
-  epochs: 1000
+  warmup: 1 # 1
+  epochs: 5 # 5
   ema:
-  - 0.995
-  - 1.0
-  start_lr: 2.0e-05 # 2.0e-05, 1.0e-06 
+  - 0.995 # 0.9995
+  - 1.0 # 1.0
+  start_lr: 1.0e-06 # 2.0e-05, 1.0e-06 
   lr: 6.0e-05 # 2.0e-05, 0.000625, 6.0e-05
-  final_lr: 2.0e-05 # 2.0e-05, 1.0e-06
+  final_lr: 1.0e-06 # 2.0e-05, 1.0e-06
   weight_decay: 0.04
   final_weight_decay: 0.4
-  ipe_scale: 1.0
+  ipe_scale: 1.25
   clip_grad: 2.0
   lambda_var: 0.
   lambda_cov: 0.
 state:
   log_freq: 20
-  checkpoint_freq: 100
+  checkpoint_freq: 1
   write_tag: nichejepa
   read_timestamp: ''
   folder_path: null
   load_checkpoint: False # true, false
   read_checkpoint: null # null, 'nichejepa-ep5.pth.tar'
-  checkpoint_freq_iter: 50000
+  checkpoint_freq_iter: 5000
+
