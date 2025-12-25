@@ -63,10 +63,11 @@ class CellBaseDataset(Dataset):
         self.cell_pos_enc = cell_pos_enc
 
         exclude_cols = [
-            'gene_panel_value',
-            'assay_value',
+            #'gene_panel_value',
+            #'assay_value',
             'species_value',
-            'tissue_value']
+            #'tissue_value'
+            ]
         #if self.cell_pos_enc != 'coord':
         #    exclude_cols += [
         #        'rel_x_coord',
@@ -146,7 +147,7 @@ class CellBaseDataset(Dataset):
                 # Add special token positions
                 item_dict['positions'] = torch.cat(
                     [torch.arange(
-                        self.n_special_tokens,
+                        1,
                         self.n_special_tokens + 1,
                         dtype=torch.long),
                     item_dict['positions']])
@@ -160,7 +161,7 @@ class CellBaseDataset(Dataset):
         if self.nz_spc:
             item_dict['segments'] = torch.cat(
                 [torch.arange(
-                    self.n_special_tokens,
+                    1,
                     self.n_special_tokens + 1,
                     dtype=torch.long),
                 item_dict['segments']])
@@ -406,9 +407,9 @@ class CellGraphDataset(CellBaseDataset):
         # Retrieve Hugging Face item once
         item = self.dataset[item]
 
-        #item['tissue_token'] = torch.tensor([103])
-        #item['assay_token'] = torch.tensor([104])
-        #item['gene_panel_token'] = torch.tensor([105])
+        item['tissue_token'] = torch.tensor([103])
+        item['assay_token'] = torch.tensor([104])
+        item['gene_panel_token'] = torch.tensor([105])
         item['batch_token'] = torch.tensor([106])
 
         # Expand spatial coordinates (TODO: if statement to support old API)

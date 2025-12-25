@@ -36,7 +36,7 @@ meta:
   api_version: 'v3'
   add_cls: False
   n_cls: 1
-  gt_type: 'rank' # 'rank', 'counts', 'combined'
+  gt_type: 'combined' # 'rank', 'counts', 'combined'
   count_encoding: 'mlp' # 'value_bins', 'mlp'
   n_value_bins: 100
   cell_pos_enc: 'segment'
@@ -44,7 +44,7 @@ meta:
   enc_emb_dim: 768
   pred_depth: 1
   pred_emb_dim: 768 # 384
-  num_heads: 8
+  num_heads: 6
   mlp_ratio: 4
   special_tokens: ['batch'] # ['batch'] # ['batch', 'assay'] # ['batch'] []
   pos_learnable: False
@@ -53,7 +53,7 @@ meta:
   use_flash_attention: True
   use_layer_norm: True
   predict_gene: True
-  new_spc: False
+  new_spc: True
 mask:
   n_contexts: 1 # 1
   n_targets: 1 # 5 # 1 =, this is the number of blocks in block masking
@@ -69,7 +69,7 @@ optimization:
   warmup: 3
   epochs: 300
   ema:
-  - 0.995
+  - 0.9995
   - 1.0
   start_lr: 2.0e-05 # 2.0e-05, 1.0e-06 
   lr: 6.0e-05 # 2.0e-05, 0.000625, 6.0e-05

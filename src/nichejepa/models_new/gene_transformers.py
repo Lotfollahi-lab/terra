@@ -125,7 +125,7 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         # Initialize segment embeddings
         if self.cell_pos_enc == 'segment':
             self.seg_embed = nn.Embedding(
-                1 + n_segments + (105 if api_version == 'v1' else 0) + (1 if self.nz_spc else 0), # include <pad>
+                1 + n_segments + (105 if api_version == 'v1' else 0) + (self.n_special_tokens if self.nz_spc else 0), # include <pad>
                 embed_dim,
                 padding_idx=0)
         
@@ -135,7 +135,7 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
             seg_embed = get_1d_sincos_pos_embed(
                 embed_dim=embed_dim,
                 n_zero_pos=0,
-                n_sincos_pos=n_segments + (105 if api_version == 'v1' else 0) + (1 if self.nz_spc else 0))
+                n_sincos_pos=n_segments + (105 if api_version == 'v1' else 0) + (self.n_special_tokens if self.nz_spc else 0))
             self.seg_embed.weight[1:].copy_(torch.from_numpy(seg_embed).float())
 
         # Initialize encoder blocks and norm layer
@@ -413,6 +413,7 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
                  use_layer_norm: bool = True,
                  api_version: Literal['v1', 'v2', 'v3'] = 'v3',
                  nz_spc: bool = False,
+                 new_spc: bool = False,
                  **kwargs
                  ):
         super().__init__()
@@ -425,6 +426,7 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
         self.init_std = init_std
         self.api_version = api_version
         self.nz_spc = nz_spc
+        self.new_spc = new_spc
 
         # Initialize segment embeddings
         if self.cell_pos_enc == 'segment':
@@ -1161,7 +1163,7 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
                 value_emb[:, :self.n_special_tokens, :] = sp_value_embed
         else:
             raise ValueError(
-                f"Unknown count_encoding: {self.count_encoding}.")   
+                f"Unknown count_encoding: {self.count_encoding}.")
 
         # Add positional, segment, and gene embeddings to value embeddings
         x = seg_emb + pos_emb + token_emb + value_emb
@@ -1424,13 +1426,20 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
             # Repeat context embeddings for all target masks
             z = z.repeat(len(masks_pred), 1, 1)
 
-            # Concatenate mask tokens and context embeddings of gene
-            # tokens
-            z = torch.cat([
-                pred_tokens, # target gene tokens (incl. special tokens)
-                z # context gene tokens (incl. special tokens)
-                #z[:, self.n_special_tokens:, :] # context gene tokens (excl. special tokens)
-                ], dim=1)
+            if self.new_spc:
+                # Concatenate mask tokens and context embeddings of gene tokens
+                z = torch.cat([
+                    z[:, :self.n_special_tokens, :],
+                    pred_tokens[:, self.n_special_tokens:, :], # target gene tokens (incl. special tokens)
+                    z[:, self.n_special_tokens:, :] # context gene tokens (excl. special tokens)
+                    ], dim=1)
+            else:
+                # Concatenate mask tokens and context embeddings of gene tokens
+                z = torch.cat([
+                    pred_tokens, # target gene tokens (incl. special tokens)
+                    z # context gene tokens (incl. special tokens)
+                    #z[:, self.n_special_tokens:, :] # context gene tokens (excl. special tokens)
+                    ], dim=1)
 
             # Run forward prop
             for blk in self.predictor_blocks:
@@ -1545,12 +1554,20 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
         # Repeat context embeddings for all target masks
         z = z.repeat(len(masks_pred), 1, 1)
 
-        # Concatenate mask tokens and context embeddings of gene tokens
-        z = torch.cat([
-            pred_tokens, # target gene tokens (incl. special tokens)
-            z # context gene tokens (incl. special tokens)
-            #z[:, self.n_special_tokens:, :] # context gene tokens (excl. special tokens)
-            ], dim=1)
+        if self.new_spc:
+            # Concatenate mask tokens and context embeddings of gene tokens
+            z = torch.cat([
+                z[:, :self.n_special_tokens, :],
+                pred_tokens[:, self.n_special_tokens:, :], # target gene tokens (incl. special tokens)
+                z[:, self.n_special_tokens:, :] # context gene tokens (excl. special tokens)
+                ], dim=1)
+        else:
+            # Concatenate mask tokens and context embeddings of gene tokens
+            z = torch.cat([
+                pred_tokens, # target gene tokens (incl. special tokens)
+                z # context gene tokens (incl. special tokens)
+                #z[:, self.n_special_tokens:, :] # context gene tokens (excl. special tokens)
+                ], dim=1)
 
         # Run forward prop
         for blk in self.predictor_blocks:
@@ -1711,12 +1728,20 @@ class GeneTransformerCombinedPredictor(GeneTransformerBasePredictor):
         # Repeat context embeddings for all target masks
         z = z.repeat(len(masks_pred), 1, 1)
 
-        # Concatenate mask tokens and context embeddings of gene tokens
-        z = torch.cat([
-            pred_tokens, # target gene tokens (incl. special tokens)
-            z # context gene tokens (incl. special tokens)
-            #z[:, self.n_special_tokens:, :] # context gene tokens (excl. special tokens)
-            ], dim=1)
+        if self.new_spc:
+            # Concatenate mask tokens and context embeddings of gene tokens
+            z = torch.cat([
+                z[:, :self.n_special_tokens, :],
+                pred_tokens[:, self.n_special_tokens:, :], # target gene tokens (incl. special tokens)
+                z[:, self.n_special_tokens:, :] # context gene tokens (excl. special tokens)
+                ], dim=1)
+        else:
+            # Concatenate mask tokens and context embeddings of gene tokens
+            z = torch.cat([
+                pred_tokens, # target gene tokens (incl. special tokens)
+                z # context gene tokens (incl. special tokens)
+                #z[:, self.n_special_tokens:, :] # context gene tokens (excl. special tokens)
+                ], dim=1)
 
         # Run forward prop
         for blk in self.predictor_blocks:

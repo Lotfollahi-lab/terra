@@ -168,6 +168,10 @@ def train(args: dict,
     use_bfloat16 = args['meta']['use_bfloat16']
     use_flash_attention = args['meta']['use_flash_attention']
     use_layer_norm = args['meta']['use_layer_norm']
+    if 'new_spc' in args['meta'].keys():
+        new_spc = args['meta']['new_spc']
+    else:
+        new_spc = False
 
     n_contexts = args['mask']['n_contexts']
     n_targets = args['mask']['n_targets']
@@ -325,7 +329,8 @@ def train(args: dict,
         sep_gene_tokens_neb=sep_gene_tokens_neb,
         predict_gene=predict_gene,
         pos_learnable=pos_learnable,
-        nz_spc=nz_spc)
+        nz_spc=nz_spc,
+        new_spc=new_spc)
     target_encoder = copy.deepcopy(encoder)
 
     # Initialize mask collator
