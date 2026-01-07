@@ -24,13 +24,51 @@ This paper proposes **BioFlow**, a **histology-conditioned conditional flow-matc
 
 ### 1. Core "guarantee" is not convincingly established and appears problematic as written
 
-The reparameterization in Eq. (9) uses $-x_t / \Delta t + \text{softplus}(\cdot)$ and is justified via the discrete update inequality in Eq. (8). However, plugging Eq. (9) into the Euler update Eq. (7) yields:
+The problem isn't that BioFlow can't keep outputs non-negative. It's that the paper's *claimed guarantee* is easy to misunderstand (and possibly wrong as stated) because it quietly depends on **how inference is numerically integrated** and **what $\Delta t$ actually means**.
+
+#### 1.1 The guarantee is a property of a specific *discrete update*, not the ODE itself
+
+The authors derive a condition from **forward Euler**:
 
 $$
-x_{t+\Delta t} = x_t + \Delta t \left( -\frac{x_t}{\Delta t} + \text{softplus}(\cdot) \right) = \Delta t \cdot \text{softplus}(\cdot)
+x_{k+1} = x_k + h \cdot v(x_k, t_k) \ge 0 \iff v \ge -x_k / h
 $$
 
-which removes the additive carry-over of $x_t$. This is a major conceptual issue for an ODE-based flow model and makes the "support-preserving probability path" claim unclear without additional justification (e.g., solver choice, step-size dependence, continuous-time interpretation, and confirmation that this is exactly what is implemented).
+That's a *discretization* statement. If you change solver (RK4, adaptive), the intermediate stages can go negative even if Euler wouldn't. So the "trajectory stays non-negative" claim only truly holds under specific solver/step assumptions that are not explicitly stated.
+
+#### 1.2 If $\Delta t$ equals the solver step $h$, the update "cancels" the state
+
+With their parameterization $\hat{v} = -x / \Delta t + \text{softplus}(\cdot)$ and Euler with $h = \Delta t$:
+
+$$
+x_{k+1} = x_k + \Delta t \left( -\frac{x_k}{\Delta t} + \text{softplus}(\cdot) \right) = \Delta t \cdot \text{softplus}(\cdot)
+$$
+
+This means each step is basically "overwrite with a positive prediction scaled by $\Delta t$," **not** a normal residual flow update. It also makes the behavior extremely sensitive to the choice/number of steps. This raises correctness/clarity alarms for an ODE-based flow model and makes the "support-preserving probability path" claim unclear.
+
+#### 1.3 If $\Delta t$ is *not* the solver step, then positivity becomes step-size-conditional
+
+If solver step is $h$ and $\Delta t$ is a fixed constant:
+
+$$
+x_{k+1} = \left(1 - \frac{h}{\Delta t}\right) x_k + h \cdot \text{softplus}(\cdot)
+$$
+
+Now positivity holds **if and only if** $0 \le h \le \Delta t$. So the "guarantee" is: *use Euler (or a positivity-preserving method) with step bounded by $\Delta t$*. That's valid, but it's not the broad "structural" guarantee the paper language often suggests unless they state these conditions explicitly.
+
+#### 1.4 The "fundamental failure mode" framing overstates the problem
+
+The paper calls negativity a "fundamental failure mode" of other generative models, but it's mostly a modeling/implementation choice. Negativity in baselines often comes from:
+
+- Choosing a base distribution with negative support (Gaussian)
+- Unconstrained velocity fields
+- Solver overshoot
+
+But there are standard fixes (log-space modeling, exp/softplus state parameterization, projection/clamping each step). If the paper doesn't compare to these simpler alternatives, it's hard to argue BioFlow is uniquely necessary.
+
+#### Summary of this issue
+
+BioFlow's positivity trick can work, but the paper's *guarantee* is **ambiguous and potentially misleading** unless they precisely define $\Delta t$, specify the solver, and prove the guarantee under the exact inference procedure (and step-size conditions) they use. Without this clarity, it remains unclear whether the formulation is "just unclear writing" or a real technical mistake.
 
 ### 2. Inconsistency / ambiguity about the prior and where negativity arises
 
