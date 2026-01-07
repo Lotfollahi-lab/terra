@@ -92,4 +92,3 @@ The paper tackles a meaningful and domain-relevant issue (non-negativity / biolo
 
 Additionally, ambiguity around the prior (Gaussian vs ZINB) and lack of simpler non-negativity baselines make it hard to attribute improvements to the claimed mechanism.
 
-With clearer mathematical grounding (or correction of the formulation), reconciled training/inference priors, and stronger ablations/controls, this could become a solid contribution.
