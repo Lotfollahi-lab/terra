@@ -74,6 +74,10 @@ The paper argues that trajectory-level non-negativity is critical, but does not 
 
 The method is motivated as generative and stochastic (many-to-many mapping), but evaluation is dominated by **PCC** rankings (Sec. 4.1 to 4.2). There is limited analysis of uncertainty/diversity, distributional fit to count properties (e.g., zero inflation / NB behavior), or downstream biological utility beyond correlation.
 
+### 5. Limited architectural novelty
+
+The transformer-based velocity network is described as adapted from MMDiT, but the architectural contributions beyond removing language components and adding gating mechanisms are unclear. Without stronger justification for why this particular architecture is essential (versus simpler alternatives), it is difficult to assess whether the architectural choices meaningfully contribute to the reported improvements or whether the gains primarily stem from other factors (e.g., training protocol corrections, the positivity constraint itself).
+
 ## Minor Weaknesses
 
 1. **Efficiency claims in the abstract appear overstated relative to reported training times.** The abstract claims "4× to 100× faster than STFlow" (p.1), but the concrete minutes reported for STFlow vs BioFlow (e.g., 396 vs 122 on HER2ST; 60 vs 18 on PRAD; 17 vs 7 on READ) correspond more to approximately 2 to 3× in those settings (Sec. 4.3). The "100×" regime is not clearly supported in the main reported comparisons.
@@ -90,5 +94,5 @@ The method is motivated as generative and stochastic (many-to-many mapping), but
 
 The paper tackles a meaningful and domain-relevant issue (non-negativity / biological validity) and reports strong PCC gains with a seemingly efficient architecture. However, the central technical contribution (the velocity reparameterization claimed to *guarantee* non-negative trajectories) appears insufficiently justified and possibly problematic as written, especially given the dependence on Δt and the resulting update behavior under Euler integration.
 
-Additionally, ambiguity around the prior (Gaussian vs ZINB) and lack of simpler non-negativity baselines make it hard to attribute improvements to the claimed mechanism.
+Additionally, ambiguity around the prior (Gaussian vs ZINB), lack of simpler non-negativity baselines, and limited clarity on architectural novelty beyond MMDiT adaptation make it hard to attribute improvements to the claimed mechanisms.
 
