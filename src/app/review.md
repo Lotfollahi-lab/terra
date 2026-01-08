@@ -87,7 +87,7 @@ The transformer-based velocity network is described as adapted from MMDiT, but t
 
 **Recommendation: Weak Reject (2/6)**
 
-The paper tackles a meaningful and domain-relevant issue (non-negativity / biological validity) and reports strong PCC gains with a seemingly efficient architecture. However, the central technical contribution (the velocity reparameterization claimed to *guarantee* non-negative trajectories) appears insufficiently justified and possibly problematic as written, especially given the dependence on Δt and the resulting update behavior under Euler integration.
+The paper tackles a meaningful and domain-relevant issue (non-negativity / biological validity) and reports  PCC gains with a  efficient architecture. However, the central technical contribution (the velocity reparameterization claimed to *guarantee* non-negative trajectories) appears insufficiently justified and possibly problematic as written, especially given the dependence on Δt and the resulting update behavior under Euler integration.
 
 Additionally, ambiguity around the prior (Gaussian vs ZINB), lack of simpler non-negativity baselines, and limited clarity on architectural novelty beyond MMDiT adaptation make it hard to attribute improvements to the claimed mechanisms.
 
