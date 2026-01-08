@@ -12,9 +12,7 @@ This paper proposes **BioFlow**, a **histology-conditioned conditional flow-matc
 
 3. **Strong quantitative results on reported metric:** BioFlow improves **PCC(All)** on all three datasets vs. the best baseline (Table 1), and shows improved stability from easy to hard genes.
 
-4. **Efficiency focus and protocol hygiene:** The paper explicitly calls out test-patient leakage in prior early stopping/model selection and claims to retrain baselines under a corrected protocol (Sec. 4.1).
-
-5. **Ablations included:** Impact of the non-negative constraint (Table 4) and of the Transformer velocity network (Table 5) are reported and directionally consistent with the narrative.
+4. **Ablations included:** Impact of the non-negative constraint (Table 4) and of the Transformer velocity network (Table 5) are reported and directionally consistent with the narrative.
 
 ## Major Weaknesses
 
