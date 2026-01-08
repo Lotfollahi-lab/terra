@@ -79,11 +79,9 @@ The transformer-based velocity network is described as adapted from MMDiT, but t
 
 1. **Efficiency claims in the abstract appear overstated relative to reported training times.** The abstract claims "4× to 100× faster than STFlow" (p.1), but the concrete minutes reported for STFlow vs BioFlow (e.g., 396 vs 122 on HER2ST; 60 vs 18 on PRAD; 17 vs 7 on READ) correspond more to approximately 2 to 3× in those settings (Sec. 4.3). The "100×" regime is not clearly supported in the main reported comparisons.
 
-2. **STEM comparison is not retrained under the corrected protocol.** The paper reports official STEM results due to prohibitive cost (Sec. 4.4), which is understandable, but weakens the fairness claim given the paper's emphasis on evaluation leakage corrections (Sec. 4.1).
+2. **Metric definitions could be clearer in the main text.** PCC(H), PCC(M), PCC(All) are described qualitatively (Sec. 4.1), but the exact gene-count cutoffs are not explicitly stated in the main table narrative (Table 1).
 
-3. **Metric definitions could be clearer in the main text.** PCC(H), PCC(M), PCC(All) are described qualitatively (Sec. 4.1), but the exact gene-count cutoffs are not explicitly stated in the main table narrative (Table 1).
-
-4. **Small patient counts in PRAD/READ increase variance risk.** PRAD and READ have only 2 patients (Table 2), so results can be high variance; reporting confidence intervals or fold variability would strengthen claims.
+3. **Small patient counts in PRAD/READ increase variance risk.** PRAD and READ have only 2 patients (Table 2), so results can be high variance; reporting confidence intervals or fold variability would strengthen claims.
 
 ## Justification
 
