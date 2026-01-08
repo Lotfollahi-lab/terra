@@ -67,9 +67,9 @@ Training describes sampling x₀ from "e.g., Gaussian noise" (Sec. 3.2), which w
 
 The paper argues that trajectory-level non-negativity is critical, but does not provide comparisons to simpler alternatives (e.g., softplus/exp output parameterization, log-domain modeling, stepwise projection/clamping each integration step). Without these baselines, it is hard to isolate whether the gains come from "trajectory support preservation" versus easier fixes.
 
-### 4. Evaluation is narrow for a "generative/stochastic" framing
+### 4. Evaluation is narrow in metrics and lacks downstream analyses
 
-The method is motivated as generative and stochastic (many-to-many mapping), but evaluation is dominated by **PCC** rankings (Sec. 4.1 to 4.2). There is limited analysis of uncertainty/diversity, distributional fit to count properties (e.g., zero inflation / NB behavior), or downstream biological utility beyond correlation.
+Evaluation is dominated by PCC (Sec. 4.1 to 4.2) and omits basic regression metrics such as MSE/MAE. There is no downstream biological analysis of generated counts versus ground truth (e.g., tissue or region-level mapping), nor clustering-based validation showing that imputed expression recapitulates ground-truth spatial structure (e.g., NMI).
 
 ### 5. Limited architectural novelty
 
