@@ -603,14 +603,26 @@ def finetune(
             
             ns_tokens = udata['tokens'][:, n_special_tokens:]
 
-            # Aggregate gene embeddings into cell and neighborhood embeddings
-            cell_mask = create_binary_selection_mask(
-                ns_tokens,
-                selection_type=selection_type,
-                excluded_tokens=agg_excluded_tokens, # None
-                seq_len_cell=model_config['data']['seq_len_cell'],
-                top_k=top_k, # None
-            )
+            # Create cell mask or neighborhood mask for aggregation depending on the selection type (agg_cell or agg_graph)
+            if selection_type == 'agg_cell':
+                selection_mask = create_binary_selection_mask(
+                    ns_tokens,
+                    selection_type=selection_type,
+                    excluded_tokens=agg_excluded_tokens,
+                    seq_len_cell=model_config['data']['seq_len_cell'],
+                    top_k=top_k,
+                )
+            elif selection_type == 'agg_graph':
+                selection_mask = create_binary_selection_mask(
+                    ns_tokens,
+                    selection_type=selection_type,
+                    excluded_tokens=agg_excluded_tokens,
+                    seq_len_cell=model_config['data']['seq_len_cell'],
+                    top_k=top_k,
+                    n_segments=model_config['data']['n_segments']
+                )
+            else:
+                raise ValueError(f"Selection type {selection_type} not supported.")
             
             optimizer.zero_grad()
 
@@ -618,7 +630,7 @@ def finetune(
             logits = model(
                 udata=udata,
                 masks_attention=masks_attention,
-                cell_mask=cell_mask,
+                selection_mask=selection_mask,
             )
 
             # Get labels for this batch by matching cell IDs
