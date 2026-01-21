@@ -258,7 +258,7 @@ class ClassificationModel(nn.Module):
             self,
             udata: dict,
             masks_attention: torch.Tensor,
-            cell_mask: torch.Tensor = None,
+            selection_mask: torch.Tensor = None,
         ) -> torch.Tensor:
         """
         Forward pass through the classification head.
@@ -266,7 +266,7 @@ class ClassificationModel(nn.Module):
         Parameters:
         - udata (dict): The input dictionary containing the batch data.
         - masks_attention (Tensor): The attention masks.
-        - cell_mask (Tensor): The cell mask.
+        - selection_mask (Tensor): The selection (cell or neighborhood) mask.
         
         Returns:
         - Tensor: The class logits.
@@ -274,9 +274,9 @@ class ClassificationModel(nn.Module):
         # h.shape = (<batch_size>, <seq_len>, <embedding_dim>)
         h, _= self.base_model(batch=udata, masks_attention=masks_attention)
         
-        # Aggregate gene embeddings into cell embeddings
+        # Aggregate gene embeddings into cell/neighborhood embeddings
         # h.shape = (<batch_size>, <embedding_dim>)
-        h = compute_mean_unmasked_emb(h, cell_mask)
+        h = compute_mean_unmasked_emb(h, selection_mask)
         
         # Project gene embeddings into logits
         # logits.shape = (<batch_size>, <num_classes>)        
