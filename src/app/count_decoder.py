@@ -605,6 +605,210 @@ def _apply_metric_transform(arr: np.ndarray, mode: str) -> np.ndarray:
 
 
 # =============================================================================
+# INFERENCE API
+# =============================================================================
+
+def _resolve_checkpoint_path(
+    model_folder_path: Optional[str],
+    checkpoint_path: Optional[str],
+) -> Path:
+    """
+    Resolve the checkpoint path from an explicit checkpoint path or a model folder.
+    """
+    if checkpoint_path:
+        return Path(checkpoint_path)
+    if not model_folder_path:
+        raise ValueError("Provide either model_folder_path or checkpoint_path.")
+    path = Path(model_folder_path)
+    return path / "zinb_decoder.pt" if path.is_dir() else path
+
+
+def _infer_decoder_config_from_state(state_dict: Dict[str, torch.Tensor]) -> Dict[str, object]:
+    """
+    Infer decoder architecture from a saved state_dict.
+
+    Note: residual connections cannot be inferred reliably and default to False.
+    """
+    depth_indices: set[int] = set()
+    for key in state_dict:
+        if key.startswith("backbone.") and key.endswith(".0.weight"):
+            parts = key.split(".")
+            if len(parts) >= 3:
+                try:
+                    depth_indices.add(int(parts[1]))
+                except ValueError:
+                    continue
+    if not depth_indices:
+        raise ValueError("Could not infer decoder depth from checkpoint state_dict.")
+
+    first_layer = state_dict["backbone.0.0.weight"]
+    hidden_dim, embed_dim = first_layer.shape
+    n_genes = int(state_dict["theta"].shape[0])
+
+    first_prefix = f"backbone.{min(depth_indices)}."
+    has_batch_norm = any(
+        key.startswith(first_prefix) and "running_mean" in key for key in state_dict
+    )
+    if has_batch_norm:
+        has_layer_norm = any(
+            key.startswith(first_prefix + "2.weight") for key in state_dict
+        )
+    else:
+        has_layer_norm = any(
+            key.startswith(first_prefix + "1.weight") for key in state_dict
+        )
+
+    return {
+        "embed_dim": int(embed_dim),
+        "hidden_dim": int(hidden_dim),
+        "n_genes": int(n_genes),
+        "depth": len(depth_indices),
+        "layer_norm": has_layer_norm,
+        "batch_norm": has_batch_norm,
+        "residual": False,
+        "use_dropout_head": "dropout_head.weight" in state_dict,
+    }
+
+
+def apply_count_decoder(
+    adata: ad.AnnData,
+    emb_key: str,
+    model_folder_path: Optional[str],
+    decoded_counts_layer_key: str,
+    checkpoint_path: Optional[str] = None,
+    embed_fallback_key: Optional[str] = "neighborhood_emb",
+    loss_type: Optional[str] = None,
+    device: int = 0,
+    batch_size: int = 1024,
+) -> ad.AnnData:
+    """
+    Load a trained decoder checkpoint, infer counts from embeddings, and store
+    the decoded counts in adata.layers[decoded_counts_layer_key].
+
+    Parameters
+    ----------
+    adata : ad.AnnData
+        AnnData containing embeddings in .obsm.
+    emb_key : str
+        Primary obsm key for embeddings.
+    model_folder_path : Optional[str]
+        Directory containing zinb_decoder.pt, or a direct path to a checkpoint.
+    decoded_counts_layer_key : str
+        Layer name to store decoded counts.
+    checkpoint_path : Optional[str]
+        Optional explicit checkpoint file path.
+    embed_fallback_key : Optional[str]
+        Fallback obsm key if emb_key is missing.
+    loss_type : Optional[str]
+        Override loss type ("zinb", "nb_libsize", "nb_softplus"). Defaults to checkpoint.
+    device : int
+        GPU id (use -1 for CPU preference).
+    batch_size : int
+        Batch size for inference.
+
+    Returns
+    -------
+    ad.AnnData
+        Updated AnnData with decoded counts layer.
+    """
+    checkpoint = _resolve_checkpoint_path(model_folder_path, checkpoint_path)
+    if not checkpoint.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint}")
+
+    payload = torch.load(checkpoint, map_location="cpu")
+    if "decoder" not in payload:
+        raise ValueError("Checkpoint is missing 'decoder' state.")
+    state_dict = payload["decoder"]
+    gene_list = payload.get("gene_list")
+    if gene_list is None:
+        raise ValueError("Checkpoint is missing 'gene_list'.")
+    gene_list = list(gene_list)
+
+    ckpt_loss_type = payload.get("loss_type", "zinb")
+    loss_type = loss_type or ckpt_loss_type
+
+    config = payload.get("config")
+    if config:
+        model_cfg = {
+            "embed_dim": int(config["embed_dim"]),
+            "hidden_dim": int(config["hidden_dim"]),
+            "n_genes": int(config["n_genes"]) if "n_genes" in config else len(gene_list),
+            "depth": int(config.get("depth", config.get("mlp_depth", 2))),
+            "layer_norm": bool(config.get("layer_norm", False)),
+            "batch_norm": bool(config.get("batch_norm", False)),
+            "residual": bool(config.get("residual", False)),
+            "use_dropout_head": bool(config.get("use_dropout_head", loss_type == "zinb")),
+        }
+    else:
+        model_cfg = _infer_decoder_config_from_state(state_dict)
+
+    mean_activation = "softplus" if loss_type != "nb_libsize" else "softmax"
+    if config and "mean_activation" in config:
+        mean_activation = str(config["mean_activation"])
+    decoder = ZINBDecoder(
+        embed_dim=model_cfg["embed_dim"],
+        hidden_dim=model_cfg["hidden_dim"],
+        n_genes=model_cfg["n_genes"],
+        depth=model_cfg["depth"],
+        layer_norm=model_cfg["layer_norm"],
+        batch_norm=model_cfg["batch_norm"],
+        residual=model_cfg["residual"],
+        use_dropout_head=model_cfg["use_dropout_head"],
+        mean_activation=mean_activation,
+    )
+    decoder.load_state_dict(state_dict, strict=True)
+
+    device_obj = get_device(device)
+    decoder = decoder.to(device_obj)
+    decoder.eval()
+
+    embeddings = _get_embedding_from_obsm(adata, emb_key, embed_fallback_key).astype(np.float32)
+    if embeddings.ndim != 2:
+        raise ValueError(f"Embeddings must be 2D; got shape {embeddings.shape}.")
+    if embeddings.shape[1] != model_cfg["embed_dim"]:
+        raise ValueError(
+            f"Embedding dim mismatch: adata has {embeddings.shape[1]}, "
+            f"decoder expects {model_cfg['embed_dim']}."
+        )
+
+    n_obs = embeddings.shape[0]
+    preds = np.zeros((n_obs, model_cfg["n_genes"]), dtype=np.float32)
+    with torch.no_grad():
+        for start in range(0, n_obs, batch_size):
+            end = min(start + batch_size, n_obs)
+            emb_batch = torch.from_numpy(embeddings[start:end]).to(device_obj)
+            mu, theta, dropout = decoder(emb_batch)
+            if loss_type == "zinb":
+                dist = ZeroInflatedNegativeBinomial(mu=mu, theta=theta, zi_logits=dropout)
+                batch_preds = dist.mean
+            elif loss_type == "nb_libsize":
+                fixed_libsize = torch.full((mu.size(0), 1), NB_FIXED_LIBSIZE, device=device_obj)
+                batch_preds = mu * fixed_libsize
+            elif loss_type == "nb_softplus":
+                batch_preds = mu
+            else:
+                raise ValueError(f"Unknown loss_type: {loss_type}")
+            preds[start:end] = batch_preds.detach().cpu().numpy()
+
+    if list(adata.var_names) == gene_list:
+        aligned = preds
+    else:
+        gene_to_idx = {g: i for i, g in enumerate(gene_list)}
+        missing = [g for g in adata.var_names if g not in gene_to_idx]
+        extra = [g for g in gene_list if g not in set(adata.var_names)]
+        if missing or extra:
+            raise ValueError(
+                "Gene mismatch between adata.var_names and checkpoint gene_list. "
+                f"Missing in checkpoint: {missing[:5]}. Missing in adata: {extra[:5]}."
+            )
+        order = [gene_to_idx[g] for g in adata.var_names]
+        aligned = preds[:, order]
+
+    adata.layers[decoded_counts_layer_key] = aligned
+    return adata
+
+
+# =============================================================================
 # GENE SELECTION UTILITIES
 # =============================================================================
 
@@ -780,6 +984,7 @@ def evaluate(
     loss_type: str = "zinb",
     metric_transform: str = "none",
     spot_metrics: bool = False,
+    spot_metrics_only: bool = False,
     spot_suffix: str = "_spot",
 ) -> Dict[str, object]:
     """
@@ -806,6 +1011,8 @@ def evaluate(
         Transform to apply before computing metrics.
     spot_metrics : bool
         Whether to compute spot-level metrics.
+    spot_metrics_only : bool
+        If True, compute only spot-level metrics and skip gene-level metrics.
     spot_suffix : str
         Suffix for spot-level metric names.
     
@@ -876,7 +1083,10 @@ def evaluate(
         print("[warn] model predictions are constant across all spots")
     if np.allclose(target_arr, target_arr[0]):
         print("[warn] targets are constant across all spots")
-    
+
+    if spot_metrics_only:
+        return _spot_level_metrics(preds_arr, target_arr, suffix=spot_suffix)
+
     return regression_metrics(
         preds_arr,
         target_arr,
@@ -1613,7 +1823,17 @@ def train(args: argparse.Namespace) -> dict:
     )
 
     # Early stopping setup
-    metric_key_map = {"pearson": "pearson_mean", "l2": "l2_mean", "r2": "r2_mean"}
+    spot_metrics = args.spot_metrics or args.spot_metrics_only
+    spot_suffix = "_spot"
+    if args.spot_metrics_only:
+        if args.early_stop_metric == "r2":
+            raise ValueError("--early-stop-metric r2 is not supported with --spot-metrics-only.")
+        metric_key_map = {
+            "pearson": f"pcc_mean{spot_suffix}",
+            "l2": f"mse_mean{spot_suffix}",
+        }
+    else:
+        metric_key_map = {"pearson": "pearson_mean", "l2": "l2_mean", "r2": "r2_mean"}
     maximize = args.early_stop_metric in {"pearson", "r2"}
     best_metric = float("-inf") if maximize else float("inf")
     best_state = None
@@ -1628,7 +1848,8 @@ def train(args: argparse.Namespace) -> dict:
         gene_list,
         loss_type=args.loss_type,
         metric_transform=args.metric_transform,
-        spot_metrics=args.spot_metrics,
+        spot_metrics=spot_metrics,
+        spot_metrics_only=args.spot_metrics_only,
     )
     init_val_metrics = evaluate(
         decoder,
@@ -1637,7 +1858,8 @@ def train(args: argparse.Namespace) -> dict:
         gene_list,
         loss_type=args.loss_type,
         metric_transform=args.metric_transform,
-        spot_metrics=args.spot_metrics,
+        spot_metrics=spot_metrics,
+        spot_metrics_only=args.spot_metrics_only,
     )
     init_test_metrics = evaluate(
         decoder,
@@ -1646,7 +1868,8 @@ def train(args: argparse.Namespace) -> dict:
         gene_list,
         loss_type=args.loss_type,
         metric_transform=args.metric_transform,
-        spot_metrics=args.spot_metrics,
+        spot_metrics=spot_metrics,
+        spot_metrics_only=args.spot_metrics_only,
     )
 
     def _safe_metric_val(metrics: dict, key: str) -> float:
@@ -1655,9 +1878,12 @@ def train(args: argparse.Namespace) -> dict:
 
     print(
         "[info] Initial metrics (epoch 0, untrained): "
-        f"train pearson={_safe_metric_val(init_train_metrics, 'pearson_mean'):.4f}, "
-        f"val pearson={_safe_metric_val(init_val_metrics, 'pearson_mean'):.4f}, "
-        f"test pearson={_safe_metric_val(init_test_metrics, 'pearson_mean'):.4f}"
+        f"train {metric_key_map[args.early_stop_metric]}="
+        f"{_safe_metric_val(init_train_metrics, metric_key_map[args.early_stop_metric]):.4f}, "
+        f"val {metric_key_map[args.early_stop_metric]}="
+        f"{_safe_metric_val(init_val_metrics, metric_key_map[args.early_stop_metric]):.4f}, "
+        f"test {metric_key_map[args.early_stop_metric]}="
+        f"{_safe_metric_val(init_test_metrics, metric_key_map[args.early_stop_metric]):.4f}"
     )
 
     _log_to_wandb("train", init_train_metrics, epoch=0)
@@ -1712,7 +1938,8 @@ def train(args: argparse.Namespace) -> dict:
             gene_list,
             loss_type=args.loss_type,
             metric_transform=args.metric_transform,
-            spot_metrics=args.spot_metrics,
+            spot_metrics=spot_metrics,
+            spot_metrics_only=args.spot_metrics_only,
         )
         val_metrics = evaluate(
             decoder,
@@ -1721,7 +1948,8 @@ def train(args: argparse.Namespace) -> dict:
             gene_list,
             loss_type=args.loss_type,
             metric_transform=args.metric_transform,
-            spot_metrics=args.spot_metrics,
+            spot_metrics=spot_metrics,
+            spot_metrics_only=args.spot_metrics_only,
         )
         test_metrics = evaluate(
             decoder,
@@ -1730,7 +1958,8 @@ def train(args: argparse.Namespace) -> dict:
             gene_list,
             loss_type=args.loss_type,
             metric_transform=args.metric_transform,
-            spot_metrics=args.spot_metrics,
+            spot_metrics=spot_metrics,
+            spot_metrics_only=args.spot_metrics_only,
         )
 
         # Log epoch spot-level metrics to WandB (if enabled)
@@ -1775,7 +2004,8 @@ def train(args: argparse.Namespace) -> dict:
                 gene_list,
                 loss_type=args.loss_type,
                 metric_transform=args.metric_transform,
-                spot_metrics=args.spot_metrics,
+                spot_metrics=spot_metrics,
+                spot_metrics_only=args.spot_metrics_only,
             ),
             "val": evaluate(
                 decoder,
@@ -1784,7 +2014,8 @@ def train(args: argparse.Namespace) -> dict:
                 gene_list,
                 loss_type=args.loss_type,
                 metric_transform=args.metric_transform,
-                spot_metrics=args.spot_metrics,
+                spot_metrics=spot_metrics,
+                spot_metrics_only=args.spot_metrics_only,
             ),
             "test": evaluate(
                 decoder,
@@ -1793,7 +2024,8 @@ def train(args: argparse.Namespace) -> dict:
                 gene_list,
                 loss_type=args.loss_type,
                 metric_transform=args.metric_transform,
-                spot_metrics=args.spot_metrics,
+                spot_metrics=spot_metrics,
+                spot_metrics_only=args.spot_metrics_only,
             ),
             "loss_type": args.loss_type,
             "zero_std_genes": {"train": train_zero_std, "test": test_zero_std},
@@ -1802,11 +2034,25 @@ def train(args: argparse.Namespace) -> dict:
     # Save checkpoint
     output_path = Path(args.output) if args.output else Path(args.save_dir) / "zinb_decoder.pt"
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({
-        "decoder": best_state,
-        "gene_list": gene_list,
-        "loss_type": args.loss_type,
-    }, output_path)
+    torch.save(
+        {
+            "decoder": best_state,
+            "gene_list": gene_list,
+            "loss_type": args.loss_type,
+            "config": {
+                "embed_dim": int(train_emb.shape[1]),
+                "hidden_dim": int(args.hidden_dim),
+                "n_genes": int(train_expr.shape[1]),
+                "depth": int(args.mlp_depth),
+                "layer_norm": bool(args.layer_norm),
+                "batch_norm": bool(args.batch_norm),
+                "residual": bool(args.residual),
+                "use_dropout_head": bool(use_dropout_head),
+                "mean_activation": mean_activation,
+            },
+        },
+        output_path,
+    )
 
     # Helper to convert numpy types to native Python for JSON serialization
     def _to_native(obj):
@@ -2063,6 +2309,11 @@ python count_decoder.py --dataset data.npz --loss-type nb_softplus
         action="store_true",
         help="Also compute spot-level PCC/MSE/MAE metrics (keys suffixed with _spot).",
     )
+    parser.add_argument(
+        "--spot-metrics-only",
+        action="store_true",
+        help="Compute only spot-level metrics (skip gene-level metrics). Implies --spot-metrics.",
+    )
     
     # Device and reproducibility
     parser.add_argument(
@@ -2121,4 +2372,21 @@ python -m pdb src/app/count_decoder.py --loss-type nb_libsize  --expression-laye
  python -m pdb src/app/count_decoder.py --save-dir results_nb_softplus --loss-type nb_softplus  --expression-layer counts --disable-slide-batching  --wandb-project count_decoder --spot-metrics --gene-selection hvg --hvg-top-n 100 --adata /nfs/team361/dj17/NEMO_DJ/KidneyToxicity/NEMO_UpdatedTokenisationandEmbedding_November22nd25/Labeltransfer/forshare/nemokidneyxeniumatlas_annotated.h5ad
 '''
 
+'''
+python -m pdb src/app/count_decoder.py --loss-type nb_softplus --expression-layer counts --disable-slide-batching --wandb-project count_decoder --spot-metrics --gene-selection all --spot-metrics-only --adata /nfs/team361/sb75/DATASETS/gold/cell-graph-tokenizer/kidney_perturbation/nemokidneyxeniumatlas_annotated_processed.h5ad
 
+'''
+
+'''
+python -m pdb src/app/count_decoder.py \
+  --loss-type nb_softplus \
+  --expression-layer counts_neighborhood \
+  --embed-key neighborhood_emb \
+  --disable-slide-batching \
+  --spot-metrics --spot-metrics-only \
+  --gene-selection all \
+  --save-dir ./results_neb \
+  --num-workers 6 \
+  --adata /nfs/team361/sb75/DATASETS/gold/cell-graph-tokenizer/kidney_perturbation/nemokidneyxeniumatlas_annotated_processed.h5ad \
+  --wandb-project count_decoder
+'''
