@@ -42,8 +42,8 @@ meta:
   cell_pos_enc: 'segment' # 'segment', 'coord'
   enc_depth: 12
   enc_emb_dim: 768 # 384, 768
-  pred_depth: 6 # 12
-  pred_emb_dim: 192 # 384, 192, 384
+  pred_depth: 12 # 12
+  pred_emb_dim: 384 # 384, 192, 384
   num_heads: 12 # 12, 6
   mlp_ratio: 4
   special_tokens: ['batch'] # ['batch'], ['assay', 'batch'],['assay', 'gene_panel', 'batch'], ['tissue', 'assay', 'gene_panel', 'batch']

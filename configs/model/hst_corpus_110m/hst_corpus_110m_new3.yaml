@@ -66,10 +66,10 @@ mask:
   target_mask_size: 50 # this doesn't have meaning in block masking.
   per_block_mask_ratio: 0.6 # 0.2, 0.4, 0.6, 0.8
   sample_segments: True
-  special_token_pad_ratio: 0.0
+  special_token_pad_ratio: 1.0
 optimization:
-  warmup: 1 # 1
-  epochs: 5 # 5
+  warmup: 0 # 1
+  epochs: 10 # 5
   ema:
   - 0.9995 # 0.998, 0.9995
   - 1.0
@@ -86,9 +86,9 @@ state:
   log_freq: 20
   checkpoint_freq: 1
   write_tag: nichejepa
-  read_timestamp: ''
-  folder_path: null
-  load_checkpoint: False # true, false
-  read_checkpoint: null # null, 'nichejepa-ep5.pth.tar'
+  read_timestamp: '29012026_092551_513'
+  folder_path: '/nfs/team361/sb75/nichejepa-reproducibility/artifacts/hst_corpus_110m/29012026_092551_513'
+  load_checkpoint: True # true, false
+  read_checkpoint: 'nichejepa-ep4.pth.tar' # null, 'nichejepa-ep5.pth.tar'
   checkpoint_freq_iter: 5000
 
