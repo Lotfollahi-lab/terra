@@ -32,7 +32,7 @@ meta:
   gt_type: 'combined' # 'rank', 'counts', 'combined'
   count_encoding: 'mlp' # 'value_bins', 'mlp'
   n_value_bins: 20
-  cell_pos_enc: 'segment' # 'segment', 'coord'
+  cell_pos_enc: 'coord' # 'segment', 'coord'
   enc_depth: 12
   enc_emb_dim: 384 # 384, 768
   pred_depth: 12 # 12
