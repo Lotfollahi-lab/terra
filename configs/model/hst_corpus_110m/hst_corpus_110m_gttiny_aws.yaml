@@ -24,7 +24,11 @@ data:
   seq_len_neighborhood: 2560 # 384/640, 1536/2816
   n_segments: 11 # 7, 11; number of unique segment tokens (gene segments)
   sampling_strategy: null # null, 'rand_sampling', 'norm_count_rank_sampling', 'rand_sampling_rep', 'norm_count_rank_sampling_rep'
+<<<<<<< HEAD
   batch_size: 32
+=======
+  batch_size: 144
+>>>>>>> main
   num_workers: 16
   pin_memory: True
   sep_gene_tokens_neb: False

@@ -323,4 +323,9 @@ def linear_regressor(
 
         print("\n--- Evaluation Metrics saved. ---")
 
+<<<<<<< HEAD
     return all_preds, model
+=======
+    return all_preds, model
+
+>>>>>>> main

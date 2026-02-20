@@ -99,4 +99,8 @@ def grad_logger(named_params: list[tuple[str, torch.Tensor]],
     if stats.first_layer is None or stats.last_layer is None:
         stats.first_layer = stats.last_layer = 0.0
 
+<<<<<<< HEAD
     return stats
+=======
+    return stats
+>>>>>>> main

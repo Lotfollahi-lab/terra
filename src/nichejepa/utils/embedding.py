@@ -8,7 +8,11 @@ import pandas as pd
 import scanpy as sc
 import torch
 import torch.nn.functional as F
+<<<<<<< HEAD
 from .evaluation import compute_scalar_mmd, compute_emd
+=======
+from nichejepa.utils.evaluation import compute_scalar_mmd, compute_emd
+>>>>>>> main
 
 
 def compute_sum_and_nonzero_count(

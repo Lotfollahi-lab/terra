@@ -5,7 +5,7 @@ requires = ["hatchling"]
 [project]
 name = "nichejepa"
 version = "0.0.0"
-description = "Spatial omics foundation model"
+description = "Spatial transcriptomics foundation model"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
@@ -24,11 +24,19 @@ urls.Home-page = "https://github.com/Lotfollahi-lab/niche-jepa"
 dependencies = [
     "anndata",
     "squidpy",
+    "scib-metrics",
     "scikit-misc",
+    "transformers",
+    "torch",
     "datasets",
     # for debug logging (referenced from the issue template)
     "session-info",
-    "wandb"
+    "wandb",
+    "peft",
+    "jupyterlab",
+    "ipykernel",
+    "pyensembl",
+    "leidenalg",
 ]
 
 [project.optional-dependencies]
@@ -53,6 +61,10 @@ doc = [
 test = [
     "pytest",
     "coverage",
+]
+eval = [
+    "cellphonedb",
+    "omnipath"
 ]
 
 [tool.coverage.run]

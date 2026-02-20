@@ -6,4 +6,8 @@ from .normalizers import (normalize_by_analytic_pearson_residuals,
                           normalize_by_gene_corrected_read_depth,
                           normalize_by_read_depth,
                           normalize_by_seurat,
+<<<<<<< HEAD
                           normalize_by_shifted_log)
+=======
+                          normalize_by_shifted_log)
+>>>>>>> main

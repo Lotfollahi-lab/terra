@@ -263,4 +263,8 @@ class CellMaskCollator:
         return collated_batch, \
                collated_context_masks, \
                collated_target_masks, \
+<<<<<<< HEAD
                collated_masks_attention
+=======
+               collated_masks_attention
+>>>>>>> main

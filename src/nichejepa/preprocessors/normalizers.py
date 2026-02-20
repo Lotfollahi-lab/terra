@@ -265,4 +265,8 @@ def normalize_by_shifted_log(x: sp.csr_matrix) -> sp.csr_matrix:
     """
     y = sc.pp.log1p(x)
 
+<<<<<<< HEAD
     return y
+=======
+    return y
+>>>>>>> main

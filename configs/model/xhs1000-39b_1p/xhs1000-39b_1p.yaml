@@ -16,6 +16,7 @@ data:
   seq_len_neighborhood: 2560 # 384/640, 1536/2816
   n_segments: 11 # 7, 11; number of unique segment tokens (gene segments)
   sampling_strategy: null # null, 'rand_sampling', 'norm_count_rank_sampling', 'rand_sampling_rep', 'norm_count_rank_sampling_rep'
+<<<<<<< HEAD
   batch_size: 224 # 224, 256, 128, 288
   num_workers: 16
   pin_memory: True
@@ -53,11 +54,41 @@ meta:
 mask:
   n_contexts: 1 # 1
   n_targets: 1 # 5 # 1 =, this is the number of blocks in block masking
+=======
+  batch_size: 256
+  num_workers: 0
+  pin_memory: True
+  sep_gene_tokens_neb: False
+  use_sampler: True
+meta:
+  add_cls: False
+  gt_type: 'counts' # 'rank', 'counts'
+  count_encoding: 'mlp' # 'value_bins', 'mlp'
+  n_value_bins: 100
+  cell_pos_enc: 'segment'
+  enc_depth: 3 # 3
+  enc_emb_dim: 192
+  pred_depth: 1 # 1
+  pred_emb_dim: 96 # 768
+  num_heads: 3
+  mlp_ratio: 4
+  special_tokens: [] # ['assay'] # ['batch'], ['assay', 'tissue', 'gene_panel', 'batch']
+  pos_learnable: False
+  seg_learnable: False
+  use_bfloat16: True # True, False
+  use_flash_attention: True
+  use_layer_norm: True
+  predict_gene: True
+mask:
+  n_contexts: 1 # 1
+  n_targets: 1 # 1 =, this is the number of blocks in block masking
+>>>>>>> main
   block_masking: True # True, False
   cell_masking: False # True, False
   targets_list: null
   context_mask_size: 200 # this doesn't have meaning in block masking.
   target_mask_size: 50 # this doesn't have meaning in block masking.
+<<<<<<< HEAD
   per_block_mask_ratio: 0.6 # 0.2, 0.4, 0.6, 0.8
   sample_segments: True
   special_token_pad_ratio: 0.0
@@ -79,9 +110,34 @@ optimization:
 state:
   log_freq: 20
   checkpoint_freq: 5
+=======
+  per_block_mask_ratio: 0.6 # 0.5, 0.6, 0.7, 0.8
+  sample_segments: True # True
+optimization:
+  warmup: 10
+  epochs: 100
+  ema:
+  - 0.9995 # 0.998, 0.9995
+  - 1.0
+  start_lr: 1.0e-06 # 2.0e-05
+  lr: 6.0e-05 # 6.0e-05, 0.000625
+  final_lr: 1.0e-06
+  weight_decay: 0.04
+  final_weight_decay: 0.4
+  ipe_scale: 1.25
+  clip_grad: 2.0
+state:
+  log_freq: 20
+  checkpoint_freq: 1
+>>>>>>> main
   write_tag: nichejepa
   read_timestamp: ''
   folder_path: null
   load_checkpoint: False # true, false
   read_checkpoint: null # null, 'nichejepa-ep5.pth.tar'
+<<<<<<< HEAD
   checkpoint_freq_iter: 5000
+=======
+  checkpoint_freq_iter: 5000
+
+>>>>>>> main

@@ -51,10 +51,14 @@ class BlockMaskCollator:
                  n_special_tokens: int,
                  per_block_mask_ratio: float = 0.5,
                  sample_segments: bool = False,
+<<<<<<< HEAD
                  cell_segment_sampling_ratio: float = 0.09090909090909091,
                  special_token_pad_ratio: float = 0.,
                  sample_gene_masks: bool = True,
                  restrict_special_attention: bool = False):
+=======
+                 sample_gene_masks: bool = True):
+>>>>>>> main
         self.n_targets = n_targets
         self.n_contexts = n_contexts
         self.n_segments = n_segments
@@ -65,15 +69,21 @@ class BlockMaskCollator:
         self.per_block_mask_ratio = per_block_mask_ratio
         self.sample_segments = sample_segments
         self.sample_gene_masks = sample_gene_masks
+<<<<<<< HEAD
         self.restrict_special_attention = restrict_special_attention
         self.cell_segment_sampling_ratio = cell_segment_sampling_ratio
         self.special_token_pad_ratio = special_token_pad_ratio
         print("Special token pad ratio", self.special_token_pad_ratio)
+=======
+>>>>>>> main
 
     def _sample_gene_mask(
         self,
         tokens: torch.Tensor, # [N]
+<<<<<<< HEAD
         pad_special_tokens: bool,
+=======
+>>>>>>> main
         ) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
         """
         Perform block masking on the sequence based on the number of
@@ -85,9 +95,15 @@ class BlockMaskCollator:
         tokens:
             The token sequence that needs to be masked with dimension
             (B, N); B: batch size, N: number of tokens.
+<<<<<<< HEAD
         pad_special_tokens:
             If `True`, exclude special tokens from the context and target
             masks.
+=======
+        segments:
+            The sequence of segments to determine which <cls> tokens are
+            included in the target masks.
+>>>>>>> main
 
         Returns
         ----------
@@ -150,6 +166,7 @@ class BlockMaskCollator:
         ctx_idx = context_keep.nonzero(as_tuple=False).squeeze(-1)
         if ctx_idx.numel() > 1:
             ctx_idx = ctx_idx[torch.randperm(ctx_idx.numel())]
+<<<<<<< HEAD
         context_masks = [ctx_idx]
 
         if self.n_special_tokens > 0:
@@ -165,6 +182,15 @@ class BlockMaskCollator:
                 target_masks = [
                     torch.cat((special_idx, tgt_idx),
                     dim=0) for tgt_idx in target_masks]
+=======
+        special_idx = torch.arange(
+            self.n_special_tokens,
+            device=tokens.device,
+            dtype=torch.long)
+        ctx_idx = torch.cat((special_idx, ctx_idx), dim=0)
+
+        context_masks = [ctx_idx]
+>>>>>>> main
 
         return target_masks, context_masks
 
@@ -191,6 +217,7 @@ class BlockMaskCollator:
         masks_attention: BoolTensor [B, 1, 1, L]
             Attention masks collated by batch.
         """
+<<<<<<< HEAD
         # Collate early for vectorized slicing
         collated = torch.utils.data.default_collate(batch)
 
@@ -241,6 +268,33 @@ class BlockMaskCollator:
                     :, :self.n_special_tokens] = float('-inf')
         else:
             pad_special_tokens = False
+=======
+        #t0 = time.perf_counter()
+
+        # Collate early for vectorized slicing
+        collated = torch.utils.data.default_collate(batch)
+
+        # Sample number of neighbors ONCE per batch and slice vectorized
+        if self.sample_segments:
+            # Number of segments kept in cell graph; k in [1,
+            # n_segments]
+            k = torch.randint(low=1, high=self.n_segments+1, size=(1,)).item()
+            cutoff = self.seq_len_cell * k
+
+            # Pad all segments not kept in cell graph
+            if 'tokens' in collated:
+                collated['tokens'][:, cutoff:] = 0
+            if 'segments' in collated:
+                collated['segments'][:, cutoff:] = 0
+            if 'positions' in collated:
+                collated['positions'][:, cutoff:] = 0
+            if 'values' in collated:
+                collated['values'][:, cutoff:] = 0.0
+            if 'rel_x_coords' in collated:
+                collated['rel_x_coords'][:, cutoff:] = float('-inf')
+            if 'rel_y_coords' in collated:
+                collated['rel_y_coords'][:, cutoff:] = float('-inf')
+>>>>>>> main
 
         tokens = collated['tokens'] # [B, N]
         B, N = tokens.shape
@@ -249,6 +303,7 @@ class BlockMaskCollator:
         masks_attention = (
             tokens != 0).unsqueeze(1).unsqueeze(1) # [B, 1, 1, N]
 
+<<<<<<< HEAD
         if self.restrict_special_attention:
             # Make special tokens only attent to themselves
             masks_attention = masks_attention.expand(
@@ -271,6 +326,10 @@ class BlockMaskCollator:
 
         if self.sample_gene_masks:
             # Retrieve target and context masks per cell
+=======
+        if self.sample_gene_masks:
+            # Retrieve target/context masks per cell
+>>>>>>> main
             tgt_list: list[list[torch.Tensor]] = []
             ctx_list: list[list[torch.Tensor]] = []
             keep_tgt = self.seq_len_genes
@@ -278,8 +337,12 @@ class BlockMaskCollator:
 
             for i in range(B):
                 tgt, ctx = self._sample_gene_mask(
+<<<<<<< HEAD
                     tokens=tokens[i],
                     pad_special_tokens=pad_special_tokens)
+=======
+                    tokens=tokens[i])
+>>>>>>> main
                 # Track min lengths (avoid nested default_collate later)
                 if len(tgt):
                     keep_tgt = min(keep_tgt, min(m.numel() for m in tgt))
@@ -314,6 +377,7 @@ class BlockMaskCollator:
         #print(f"[Collate] Took {elapsed_ms:.3f} ms for batch size {B}")
         #raise ValueError
 
+<<<<<<< HEAD
         #print(collated_context_masks[0])
         #print(collated_target_masks[0])
 
@@ -322,3 +386,9 @@ class BlockMaskCollator:
                collated_target_masks, \
                masks_attention, \
                pad_special_tokens
+=======
+        return collated, \
+               collated_context_masks, \
+               collated_target_masks, \
+               masks_attention
+>>>>>>> main

@@ -63,7 +63,11 @@ def infer(args: dict,
                             'avg',
                             'weighted_avg'] = 'avg',
           masked_tokens: list[int] | None = None,
+<<<<<<< HEAD
           agg_excluded_genes: list[int] | None = None,
+=======
+          agg_excluded_tokens: list[int] | None = None,
+>>>>>>> main
           top_k: int | None = None,
           return_gene: bool=True,
           return_cosine_sim: bool=False,
@@ -72,7 +76,10 @@ def infer(args: dict,
           return_gene_marker_score: bool=False,
           return_distance: bool=False,
           include_spatial_cell_emb: bool = False,
+<<<<<<< HEAD
           ignore_spc_tokens: bool = True,
+=======
+>>>>>>> main
           ) -> ad.AnnData:
     """
     Use a trained model for inference. Run forward pass on a given
@@ -101,7 +108,11 @@ def infer(args: dict,
     masked_tokens:
         List of tokens to be masked by the attention mask during
         inference.
+<<<<<<< HEAD
     agg_excluded_genes:
+=======
+    agg_excluded_tokens:
+>>>>>>> main
         List of tokens to be excluded from the aggregation.
     top_k:
         Include only top_k genes in aggregation.
@@ -172,7 +183,10 @@ def infer(args: dict,
     special_tokens = args['meta']['special_tokens']
     use_bfloat16 = args['meta']['use_bfloat16']
     use_flash_attention = args['meta']['use_flash_attention']
+<<<<<<< HEAD
     use_layer_norm = args['meta']['use_layer_norm']
+=======
+>>>>>>> main
     
     if 'api_version' in args['meta'].keys():
         api_version = args['meta']['api_version']
@@ -196,6 +210,7 @@ def infer(args: dict,
     else:
         sep_gene_tokens_neb = False
 
+<<<<<<< HEAD
     if 'nz_spc' in args['data'].keys():
         nz_spc = args['data']['nz_spc']
     else:
@@ -206,6 +221,8 @@ def infer(args: dict,
     else:
         mega_batch_mult_max = 1000
 
+=======
+>>>>>>> main
     n_contexts = args['mask']['n_contexts']
     n_targets = args['mask']['n_targets']
     block_masking = args['mask']['block_masking']
@@ -216,10 +233,13 @@ def infer(args: dict,
     context_mask_size = args['mask']['context_mask_size']
     target_mask_size = args['mask']['target_mask_size']
     per_block_mask_ratio = args['mask']['per_block_mask_ratio']
+<<<<<<< HEAD
     if 'restrict_special_attention' in args['meta'].keys():
         restrict_special_attention = args['meta']['restrict_special_attention']
     else:
         restrict_special_attention = False
+=======
+>>>>>>> main
     if 'targets_list' in args['mask'].keys():
         targets_list = args['mask']['targets_list']
     else:
@@ -232,6 +252,7 @@ def infer(args: dict,
     with open(token_dict_folder_path, 'rb') as file:
         token_dict = pickle.load(file)
     vocab_size = len(token_dict)
+<<<<<<< HEAD
     if args['data'].get('n_special_values'):
         n_special_values = args['data']['n_special_values']
     else:
@@ -246,6 +267,12 @@ def infer(args: dict,
     else:
         agg_excluded_tokens = None
 
+=======
+    n_special_values = sum(1 for key in token_dict if "spv" in key)
+    max_special_tokens = sum(1 for key in token_dict if "cls" in key) + sum(
+        1 for key in token_dict if "spt" in key)
+
+>>>>>>> main
     # Define tokenizer-specific params
     if tokenizer_type == 'cell_neighborhood':
         if add_cls:
@@ -296,12 +323,19 @@ def infer(args: dict,
         num_heads=num_heads,
         mlp_ratio=mlp_ratio,
         use_flash_attention=use_flash_attention,
+<<<<<<< HEAD
         use_layer_norm=use_layer_norm,
         api_version=api_version,
         sep_gene_tokens_neb=sep_gene_tokens_neb,
         predict_gene=predict_gene,
         pos_learnable=pos_learnable,
         nz_spc=nz_spc)
+=======
+        api_version=api_version,
+        sep_gene_tokens_neb=sep_gene_tokens_neb,
+        predict_gene=predict_gene,
+        pos_learnable=pos_learnable)
+>>>>>>> main
 
     if api_version != 'v3':
         return_layer_emb_fn = target_encoder.return_layer_emb
@@ -319,9 +353,13 @@ def infer(args: dict,
             n_special_tokens=n_special_tokens,
             per_block_mask_ratio=per_block_mask_ratio,
             sample_segments=False,
+<<<<<<< HEAD
             sample_gene_masks=False,
             restrict_special_attention=restrict_special_attention,
             special_token_pad_ratio=1.0)
+=======
+            sample_gene_masks=False)
+>>>>>>> main
     elif cell_masking:
        mask_collator = CellMaskCollator(
             n_targets=n_targets,
@@ -346,8 +384,12 @@ def infer(args: dict,
         sampling_strategy=None,
         n_nonzero_tokens_list=[],
         include_cell_id=True,
+<<<<<<< HEAD
         sep_gene_tokens_neb=sep_gene_tokens_neb,
         nz_spc=nz_spc)
+=======
+        sep_gene_tokens_neb=sep_gene_tokens_neb)
+>>>>>>> main
 
     loader, _ = init_dataloader_and_sampler(
         cell_dataset=cell_dataset,
@@ -359,8 +401,12 @@ def infer(args: dict,
         pin_memory=pin_memory,
         num_workers=num_workers,
         drop_last=False,
+<<<<<<< HEAD
         persistent_workers=False,
         mega_batch_mult_max=mega_batch_mult_max)
+=======
+        persistent_workers=False)
+>>>>>>> main
     
     _, _, target_encoder, _, _, start_epoch, _ = load_checkpoint(
             device=device,
@@ -389,7 +435,11 @@ def infer(args: dict,
     emd_list = []
 
 
+<<<<<<< HEAD
     for itr, (udata, _, _, masks_attention, pad_special_tokens) in tqdm(enumerate(loader)):
+=======
+    for itr, (udata, _, _, masks_attention) in tqdm(enumerate(loader)):
+>>>>>>> main
         for key in udata.keys():
             if key != 'cell_id':
                 udata[key] = udata[key].to(device, non_blocking=True)
@@ -425,7 +475,10 @@ def infer(args: dict,
                 batch=udata,
                 masks_attention=masks_attention,
                 need_cell_only_context=True,
+<<<<<<< HEAD
                 ignore_spc_tokens=ignore_spc_tokens,
+=======
+>>>>>>> main
             )
 
             cell_emb_list = []
@@ -947,14 +1000,21 @@ def tokenize_adata(adata: ad.AnnData,
 def embed_dataset(dataset: Dataset,
                   model_folder_path: str,
                   emb_layer: int | None = None,
+<<<<<<< HEAD
                   agg_excluded_genes: list[str] | None = None,
+=======
+                  agg_excluded_tokens: list[int] | None = None,
+>>>>>>> main
                   top_k: int | None = None,
                   batch_size: int = 128,
                   pin_memory: bool = False,
                   num_workers: int = 12,
                   include_spatial_cell_emb: bool = True,
                   return_token_embeddings: bool = False,
+<<<<<<< HEAD
                   ignore_spc_tokens: bool = True,
+=======
+>>>>>>> main
                   ) -> dict:
     """
     Parameters
@@ -966,8 +1026,13 @@ def embed_dataset(dataset: Dataset,
         normalization factors.
     emb_layer:
         Layer for which to retrieve the embedding.
+<<<<<<< HEAD
     agg_excluded_genes:
         List of gene ensembl IDs to be excluded from the aggregation.
+=======
+    agg_excluded_tokens:
+        List of tokens to be excluded from the aggregation.
+>>>>>>> main
     top_k:
         Include only top_k genes in aggregation.
     batch_size:
@@ -1016,6 +1081,7 @@ def embed_dataset(dataset: Dataset,
     with open(token_dictionary_file_path, 'rb') as file:
         token_dict = pickle.load(file)
     vocab_size = len(token_dict)
+<<<<<<< HEAD
     #n_special_values = sum(
     #    1 for key in token_dict if "spv" in key) # this only works now because of the dummy special values
     n_special_values = model_config['data'].get('n_special_values', 0)
@@ -1025,6 +1091,9 @@ def embed_dataset(dataset: Dataset,
             token_dict[gene] for gene in agg_excluded_genes]
     else:
         agg_excluded_tokens = None
+=======
+    n_special_values = sum(1 for key in token_dict if "spv" in key)
+>>>>>>> main
 
     print('==================================================')
     print('STEP 2: GENERATING EMBEDDINGS...')
@@ -1058,8 +1127,12 @@ def embed_dataset(dataset: Dataset,
         api_version=model_config['meta']['api_version'],
         sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'],
         predict_gene=model_config['meta']['predict_gene'],
+<<<<<<< HEAD
         pos_learnable=model_config['meta']['pos_learnable'],
         nz_spc=model_config['data'].get('nz_spc', False))
+=======
+        pos_learnable=model_config['meta']['pos_learnable'])
+>>>>>>> main
 
     if model_config['meta']['api_version'] != 'v3':
         return_layer_emb_fn = target_encoder.return_layer_emb
@@ -1076,8 +1149,12 @@ def embed_dataset(dataset: Dataset,
         n_special_tokens=n_special_tokens,
         per_block_mask_ratio=model_config['mask']['per_block_mask_ratio'],
         sample_segments=False,
+<<<<<<< HEAD
         sample_gene_masks=False,
         restrict_special_attention=model_config['meta']['restrict_special_attention'])
+=======
+        sample_gene_masks=False)
+>>>>>>> main
         
     # Create torch dataset
     cell_dataset = init_cell_dataset(
@@ -1105,8 +1182,12 @@ def embed_dataset(dataset: Dataset,
         pin_memory=pin_memory,
         num_workers=num_workers,
         drop_last=False,
+<<<<<<< HEAD
         persistent_workers=False,
         mega_batch_mult_max=model_config['data'].get('mega_batch_mult_max', 1000))
+=======
+        persistent_workers=False)
+>>>>>>> main
 
     # Load model checkpoint
     _, _, target_encoder, _, _, start_epoch, _ = load_checkpoint(
@@ -1128,7 +1209,11 @@ def embed_dataset(dataset: Dataset,
     if return_token_embeddings:
         all_token_emb_list = []
 
+<<<<<<< HEAD
     for itr, (udata, _, _, masks_attention, pad_special_tokens) in tqdm(enumerate(loader)):
+=======
+    for itr, (udata, _, _, masks_attention) in tqdm(enumerate(loader)):
+>>>>>>> main
         for key in udata.keys():
             if key != 'cell_id':
                 udata[key] = udata[key].to(device, non_blocking=True)
@@ -1149,7 +1234,10 @@ def embed_dataset(dataset: Dataset,
                 batch=udata,
                 masks_attention=masks_attention,
                 need_cell_only_context=True,
+<<<<<<< HEAD
                 ignore_spc_tokens=ignore_spc_tokens,
+=======
+>>>>>>> main
             )
 
             c_emb = cell_only_ctx[emb_layer].cpu()
@@ -1215,7 +1303,11 @@ def embed_dataset(dataset: Dataset,
     return output_embed
 
 
+<<<<<<< HEAD
 def _build_perturb_index(df: pd.DataFrame) -> dict[str, list[dict]]:
+=======
+def _build_perturb_index(df: pd.DataFrame) -> Dict[str, List[dict]]:
+>>>>>>> main
     """
     Turn perturb_df into an index:
         {perturbed_cell_id: [row_as_dict, …]}
@@ -1226,6 +1318,7 @@ def _build_perturb_index(df: pd.DataFrame) -> dict[str, list[dict]]:
         index[row.perturbed_cell_id].append(row._asdict())
     return index
 
+<<<<<<< HEAD
 def _perturb_batch_with_idx(
     batch: dict,
     index: dict[str, list[dict]],
@@ -1244,6 +1337,22 @@ def _perturb_batch_with_idx(
     for b in range(B):
         cell_ids = list(dict.fromkeys(batch["cell_ids"][b]))
         # Fast reject: does this batch touch any perturbed cell at all?
+=======
+def _perturb_batch(
+    batch: dict,
+    index: Dict[str, List[dict]],
+    seq_len_cell: int = 256,
+) -> dict:
+    """
+    `batch` is the dictionary of column -> list-of-values
+    returned by Hugging-Face when batched=True.
+    Modify the tensors in-place (cheap) and return the same dict.
+    """
+    B = len(batch["cell_ids"])          # batch size
+    for b in range(B):
+        cell_ids: List[str] = list(dict.fromkeys(batch["cell_ids"][b]))
+        # Fast reject: does this example touch any perturbed cell at all?
+>>>>>>> main
         if not any(cid in index for cid in cell_ids):
             continue
 
@@ -1278,7 +1387,11 @@ def _perturb_batch_with_idx(
                 # ---------------------------------------------------------
 
                 if row["perturbation_type"] == "knockout":
+<<<<<<< HEAD
                     gene_expr[idx] = 0.0
+=======
+                    gene_expr[idx]   = 0.0
+>>>>>>> main
                 elif row["perturbation_type"] == "foldchange":
                     gene_expr[idx] *= row["foldchange"]
                 else:
@@ -1286,6 +1399,7 @@ def _perturb_batch_with_idx(
 
     return batch
 
+<<<<<<< HEAD
 def _perturb_batch_with_df(
     batch: dict,
     df: pd.DataFrame,
@@ -1405,11 +1519,28 @@ def perturb_dataset(dataset: Dataset,
         token_dict = pickle.load(f)
 
     # Convert ensembl IDs to token IDs, keeping "all"
+=======
+def perturb_dataset(
+    dataset: Dataset,
+    perturb_df: pd.DataFrame,
+    model_folder_path: str,
+    seq_len_cell: int = 256,
+    nproc: int = 4,
+    batch_size: int = 1000,
+    keep_in_memory: bool = False,
+) -> Dataset:
+    # 1) Load token dictionary once
+    with open(Path(model_folder_path) / "token_dictionary.pkl", "rb") as f:
+        token_dict = pickle.load(f)
+
+    # 2) Convert gene IDs to token IDs up-front (vectorised)
+>>>>>>> main
     perturb_df = perturb_df.copy()
     perturb_df["perturbed_gene_token"] = perturb_df["perturbed_ensembl_id"].where(
         perturb_df["perturbed_ensembl_id"] == "all",
         perturb_df["perturbed_ensembl_id"].map(token_dict),
     )
+<<<<<<< HEAD
     print("Applying perturbations using dataframe:")
     print(perturb_df)
 
@@ -1440,11 +1571,25 @@ def perturb_dataset(dataset: Dataset,
 
     # Map in batch mode
     dataset = dataset.map(
+=======
+
+    # 3) Build an index for O(1) lookup
+    perturb_index = _build_perturb_index(perturb_df)
+    # 4) Partial-apply so the mapper sees only one argument
+    perturb_fn = partial(
+        _perturb_batch,
+        index=perturb_index,
+        seq_len_cell=seq_len_cell,
+    )
+    # 5) Map in batch mode
+    return dataset.map(
+>>>>>>> main
         perturb_fn,
         batched=True,
         batch_size=batch_size,
         num_proc=nproc,
         keep_in_memory=keep_in_memory,
+<<<<<<< HEAD
         load_from_cache_file=False)
 
     # Optionally, return only perturbed cells
@@ -1463,6 +1608,10 @@ def perturb_dataset(dataset: Dataset,
         load_from_cache_file=False)
 
     return dataset
+=======
+        load_from_cache_file=False,
+    )
+>>>>>>> main
 
 
 @torch.inference_mode()
@@ -1470,7 +1619,10 @@ def harmonize_tokenize_embed_pipeline(
         adata: ad.AnnData,
         sample_key: str | None,
         model_folder_path: str,
+<<<<<<< HEAD
         cache_directory_path: str,
+=======
+>>>>>>> main
         gene_perturb_df: pd.DataFrame | None = None,               
         nproc: int = 4,
         processing_mode: Literal['sequential',
@@ -1478,6 +1630,7 @@ def harmonize_tokenize_embed_pipeline(
         save_dataset_path: Path | str | None = None,
         num_shards: int = 32,
         emb_layer: int | None = None,
+<<<<<<< HEAD
         agg_excluded_genes: list[int] | None = None,
         top_k: int | None = None,
         batch_size: int = 128,
@@ -1487,6 +1640,13 @@ def harmonize_tokenize_embed_pipeline(
         add_neigh_cell_ids: bool = False,
         min_cells_per_gene: int = 0,
         ignore_spc_tokens: bool = True,
+=======
+        agg_excluded_tokens: list[int] | None = None,
+        top_k: int | None = None,
+        batch_size: int = 128,
+        pin_memory: bool = False,
+        num_workers: int = 12
+>>>>>>> main
         ) -> ad.AnnData:
     """
     Harmonize, tokenize and embed an AnnData object.
@@ -1500,8 +1660,11 @@ def harmonize_tokenize_embed_pipeline(
     model_folder_path:
         Path to the folder containing the model config, token dictionary, and
         normalization factors.
+<<<<<<< HEAD
     cache_directory_path:
         Path where the cache is stored during dataset creation.
+=======
+>>>>>>> main
     gene_perturb_df:
         DataFrame with perturbation data, e.g.
         ```
@@ -1522,13 +1685,18 @@ def harmonize_tokenize_embed_pipeline(
         Number of shards with which huggingface dataset is saved.
     emb_layer:
         Layer for which to retrieve the embedding.
+<<<<<<< HEAD
     agg_excluded_genes:
+=======
+    agg_excluded_tokens:
+>>>>>>> main
         List of tokens to be excluded from the aggregation.
     top_k:
         Include only top_k genes in aggregation.
     batch_size:
         Dataloader param.
     pin_memory:
+<<<<<<< HEAD
         Dataloader param.  
     num_workers:
         Number of workers used for model inference.
@@ -1537,6 +1705,11 @@ def harmonize_tokenize_embed_pipeline(
     add_neigh_cell_ids:
         Whether neighbor cell IDs should be stored in tokenized data (used for
         perturbations).    
+=======
+        Dataloader param.
+    num_workers:
+        Number of workers used for model inference.
+>>>>>>> main
 
     Returns:
     -----------
@@ -1544,35 +1717,51 @@ def harmonize_tokenize_embed_pipeline(
         A harmonized AnnData object with embeddings stored in `adata.obsm`.
     """
     datasets = []
+<<<<<<< HEAD
     adata.obs_names_make_unique()
     if sample_key:
         samples = adata.obs[sample_key].unique().tolist()
         idx_list = []
         gene_list = []
+=======
+    if sample_key:
+        samples = adata.obs[sample_key].unique().tolist()
+>>>>>>> main
 
         for sample in samples:
             adata_sample = adata[adata.obs[sample_key] == sample]
             print(f"Start processing sample: {sample}...")
             print(f"Harmonizing sample {sample}...")
+<<<<<<< HEAD
             adata_sample = harmonize_adata(
                 adata_sample,
                 min_cells_per_gene=min_cells_per_gene)
             idx_list.extend(adata_sample.obs.index.tolist())
             gene_list.extend(adata_sample.var.index.tolist())
+=======
+            adata_sample = harmonize_adata(adata_sample)
+>>>>>>> main
             print(f"Harmonized sample {sample}.")
 
             print(f"Tokenizing sample {sample}...")
             dataset_sample = tokenize_adata(
                 adata=adata_sample,
+<<<<<<< HEAD
                 model_folder_path=model_folder_path,
                 cache_directory_path=cache_directory_path,             
+=======
+                model_folder_path=model_folder_path,             
+>>>>>>> main
                 nproc=nproc,
                 processing_mode=processing_mode)
             datasets.append(dataset_sample)
             print(f"Tokenized sample {sample}.")
 
+<<<<<<< HEAD
         adata = adata[idx_list, list(set(gene_list))]
 
+=======
+>>>>>>> main
         print(f"Concatenating tokenized data...")
         dataset = concatenate_datasets(datasets)
         print(f"Concatenated tokenized data.")
@@ -1580,20 +1769,30 @@ def harmonize_tokenize_embed_pipeline(
     else:
         print("No `sample_key` specified. Start processing entire AnnData.")
         print(f"Harmonizing AnnData...")
+<<<<<<< HEAD
         adata = harmonize_adata(
             adata,
             min_cells_per_gene=min_cells_per_gene)
+=======
+        adata = harmonize_adata(adata)
+>>>>>>> main
         print(f"Harmonized AnnData.")
 
         print(f"Tokenizing AnnData.")
         dataset = tokenize_adata(
             adata=adata,
+<<<<<<< HEAD
             model_folder_path=model_folder_path,
             cache_directory_path=cache_directory_path,         
             nproc=nproc,
             processing_mode=processing_mode,
             add_neigh_cell_ids=add_neigh_cell_ids,
             use_generator=use_generator)        
+=======
+            model_folder_path=model_folder_path,             
+            nproc=nproc,
+            processing_mode=processing_mode)        
+>>>>>>> main
 
     if save_dataset_path:
         print(f"Saving tokenized data...")
@@ -1607,12 +1806,20 @@ def harmonize_tokenize_embed_pipeline(
         dataset=dataset,
         model_folder_path=model_folder_path,
         emb_layer=emb_layer,
+<<<<<<< HEAD
         agg_excluded_genes=agg_excluded_genes,
         top_k=top_k,
         batch_size=batch_size,
         pin_memory=pin_memory,
         num_workers=num_workers,
         ignore_spc_tokens=ignore_spc_tokens)
+=======
+        agg_excluded_tokens=agg_excluded_tokens,
+        top_k=top_k,
+        batch_size=batch_size,
+        pin_memory=pin_memory,
+        num_workers=num_workers)
+>>>>>>> main
     print(f"Embedded tokenized data.")
 
     # Add embeddings to adata
@@ -1789,8 +1996,12 @@ def gene_embed_dataset(dataset: Dataset,
         pin_memory=pin_memory,
         num_workers=num_workers,
         drop_last=False,
+<<<<<<< HEAD
         persistent_workers=False,
         mega_batch_mult_max=model_config['data'].get('mega_batch_mult_max', 1000))
+=======
+        persistent_workers=False)
+>>>>>>> main
 
     # Load model checkpoint
     _, _, target_encoder, _, _, start_epoch, _ = load_checkpoint(
@@ -1819,7 +2030,11 @@ def gene_embed_dataset(dataset: Dataset,
     MAX_OCC = model_config['data']['n_segments'] -1 
 
 
+<<<<<<< HEAD
     for itr, (udata, _, _, masks_attention, pad_special_tokens) in tqdm(enumerate(loader)):
+=======
+    for itr, (udata, _, _, masks_attention) in tqdm(enumerate(loader)):
+>>>>>>> main
         for key in udata.keys():
             if key != 'cell_id':
                 udata[key] = udata[key].to(device, non_blocking=True)
@@ -2066,7 +2281,11 @@ def get_gene_embed(
     batch_size: int = 128,
     pin_memory: bool = False,
     num_workers: int = 12,
+<<<<<<< HEAD
     include_spatial_cell_emb: bool = False,
+=======
+    include_spatial_cell_emb: bool = True,
+>>>>>>> main
 ) -> dict[str, np.ndarray]:
     """
     Retrieve gene embeddings for specified cell and neighborhood gene IDs.
@@ -2474,4 +2693,8 @@ def average_receptor_embedding(
             'count': count_emb,
             'average': avg_emb
         }
+<<<<<<< HEAD
     return result
+=======
+    return result
+>>>>>>> main

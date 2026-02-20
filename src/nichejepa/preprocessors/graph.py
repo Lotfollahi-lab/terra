@@ -1,4 +1,5 @@
 import anndata as ad
+<<<<<<< HEAD
 import scipy.sparse as sp
 try:
     import squidpy as sq
@@ -56,6 +57,9 @@ def _combine_neighbor_graphs(adata: ad.AnnData,
                     adata.obsp['spatial_connectivities'])
 
     return adata
+=======
+import squidpy as sq
+>>>>>>> main
 
 
 def construct_neighbor_graph(adata: ad.AnnData,
@@ -63,8 +67,12 @@ def construct_neighbor_graph(adata: ad.AnnData,
                              radius: float | None = None,
                              delaunay: bool = True,
                              include_self_loop: bool = False,
+<<<<<<< HEAD
                              batch_key: str | None = None,
                              compute_neighbor_counts: bool = False,
+=======
+                             compute_neighbor_counts: bool = False
+>>>>>>> main
                              ) -> ad.AnnData:
     """
     Compute neighbor graph and optionally aggregate cell features across
@@ -89,11 +97,14 @@ def construct_neighbor_graph(adata: ad.AnnData,
         intersection neighborhood graph will be computed.
     include_self_loop:
         If 'True', include cell itself in neighborhood graph.
+<<<<<<< HEAD
     batch_key:
         Key in adata.obs where the batch is stored in case the AnnData
         contains multiple batches. This is important to specify if there
         are multiple batches in the AnnData to perform separate neighbor
         graph computation and then concatenate.
+=======
+>>>>>>> main
     compute_neighbor_counts:
         If 'True', aggregate counts across neighborhood and store in
         `adata.layers['X_neighborhood']`.
@@ -104,6 +115,7 @@ def construct_neighbor_graph(adata: ad.AnnData,
         AnnData object with aggregated counts available in
         `adata.layers['X_neighborhood']`.
     """
+<<<<<<< HEAD
     if batch_key is not None:
         # Get ordered batches
         first_idx = adata.obs.reset_index().groupby(batch_key).head(1).index
@@ -136,9 +148,54 @@ def construct_neighbor_graph(adata: ad.AnnData,
             radius,
             delaunay,
             include_self_loop)           
+=======
+    if n_neighs is not None:
+        # Compute knn spatial neighborhood graph
+        sq.gr.spatial_neighbors(adata,
+                                coord_type='generic',
+                                spatial_key='spatial',
+                                n_neighs=n_neighs,
+                                set_diag=include_self_loop,
+                                ) 
+        knn_connectivities = adata.obsp['spatial_connectivities']  
+    if radius is not None:
+        # Compute spatial neighborhood graph with radius
+        sq.gr.spatial_neighbors(adata,
+                                coord_type='generic',
+                                spatial_key='spatial',
+                                radius=radius,
+                                set_diag=include_self_loop,
+                                )
+        radius_connectivities = adata.obsp['spatial_connectivities'] 
+        if n_neighs is not None:
+            adata.obsp[
+                'spatial_connectivities'] = knn_connectivities.multiply(
+                    adata.obsp['spatial_connectivities'])
+    
+    if delaunay:
+        # Compute spatial neighborhood graph with delaunay triangulation
+        sq.gr.spatial_neighbors(adata,
+                                coord_type='generic',
+                                spatial_key='spatial',
+                                delaunay=True,
+                                set_diag=include_self_loop,
+                                )
+        if n_neighs is not None:
+                adata.obsp[
+                    'spatial_connectivities'] = knn_connectivities.multiply(
+                        adata.obsp['spatial_connectivities'])
+        if radius is not None:
+                adata.obsp[
+                    'spatial_connectivities'] = radius_connectivities.multiply(
+                        adata.obsp['spatial_connectivities'])            
+>>>>>>> main
     
     if compute_neighbor_counts:
         adata.layers['X_neighborhood'] = (
             adata.obsp['spatial_connectivities'].T @ adata.X)
 
+<<<<<<< HEAD
     return adata
+=======
+    return adata
+>>>>>>> main

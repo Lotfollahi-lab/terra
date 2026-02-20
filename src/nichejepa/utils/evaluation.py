@@ -223,6 +223,134 @@ def compute_emd(
         emd_dim = wasserstein_distance(x[:, dim], y[:, dim])
         emds.append(emd_dim)
     return float(np.mean(emds))
+<<<<<<< HEAD
+=======
+
+
+def get_top_gene_pairs(
+    cos_sim_ratio:         torch.Tensor,
+    count_cell:            torch.Tensor,
+    count_neb:             torch.Tensor,
+    cos_sim_cell:          torch.Tensor,
+    cos_sim_neb:           torch.Tensor,
+    gene_df:               pd.DataFrame,
+    cell_gene_ids:         List[str],
+    neighborhood_gene_ids: List[str],
+    min_count: int = 80,
+    sim_thresh: float = 0.15,
+    k: int = 500
+) -> pd.DataFrame:
+    """
+    Returns a DataFrame of the top-k (row, col) pairs by cos_sim_ratio,
+    including Ensembl IDs and gene names.
+
+    Expects gene_df.index == gene_name, and gene_df['ensembl_id'] == Ensembl IDs.
+    """
+
+    # Build a fast lookup from Ensembl → gene_name
+    id_to_name = {ensg: name for name, ensg in gene_df['ensembl_id'].items()}
+
+    # 1) Mask diagonal
+    ratio = cos_sim_ratio.clone()
+    ratio.fill_diagonal_(float('nan'))
+
+    # 2) Valid‑entry mask
+    base_counts = (count_cell >= min_count) & (count_neb >= min_count)
+    top_sim     = (cos_sim_cell >= sim_thresh) & (cos_sim_neb >= sim_thresh)
+    valid_mask  = base_counts & top_sim & ~torch.isnan(ratio)
+
+    # 3) Flatten & top‑k
+    flat_vals = ratio.flatten()
+    flat_mask = valid_mask.flatten()
+    valid_vals = flat_vals[flat_mask]
+    n_valid    = valid_vals.numel()
+    top_k      = min(k, n_valid)
+    top_vals, top_idx = torch.topk(valid_vals, top_k, largest=True)
+
+    valid_indices    = flat_mask.nonzero(as_tuple=True)[0]
+    top_flat_indices = valid_indices[top_idx]
+    N = ratio.size(1)
+    rows = (top_flat_indices // N).cpu().tolist()
+    cols = (top_flat_indices %  N).cpu().tolist()
+    vals = top_vals.cpu().tolist()
+
+    # 4) Build a records list
+    records = []
+    for r, c, v in zip(rows, cols, vals):
+        cell_ensg = cell_gene_ids[r]
+        neb_ensg  = neighborhood_gene_ids[c]
+        cell_name = id_to_name.get(cell_ensg, "UNKNOWN")
+        neb_name  = id_to_name.get(neb_ensg,  "UNKNOWN")
+        records.append({
+            'row_idx'        : r,
+            'col_idx'        : c,
+            'cell_ensembl'   : cell_ensg,
+            'neb_ensembl'    : neb_ensg,
+            'cell_gene_name' : cell_name,
+            'neb_gene_name'  : neb_name,
+            'gene_pair_score'          : v
+        })
+
+    # 5) Return as pandas.DataFrame
+    return pd.DataFrame.from_records(
+        records,
+        columns=[
+            'row_idx','col_idx',
+            'cell_ensembl','neb_ensembl',
+            'cell_gene_name','neb_gene_name',
+            'gene_pair_score'
+        ]
+    )
+
+
+def get_top_gene_score(
+    gene_pair_score: np.ndarray,
+    cell_gene_ensembl_id: list,
+    gene_df: pd.DataFrame,
+    gene_counts: np.ndarray,
+    min_count: int = 80
+) -> pd.DataFrame:
+    """
+    Compute gene scores from a cosine similarity matrix and add gene names,
+    filtering genes by a minimum count threshold.
+
+    Args:
+        gene_pair_score (np.ndarray): Square cosine similarity matrix (n_genes, n_genes).
+        cell_gene_ensembl_id (list or np.ndarray): List/array of gene Ensembl IDs of length n_genes.
+        gene_df (pd.DataFrame): DataFrame with columns ['gene_name', 'ensembl_id'].
+        gene_counts (np.ndarray): Square count matrix (n_genes, n_genes); diagonal contains gene-level counts.
+        min_count (int): Minimum count threshold to filter genes.
+
+    Returns:
+        pd.DataFrame: DataFrame with columns ['gene_ensembl', 'gene_name', 'gene_score']
+                      for genes with valid diagonal scores and counts >= min_count.
+    """
+    # 1) Extract diagonals
+    diag_scores = np.diag(gene_pair_score)   # similarity values
+    diag_counts = np.diag(gene_counts)       # counts per gene
+    
+    # 2) Filter by valid (non-NaN) scores and min count
+    valid_mask = (~np.isnan(diag_scores)) & (diag_counts >= min_count)
+    valid_idx = np.where(valid_mask)[0]
+    
+    # 3) Fetch gene IDs and scores
+    gene_ids = np.array(cell_gene_ensembl_id, dtype=str)
+    valid_genes = gene_ids[valid_idx]
+    valid_scores = diag_scores[valid_mask]
+    
+    # 4) Map Ensembl ID to gene name
+    id_to_name = {ensg: name for name, ensg in gene_df['ensembl_id'].items()}
+    valid_names = [id_to_name.get(gene_id, 'UNKNOWN') for gene_id in valid_genes]
+    
+    # 5) Assemble into DataFrame
+    gene_score = pd.DataFrame({
+        'gene_ensembl': valid_genes,
+        'gene_name': valid_names,
+        'gene_score': valid_scores
+    })
+    
+    return gene_score
+>>>>>>> main
 
 
 def get_top_gene_pairs(

@@ -48,4 +48,8 @@ def init_distributed(port: int=40112, rank_and_world_size=(None, None)):
         world_size, rank = 1, 0
         logger.info(f'distributed training not available {e}')
 
+<<<<<<< HEAD
     return world_size, rank
+=======
+    return world_size, rank
+>>>>>>> main

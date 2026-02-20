@@ -27,7 +27,10 @@ class CustomDistributedLengthGroupedSampler(DistributedSampler):
                  seed: int = 0,
                  drop_last: bool = False,
                  lengths: list[int] | None = None,
+<<<<<<< HEAD
                  mega_batch_mult_max: int = 1000,
+=======
+>>>>>>> main
                  ):
         """
         Distributed Sampler that samples indices in a way that groups
@@ -93,7 +96,10 @@ class CustomDistributedLengthGroupedSampler(DistributedSampler):
         self.total_size = self.num_samples * self.num_replicas
         self.seed = seed
         self.lengths = self.cell_dataset.n_nz_tokens
+<<<<<<< HEAD
         self.mega_batch_mult_max = mega_batch_mult_max
+=======
+>>>>>>> main
 
     def __iter__(self) -> Iterator:
         # Deterministically shuffle based on epoch and seed
@@ -121,7 +127,10 @@ class CustomDistributedLengthGroupedSampler(DistributedSampler):
     def _get_length_grouped_indices(self,
                                     mega_batch_mult: int | None = None,
                                     generator: torch.Generator | None = None,
+<<<<<<< HEAD
                                     mega_batch_mult_max: int = 1000,
+=======
+>>>>>>> main
                                     ) -> list[int]:
         """
         Return a list of indices so that each slice of `batch_size`
@@ -218,8 +227,12 @@ def init_dataloader_and_sampler(cell_dataset: CellBaseDataset,
             batch_size=batch_size,
             num_replicas=world_size,
             rank=rank,
+<<<<<<< HEAD
             seed=_GLOBAL_SEED,
             mega_batch_mult_max=mega_batch_mult_max)
+=======
+            seed=_GLOBAL_SEED)
+>>>>>>> main
     else:
         dist_sampler = DistributedSampler(
             dataset=cell_dataset,
@@ -235,4 +248,8 @@ def init_dataloader_and_sampler(cell_dataset: CellBaseDataset,
                             **dataloader_kwargs)
     logger.info('Dataloader and -sampler created.')
 
+<<<<<<< HEAD
     return dataloader, dist_sampler
+=======
+    return dataloader, dist_sampler
+>>>>>>> main

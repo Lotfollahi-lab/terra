@@ -187,7 +187,11 @@ class CellBaseTokenizer(ABC):
             norm_factor_file_path: Path | str = norm_factor_file_path,
             token_dictionary_file_path: Path | str = token_dictionary_file_path,
             add_neigh_cell_ids: bool = False,
+<<<<<<< HEAD
             include_special_tokens: bool = True,
+=======
+            include_special_tokens: bool = False,
+>>>>>>> main
             ):
         self.nproc = nproc
         self.processing_mode = processing_mode

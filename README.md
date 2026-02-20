@@ -61,3 +61,10 @@ To perform a sweep during training, use:
 ```shell
 python -m pdb main.py --fname configs/$DATASET.yaml --devices cuda:0 --do_sweep
 ```
+
+For multi-node training, first configure the required settings in your job_config file. 
+Then, execute the following command:
+
+```shell
+bsub_mn_mg_yaml configs/job/hst_corpus_70m_test.yaml
+```
