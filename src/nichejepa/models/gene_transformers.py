@@ -194,11 +194,11 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
             attn_base: torch.Tensor | None,
             layers: Sequence[int],
             masks: list[torch.Tensor] | torch.Tensor | None,
-            cell_only: bool,
+            n_included_cells: int,
             ignore_spc_tokens: bool = False) -> dict[int, torch.Tensor]:
         """
         Helper function to return embeddings for either full context or
-        cell only context.
+        masked cell context.
         """
         layers: list[int] = sorted({int(l) for l in layers})
         max_layer: int = max(layers)
@@ -219,20 +219,15 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
             #        attn[:, :, :, :self.n_special_tokens] = False
             # Optionally block cross-attention from cell queries to
             # neighborhood keys
-            if cell_only:
+            if n_included_cells:
                 attn[
                     :,
                     :,
-                    self.n_special_tokens:(self.n_special_tokens+self.seq_len_cell),
-                    (self.n_special_tokens+self.seq_len_cell):] = False
+                    self.n_special_tokens: (self.n_special_tokens + self.seq_len_cell * n_included_cells),
+                    (self.n_special_tokens + self.seq_len_cell * n_included_cells):] = False
 
-        if cell_only:
-            x[:, (self.n_special_tokens+self.seq_len_cell):, :] = 0
-
-            #torch.set_printoptions(profile="full")
-            #print(attn.shape)
-            #print(attn[0, :, 1, :])
-            #print(attn[0, :, 513, :])
+        if n_included_cells:
+            x[:, (self.n_special_tokens + self.seq_len_cell * n_included_cells):, :] = 0
 
         # Mask token embeddings if masks are provided
         if masks is not None:
@@ -1188,7 +1183,7 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
             batch: Mapping[str, torch.Tensor],
             masks: list[torch.Tensor] | torch.Tensor | None = None,
             masks_attention: torch.Tensor | None = None,
-            need_cell_only_context: bool = True,
+            n_included_cells_list: list[int] = [],
             ignore_spc_tokens: bool = True,
             ) -> tuple[
                 dict[int, torch.Tensor], dict[int, torch.Tensor] | None]:
@@ -1288,22 +1283,19 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
         #    if self.n_special_tokens:
         #        x[:, :self.n_special_tokens, :] = 0
 
-        full_ctx: dict[int, torch.Tensor] = self._compute_layer_emb(
-            x,
-            masks_attention,
-            layers,
-            masks,
-            cell_only=False,
-            ignore_spc_tokens=ignore_spc_tokens)
-        cell_only_ctx: dict[int, torch.Tensor] = self._compute_layer_emb(
-            x,
-            masks_attention,
-            layers,
-            masks,
-            cell_only=True,
-            ignore_spc_tokens=ignore_spc_tokens) if need_cell_only_context else None
+        ctx_emb_list = []
 
-        return full_ctx, cell_only_ctx
+        for n_cells in n_included_cells_list:
+            ctx_emb: dict[int, torch.Tensor] = self._compute_layer_emb(
+                x,
+                masks_attention,
+                layers,
+                masks,
+                n_included_cells=n_cells,
+                ignore_spc_tokens=ignore_spc_tokens)
+            ctx_emb_list.append(ctx_emb)
+
+        return ctx_emb_list
 
 
 class GeneTransformerRankPredictor(GeneTransformerBasePredictor):

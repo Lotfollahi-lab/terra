@@ -62,6 +62,7 @@ def infer(args: dict,
           agg_type: Literal['cls',
                             'avg',
                             'weighted_avg'] = 'avg',
+          n_included_cells_list: list = [],
           masked_tokens: list[int] | None = None,
           agg_excluded_genes: list[int] | None = None,
           top_k: int | None = None,
@@ -420,20 +421,26 @@ def infer(args: dict,
         with torch.cuda.amp.autocast(dtype=torch.bfloat16,
                                      enabled=args['meta']['use_bfloat16']):
 
-            full_ctx, cell_only_ctx = return_layer_emb_fn(
+
+            if len(n_included_cells_list) == 0:
+                n_included_cells_list = [1, n_segments]
+
+            ctx_emb_list = return_layer_emb_fn(
                 layers=emb_layers,
                 batch=udata,
                 masks_attention=masks_attention,
-                need_cell_only_context=True,
+                n_included_cells_list=n_included_cells_list,
                 ignore_spc_tokens=ignore_spc_tokens,
             )
 
             cell_emb_list = []
             neighborhood_emb_list = []
-
-            for l in emb_layers:
-                cell_emb_list.append(cell_only_ctx[l].cpu())
-                neighborhood_emb_list.append(full_ctx[l].cpu())
+            
+            all_ctx_emb = []
+            for n in range(len(n_included_cells_list)):
+                all_ctx_emb.append([])
+                for l in emb_layers:
+                    all_ctx_emb[n].append(ctx_emb_list[n][l].cpu())
 
         # Aggregate gene embeddings into cell and neighborhood embeddings
         cell_mask = create_binary_selection_mask(
@@ -458,7 +465,7 @@ def infer(args: dict,
                 top_k=top_k,
                 n_segments=n_segments).cpu()
 
-        for i, (c_emb, n_emb) in enumerate(zip(cell_emb_list, neighborhood_emb_list)):
+        for layer, (c_emb, n_emb) in enumerate(zip(all_ctx_emb[0], all_ctx_emb[1])):
             # Average gene embeddings into cell and neighborhood embedding 
             if agg_type == 'avg':
                 cell_emb = compute_mean_unmasked_emb(c_emb, cell_mask)
@@ -490,13 +497,13 @@ def infer(args: dict,
                     all_spatial_cell_emb_list.append([spatial_cell_emb])
                 all_neighborhood_emb_list.append([neighborhood_emb])
             else:
-                all_cell_emb_list[i].append(cell_emb)
+                all_cell_emb_list[layer].append(cell_emb)
                 if include_spatial_cell_emb:
-                    all_spatial_cell_emb_list[i].append(spatial_cell_emb) 
-                all_neighborhood_emb_list[i].append(neighborhood_emb)
+                    all_spatial_cell_emb_list[layer].append(spatial_cell_emb) 
+                all_neighborhood_emb_list[layer].append(neighborhood_emb)
 
             # Store cell and neighborhood gene embeddings of last layer
-            if i == (len(neighborhood_emb_list) - 1):
+            if layer == (len(neighborhood_emb_list) - 1):
                 emb = c_emb
                 if len(cell_gene_ids) != 0 or len(neighborhood_gene_ids) != 0 :
                     if itr == 0 or itr == len(loader)-1:
