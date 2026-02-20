@@ -1185,8 +1185,7 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
             masks_attention: torch.Tensor | None = None,
             n_included_cells_list: list[int] = [],
             ignore_spc_tokens: bool = True,
-            ) -> tuple[
-                dict[int, torch.Tensor], dict[int, torch.Tensor] | None]:
+            ) -> dict[int, dict[int, torch.Tensor]]:
         """
         Run encoder forward pass on a batch of cell graph sequences,
         applying masks if provided, and return the embeddings for
@@ -1283,19 +1282,18 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
         #    if self.n_special_tokens:
         #        x[:, :self.n_special_tokens, :] = 0
 
-        ctx_emb_list = []
-
-        for n_cells in n_included_cells_list:
-            ctx_emb: dict[int, torch.Tensor] = self._compute_layer_emb(
+        ctx_layer_gene_emb = {}
+        for n_included_cells in n_included_cells_list:
+            layer_gene_emb: dict[int, torch.Tensor] = self._compute_layer_emb(
                 x,
                 masks_attention,
                 layers,
                 masks,
-                n_included_cells=n_cells,
+                n_included_cells=n_included_cells,
                 ignore_spc_tokens=ignore_spc_tokens)
-            ctx_emb_list.append(ctx_emb)
+            ctx_layer_gene_emb[n_included_cells] = layer_gene_emb
 
-        return ctx_emb_list
+        return ctx_layer_gene_emb
 
 
 class GeneTransformerRankPredictor(GeneTransformerBasePredictor):

@@ -389,8 +389,14 @@ def infer(args: dict,
     cos_sim_dict = {}
     emd_list = []
 
+    if len(n_included_cells_list) == 0:
+        n_included_cells_list = [1, n_segments]
+    all_ctx_agg_emb = [[] for i in range(len(n_included_cells_list))]
 
+    found = False
     for itr, (udata, _, _, masks_attention, pad_special_tokens) in tqdm(enumerate(loader)):
+        if found:
+            break
         for key in udata.keys():
             if key != 'cell_id':
                 udata[key] = udata[key].to(device, non_blocking=True)
@@ -421,11 +427,7 @@ def infer(args: dict,
         with torch.cuda.amp.autocast(dtype=torch.bfloat16,
                                      enabled=args['meta']['use_bfloat16']):
 
-
-            if len(n_included_cells_list) == 0:
-                n_included_cells_list = [1, n_segments]
-
-            ctx_emb_list = return_layer_emb_fn(
+            ctx_layer_gene_emb = return_layer_emb_fn(
                 layers=emb_layers,
                 batch=udata,
                 masks_attention=masks_attention,
@@ -433,77 +435,36 @@ def infer(args: dict,
                 ignore_spc_tokens=ignore_spc_tokens,
             )
 
-            cell_emb_list = []
-            neighborhood_emb_list = []
-            
-            all_ctx_emb = []
-            for n in range(len(n_included_cells_list)):
-                all_ctx_emb.append([])
-                for l in emb_layers:
-                    all_ctx_emb[n].append(ctx_emb_list[n][l].cpu())
-
-        # Aggregate gene embeddings into cell and neighborhood embeddings
-        cell_mask = create_binary_selection_mask(
-            ns_tokens,
-            selection_type="agg_cell",
-            excluded_tokens=agg_excluded_tokens,
-            seq_len_cell=seq_len_cell,
-            top_k=top_k).cpu()
-        if tokenizer_type == 'cell_neighborhood':
-            neighborhood_mask = create_binary_selection_mask(
+        for i, n in enumerate(n_included_cells_list):
+            mask = create_binary_selection_mask(
                 ns_tokens,
-                selection_type="agg_neighborhood",
-                excluded_tokens=agg_excluded_tokens,
-                seq_len_cell=seq_len_cell,
-                top_k=top_k).cpu()
-        elif tokenizer_type == 'cell_graph':
-            neighborhood_mask = create_binary_selection_mask(
-                ns_tokens,
-                selection_type="agg_graph",
+                selection_type="agg",
+                n_included_cells=n,
                 excluded_tokens=agg_excluded_tokens,
                 seq_len_cell=seq_len_cell,
                 top_k=top_k,
                 n_segments=n_segments).cpu()
+            for j, l in enumerate(emb_layers):
+                gene_emb = ctx_layer_gene_emb[n][l].cpu()
+                if agg_type == 'avg':
+                    mean_unmasked_emb = compute_mean_unmasked_emb(
+                        gene_emb, mask)
+                elif agg_type == "weighted_avg":
+                    weights = compute_unmasked_rank_based_weights(
+                        tokens, mask)
+                    mean_unmasked_emb = compute_mean_unmasked_emb(
+                        gene_emb * weights.unsqueeze(-1),
+                        mask)
 
-        for layer, (c_emb, n_emb) in enumerate(zip(all_ctx_emb[0], all_ctx_emb[1])):
-            # Average gene embeddings into cell and neighborhood embedding 
-            if agg_type == 'avg':
-                cell_emb = compute_mean_unmasked_emb(c_emb, cell_mask)
-                if include_spatial_cell_emb:
-                    spatial_cell_emb = compute_mean_unmasked_emb(n_emb, cell_mask)
-                neighborhood_emb = compute_mean_unmasked_emb(n_emb, neighborhood_mask)
-            elif agg_type == "weighted_avg":
-                cell_weights = compute_unmasked_rank_based_weights(
-                    tokens, cell_mask)
-                cell_emb = compute_mean_unmasked_emb(
-                    c_emb * cell_weights.unsqueeze(-1),
-                    cell_mask)
-                if include_spatial_cell_emb:
-                    spatial_cell_weights = compute_unmasked_rank_based_weights(
-                        tokens, cell_mask)
-                    spatial_cell_emb = compute_mean_unmasked_emb(
-                        n_emb * cell_weights.unsqueeze(-1),
-                        cell_mask)
-                neighborhood_weights = compute_unmasked_rank_based_weights(
-                    tokens, neighborhood_mask)
-                neighborhood_emb = compute_mean_unmasked_emb(
-                    n_emb * neighborhood_weights.unsqueeze(-1),
-                    neighborhood_mask)
+                # Concat layer-specific embeddings across batches
+                if itr == 0:
+                    all_ctx_agg_emb[i].append([mean_unmasked_emb])
+                else:
+                    all_ctx_agg_emb[i][j].append(mean_unmasked_emb)
 
-            # Concat layer-specific embeddings across batches
-            if itr == 0:
-                all_cell_emb_list.append([cell_emb])
-                if include_spatial_cell_emb:
-                    all_spatial_cell_emb_list.append([spatial_cell_emb])
-                all_neighborhood_emb_list.append([neighborhood_emb])
-            else:
-                all_cell_emb_list[layer].append(cell_emb)
-                if include_spatial_cell_emb:
-                    all_spatial_cell_emb_list[layer].append(spatial_cell_emb) 
-                all_neighborhood_emb_list[layer].append(neighborhood_emb)
-
+            """
             # Store cell and neighborhood gene embeddings of last layer
-            if layer == (len(neighborhood_emb_list) - 1):
+            if j == (len(all_ctx_agg_emb[0]) - 1):
                 emb = c_emb
                 if len(cell_gene_ids) != 0 or len(neighborhood_gene_ids) != 0 :
                     if itr == 0 or itr == len(loader)-1:
@@ -629,6 +590,10 @@ def infer(args: dict,
                     all_neb_gene_marker_stats['pair_count'].append(gene_score_pair_count_neb.squeeze(1).cpu())
                     all_neb_gene_marker_stats['cell_count'].append(gene_score_cell_count_neb.squeeze(1).cpu())
                 # --- End: gene marker score computation ---
+            """
+    
+    print(all_ctx_agg_emb)
+    
     # Add metadata
     adata = ad.AnnData(
         obs=pd.DataFrame({'cell_id': all_cell_ids},
@@ -648,18 +613,12 @@ def infer(args: dict,
     adata_metadata = adata_metadata[adata.obs.index, :].copy()
     adata.obsm['spatial'] = adata_metadata.obsm['spatial']
    
-    # Store cell and neighborhood embeddings of all observations across layers  
-    for i, emb_layer in enumerate(emb_layers):
-        adata.obsm[f"cell_emb_layer_{emb_layer}"] = np.array(torch.cat(
-            all_cell_emb_list[i],
-            dim=0))
-        if include_spatial_cell_emb:
-            adata.obsm[f"spatial_cell_emb_layer_{emb_layer}"] = np.array(torch.cat(
-                all_spatial_cell_emb_list[i],
-                dim=0))            
-        adata.obsm[f"neighborhood_emb_layer_{emb_layer}"] = np.array(torch.cat(
-            all_neighborhood_emb_list[i],
-            dim=0))
+    # Store cell and neighborhood embeddings of all observations across layers
+    for i, n in enumerate(n_included_cells_list):
+        for j, l in enumerate(emb_layers):
+            adata.obsm[f"ctx_{n}_emb_layer_{l}"] = np.array(torch.cat(
+                all_ctx_agg_emb[i][j],
+                dim=0))
 
     # Store cell and neighborhood gene embeddings of all observations in the
     # last layer
