@@ -591,6 +591,13 @@ class CellNeighborhoodDataset(CellBaseDataset):
 
         # Retrieve Hugging Face item once
         item = self.dataset[item]
+
+        # Add <cls> and special tokens
+        item['cls_tokens'] = [2]
+        item['tissue_token'] = [103]
+        item['assay_token'] = [104]
+        item['gene_panel_token'] = [105]
+        item['batch_token'] = [106]
         
         # Get (sampled) gene tokens, positions, segments, and values
         gene_tokens_cell, \
