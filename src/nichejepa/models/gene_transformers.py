@@ -227,8 +227,8 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                     self.n_special_tokens: (self.n_special_tokens + self.seq_len_cell * n_included_cells),
                     (self.n_special_tokens + self.seq_len_cell * n_included_cells):] = False
 
-        if n_included_cells:
-            x[:, (self.n_special_tokens + self.seq_len_cell * n_included_cells):, :] = 0
+        #if n_included_cells:
+        #    x[:, (self.n_special_tokens + self.seq_len_cell * n_included_cells):, :] = 0
 
         # Mask token embeddings if masks are provided
         if masks is not None:
