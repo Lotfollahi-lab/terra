@@ -348,5 +348,3 @@ def get_top_gene_score(
     })
     
     return gene_score
-
-

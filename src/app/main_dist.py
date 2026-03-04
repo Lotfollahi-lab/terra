@@ -3,7 +3,7 @@ import torch
 
 import logging
 
-import torch.multiprocessing as mp
+#import torch.multiprocessing as mp
 import torch.distributed as dist
 from app.train import train
 from nichejepa.datasets.utils import prepare_dataset
@@ -141,10 +141,10 @@ def main():
     print(f"tcp://{os.environ['MASTER_ADDR']}:{os.environ['MASTER_PORT']}")
 
     # Set multiprocessing start method
-    try:
-        mp.set_start_method("spawn", force=True)
-    except RuntimeError as e:
-        logger.info(f"Multiprocessing start method unchanged: {e}")
+    #try:
+    #    mp.set_start_method("spawn", force=True)
+    #except RuntimeError as e:
+    #    logger.info(f"Multiprocessing start method unchanged: {e}")
 
     torch.cuda.set_device(LOCAL_RANK)
 

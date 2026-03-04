@@ -1,8 +1,16 @@
 data:
-  dataset_name: 'mmb0-1b_smb1-1b_2p'
-  raw_data_folder_path: '/home/aih/sebastian.birk/workspace/projects/nichejepa-reproducibility/data/st_data/silver/mmb0-1b_smb1-1b_2p'
-  token_dict_folder_path: '/home/aih/sebastian.birk/workspace/projects/nichejepa-reproducibility/data/tokenizer_data/token_dictionary_mus_musculus.pkl'
-  tokenized_data_folder_path: '/home/aih/sebastian.birk/workspace/projects/nichejepa-reproducibility/data/st_data/gold/cell-graph-tokenizer/mmb0-1b_smb1-1b_2p/mmb0-1b_smb1-1b_2p_32_None_None_None_None_None_shifted_log_knn_6_1792.dataset'
+  dataset_name: 'mmb0-1b_smb1-1b_1p'
+  model_input_size: 2816 # 2816, 704, 11264
+  n_neighs: 10
+  rank_cell_norm_method: null
+  rank_gene_norm_method: null
+  rank_count_norm_method: null
+  count_cell_norm_method: null
+  count_gene_norm_method: null
+  count_count_norm_method: 'shifted_log'
+  raw_data_folder_path: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/silver/mmb0-1b_smb1-1b_2p'
+  token_dict_folder_path: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/tokenizer/token_dictionary_mus_musculus.pkl'
+  tokenized_data_folder_path: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/gold/cell-graph-tokenizer/mmb0-1b_smb1-1b_2p/mmb0-1b_smb1-1b_2p_32_None_None_None_None_None_shifted_log_knn_10_2816.dataset' # '/lustre/scratch126/cellgen/lotfollahi/DATASETS/gold/cell-graph-tokenizer/mmb0-1b_smb1-1b_1p/mmb0-1b_smb1-1b_1p_32_None_None_None_None_None_shifted_log_knn_10_2816.dataset', '/lustre/scratch126/cellgen/lotfollahi/DATASETS/gold/cell-graph-tokenizer/mmb0-1b_smb1-1b_1p/mmb0-1b_smb1-1b_1p_32_None_None_None_None_None_shifted_log_knn_10_704.dataset', '/lustre/scratch126/cellgen/lotfollahi/DATASETS/gold/cell-graph-tokenizer/mmb0-1b_smb1-1b_1p/mmb0-1b_smb1-1b_1p_32_None_None_None_None_None_shifted_log_knn_10_11264.dataset'
   precomputed_split: null
   precomputed_n_nonzero_tokens: null
   test_batch_ids: null
@@ -10,48 +18,60 @@ data:
   tokenizer_type: 'cell_graph'
   random_state: 0
   sample_subset: False
-  split: 0.2
+  split: 0
   stratify: False
-  seq_len_cell: 256
-  seq_len_neighborhood: 2560
+  seq_len_cell: 256 # 256, 64, 1024
+  seq_len_neighborhood: 2560 # 2560, 640, 10240
   n_segments: 11
   sampling_strategy: null
-  batch_size: 192 # 192 # 128 (80GB GPU)
+  batch_size: 32 # 32
   num_workers: 24 
   pin_memory: True
+  sep_gene_tokens_neb: False
+  use_sampler: True
+  n_special_values: 106 ## 7 + 99
+  vocab_size: 23407
 meta:
-  add_cls: False
+  api_version: 'v3'
+  add_cls: True
   gt_type: 'counts' # 'rank', 'counts', 'combined'
-  count_encoding: 'mlp' # 'value_bins', 'mlp'
+  count_encoding: 'value_bins' # 'value_bins', 'mlp'
   n_value_bins: 100
+  cell_pos_enc: 'segment'
   enc_depth: 3 # 3
   enc_emb_dim: 768
   pred_depth: 1 # 1
-  pred_emb_dim: 384 # 768
-  special_tokens: ['batch', 'assay'] # ['batch'] # ['batch', 'assay'] # ['batch']
+  pred_emb_dim: 768 # 768
+  num_heads: 3
+  mlp_ratio: 4
+  special_tokens: ['batch'] # ['batch'] # ['batch', 'assay'] # ['batch'] []
   pos_learnable: False
   seg_learnable: False
   use_bfloat16: True
   use_flash_attention: True
   use_layer_norm: True
+  predict_gene: True
 mask:
   n_contexts: 1 # 1
-  n_targets: 1 # 1 =, this is the number of blocks in block masking
+  n_targets: 5 # 5 # 1 =, this is the number of blocks in block masking
   block_masking: True # True, False
   cell_masking: False # True, False
   targets_list: null
   context_mask_size: 200 # this doesn't have meaning in block masking.
   target_mask_size: 50 # this doesn't have meaning in block masking.
   per_block_mask_ratio: 0.6 # 0.2, 0.4, 0.6, 0.8
+  sample_segments: True
+  controlled_attention_pattern: null
+  restrict_special_attention: False
 optimization:
   warmup: 3
-  epochs: 300
+  epochs: 100
   ema:
-  - 0.9995 # 0.7
+  - 0.7 # 0.7, 0.9995
   - 1.0
-  start_lr: 1.0e-06 # 2.0e-05
-  lr: 6.0e-05 # 2.0e-05
-  final_lr: 1.0e-06 # 2.0e-05
+  start_lr: 2.0e-05 # 2.0e-05, 1.0e-06 
+  lr: 2.0e-05 # 2.0e-05, 0.000625, 6.0e-05
+  final_lr: 2.0e-05 # 2.0e-05, 1.0e-06
   weight_decay: 0.04
   final_weight_decay: 0.4
   ipe_scale: 1.25 # 1.0

@@ -23,6 +23,7 @@ class CellBaseDataset(Dataset):
                  n_nonzero_tokens_list: list[int] | None = None,
                  include_cell_id: bool = False,
                  sep_gene_tokens_neb: bool = False,
+                 nz_spc: bool = True,
                  ):
         """
         Torch CellBaseDataset class.
@@ -60,6 +61,23 @@ class CellBaseDataset(Dataset):
         
         self.gt_type = gt_type
         self.cell_pos_enc = cell_pos_enc
+
+        exclude_cols = [
+            #'gene_panel_value',
+            #'assay_value',
+            'species_value',
+            #'tissue_value'
+            ]
+        #if self.cell_pos_enc != 'coord':
+        #    exclude_cols += [
+        #        'rel_x_coord',
+        #        'rel_y_coord']
+        #if not include_cell_id:
+        #    exclude_cols += ['cell_id']
+        for col in exclude_cols:
+            if col in dataset.features.keys():
+                dataset = dataset.remove_columns(col)
+
         self.dataset = dataset
         self.len = len(self.dataset)
         self.vocab_size = vocab_size
@@ -78,6 +96,7 @@ class CellBaseDataset(Dataset):
             self.n_nz_tokens = list(self.dataset['n_nonzero_tokens'])
         self.include_cell_id = include_cell_id
         self.sep_gene_tokens_neb = sep_gene_tokens_neb
+        self.nz_spc = nz_spc
 
     def __len__(self) -> int:
         return self.len
@@ -105,9 +124,18 @@ class CellBaseDataset(Dataset):
             special tokens considered at sequence start.
         """
         for spc_tk in self.special_tokens:
-            item_dict['tokens'] = torch.cat(
-                [item[f'{spc_tk}_token'],
-                 item_dict['tokens']])
+            if self.gt_type != 'rank':
+                item_dict['tokens'] = torch.cat(
+                    [item[f'{spc_tk}_token'],
+                    item_dict['tokens']])
+            else:
+                if self.vocab_size == 2785:
+                    spv_idx_subtract = torch.tensor([1674]) # mus musculus token dict
+                else:
+                    spv_idx_subtract = torch.tensor([21957]) # homo sapiens token dict
+                item_dict['tokens'] = torch.cat(
+                    [item[f'{spc_tk}_value'] + spv_idx_subtract, # see tokenizers module
+                    item_dict['tokens']])
 
             if self.gt_type != 'rank':
                 item_dict['values'] = torch.cat(
@@ -115,15 +143,32 @@ class CellBaseDataset(Dataset):
                      item_dict['values']])
             
         if self.gt_type != 'counts':
-            # Add special token positions
-            item_dict['positions'] = torch.cat(
-                [torch.zeros(self.n_special_tokens, dtype=torch.long),
-                 item_dict['positions']])
+            if self.nz_spc:
+                # Add special token positions
+                item_dict['positions'] = torch.cat(
+                    [torch.arange(
+                        1,
+                        self.n_special_tokens + 1,
+                        dtype=torch.long),
+                    item_dict['positions']])
+            else:
+                # Add special token positions
+                item_dict['positions'] = torch.cat(
+                    [torch.zeros(self.n_special_tokens, dtype=torch.long),
+                    item_dict['positions']])
 
         # Add special token segments
-        item_dict['segments'] = torch.cat(
-            [torch.zeros(self.n_special_tokens, dtype=torch.long),
-             item_dict['segments']])
+        if self.nz_spc:
+            item_dict['segments'] = torch.cat(
+                [torch.arange(
+                    1,
+                    self.n_special_tokens + 1,
+                    dtype=torch.long),
+                item_dict['segments']])
+        else:
+            item_dict['segments'] = torch.cat(
+                [torch.zeros(self.n_special_tokens, dtype=torch.long),
+                item_dict['segments']])
 
         # Add special token coords
         if self.cell_pos_enc == 'coord':
@@ -264,15 +309,8 @@ class CellBaseDataset(Dataset):
 
             # Only keep gene tokens, values, and coords of specified
             # segment
-            curr_seg_mask = item['seg_tokens'] == segment
-            next_seg_mask = (item['seg_tokens'] == (segment + 1))
-            segment_start_idx = torch.nonzero(
-                curr_seg_mask, as_tuple=True)[0][0]
-            if next_seg_mask.any():
-                segment_end_idx = torch.nonzero(
-                    next_seg_mask, as_tuple=True)[0][0]
-            else:
-                segment_end_idx = item['seg_tokens'].size(0)
+            segment_start_idx = int((segment - 1) * self.seq_len_cell)
+            segment_end_idx = int(segment * self.seq_len_cell)
             segment_tokens = item['gene_tokens'][
                 segment_start_idx: segment_end_idx]
             if self.gt_type != 'rank':
@@ -300,6 +338,9 @@ class CellBaseDataset(Dataset):
                 pass
             else:
                 if segment_tokens.size(0) < segment_seq_len:
+                    torch.set_printoptions(threshold=float('inf'))
+                    print(segment_tokens.size(0))
+                    print(item['seg_tokens'])
                     raise ValueError(
                         'Sequence length for a given segment cannot be larger '
                         'than segment size when not sampling with replacement.'
@@ -362,12 +403,10 @@ class CellGraphDataset(CellBaseDataset):
         # Retrieve Hugging Face item once
         item = self.dataset[item]
 
-        # Add <cls> and special tokens
-        item['cls_tokens'] = [2]
-        item['tissue_token'] = [103]
-        item['assay_token'] = [104]
-        item['gene_panel_token'] = [105]
-        item['batch_token'] = [106]
+        item['tissue_token'] = torch.tensor([103])
+        item['assay_token'] = torch.tensor([104])
+        item['gene_panel_token'] = torch.tensor([105])
+        item['batch_token'] = torch.tensor([106])
 
         # Expand spatial coordinates (TODO: if statement to support old API)
         if 'rel_x_coord' in item.keys():
@@ -516,6 +555,16 @@ class CellGraphDataset(CellBaseDataset):
         # Add cell ID
         if self.include_cell_id:
             item_dict['cell_id'] = item['cell_id']
+            
+        if self.nz_spc:
+            item_dict['segments'][
+                (item_dict['segments'] != 0) & (
+                    torch.arange(len(item_dict['segments'])
+                    ) >= self.n_special_tokens)] += 1
+        #print(item_dict['tokens'])
+        #print(item_dict['values'])
+        #print(item_dict['segments'])
+        #print(item_dict['positions'])
         
         return item_dict
 
@@ -542,13 +591,6 @@ class CellNeighborhoodDataset(CellBaseDataset):
 
         # Retrieve Hugging Face item once
         item = self.dataset[item]
-
-        # Add <cls> and special tokens
-        item['cls_tokens'] = [2]
-        item['tissue_token'] = [103]
-        item['assay_token'] = [104]
-        item['gene_panel_token'] = [105]
-        item['batch_token'] = [106]
         
         # Get (sampled) gene tokens, positions, segments, and values
         gene_tokens_cell, \

@@ -30,6 +30,7 @@ import numpy as np
 import pandas as pd
 import pickle
 import torch
+import torch.multiprocessing as mp
 import torch.nn.functional as F
 import torch.profiler
 import wandb
@@ -121,10 +122,19 @@ def train(args: dict,
     else:
         sep_gene_tokens_neb = False
 
+    if 'nz_spc' in args['data'].keys():
+        nz_spc = args['data']['nz_spc']
+    else:
+        nz_spc = False
+
     if 'use_sampler' in args['data'].keys():
         use_sampler = args['data']['use_sampler']
     else:
         use_sampler = False
+    if 'mega_batch_mult_max' in args['data'].keys():
+        mega_batch_mult_max = args['data']['mega_batch_mult_max']
+    else:
+        mega_batch_mult_max = 1000
 
     add_cls = args['meta']['add_cls']
     gt_type = args['meta']['gt_type']
@@ -162,6 +172,19 @@ def train(args: dict,
     use_bfloat16 = args['meta']['use_bfloat16']
     use_flash_attention = args['meta']['use_flash_attention']
     use_layer_norm = args['meta']['use_layer_norm']
+    if 'new_spc' in args['meta'].keys():
+        new_spc = args['meta']['new_spc']
+    else:
+        new_spc = False
+    if 'excl_spc_from_loss' in args['meta'].keys():
+        excl_spc_from_loss = args['meta']['excl_spc_from_loss']
+    else:
+        excl_spc_from_loss = False
+
+    if 'target_enc_layer_norm' in args['meta'].keys():
+        target_enc_layer_norm = args['meta']['target_enc_layer_norm']
+    else:
+        target_enc_layer_norm = False
 
     n_contexts = args['mask']['n_contexts']
     n_targets = args['mask']['n_targets']
@@ -170,6 +193,14 @@ def train(args: dict,
     context_mask_size = args['mask']['context_mask_size']
     target_mask_size = args['mask']['target_mask_size']
     per_block_mask_ratio = args['mask']['per_block_mask_ratio']
+    if 'restrict_special_attention' in args['mask'].keys():
+        restrict_special_attention = args['mask']['restrict_special_attention']
+    else:
+        restrict_special_attention = False
+    if 'special_token_pad_ratio' in args['mask'].keys():
+        special_token_pad_ratio = args['mask']['special_token_pad_ratio']
+    else:
+        special_token_pad_ratio = 0.0
     if 'sample_segments' in args['mask'].keys():
         sample_segments = args['mask']['sample_segments']
     else:
@@ -189,6 +220,14 @@ def train(args: dict,
     final_wd = float(args['optimization']['final_weight_decay'])
     ipe_scale = args['optimization']['ipe_scale'] # scheduler scale factor
     clip_grad = args['optimization']['clip_grad']
+    if 'lambda_var' in args['optimization'].keys():
+        lambda_var = args['optimization']['lambda_var']
+    else:
+        lambda_var = 0.
+    if 'lambda_cov' in args['optimization'].keys():
+        lambda_cov = args['optimization']['lambda_cov']
+    else:
+        lambda_cov = 0.
 
     log_freq = args['state']['log_freq']
     checkpoint_freq = args['state']['checkpoint_freq']
@@ -212,8 +251,9 @@ def train(args: dict,
     with open(token_dict_folder_path, 'rb') as file:
         token_dict = pickle.load(file)
     vocab_size = len(token_dict)
-    n_special_values = sum(
-        1 for key in token_dict if "spv" in key) # this only works now because of the dummy special values
+    #n_special_values = sum(
+    #    1 for key in token_dict if "spv" in key) # this only works now because of the dummy special values
+    n_special_values = args['data']['n_special_values']
     max_special_tokens = sum(
         1 for key in token_dict if "cls" in key) + sum(
         1 for key in token_dict if "spt" in key)
@@ -230,6 +270,12 @@ def train(args: dict,
     # Get token sequence length and number of special tokens
     n_special_tokens = len(special_tokens)
     seq_len = seq_len_cell + seq_len_neighborhood + n_special_tokens
+
+    # Set multiprocessing start method
+    try:
+        mp.set_start_method("spawn")
+    except Exception:
+        logger.info(f'Multiprocessing not started.')
     
     # Initialize torch distributed backend
     world_size, rank = init_distributed()
@@ -299,7 +345,9 @@ def train(args: dict,
         use_layer_norm=use_layer_norm,
         sep_gene_tokens_neb=sep_gene_tokens_neb,
         predict_gene=predict_gene,
-        pos_learnable=pos_learnable)
+        pos_learnable=pos_learnable,
+        nz_spc=nz_spc,
+        new_spc=new_spc)
     target_encoder = copy.deepcopy(encoder)
 
     # Initialize mask collator
@@ -313,7 +361,9 @@ def train(args: dict,
             n_special_tokens=n_special_tokens,
             per_block_mask_ratio=per_block_mask_ratio,
             sample_segments=sample_segments,
-            sample_gene_masks=True)
+            sample_gene_masks=True,
+            restrict_special_attention=restrict_special_attention,
+            special_token_pad_ratio=special_token_pad_ratio)
     elif cell_masking:
        mask_collator = CellMaskCollator(
             n_targets=n_targets,
@@ -341,7 +391,8 @@ def train(args: dict,
                 sampling_strategy=sampling_strategy,
                 n_nonzero_tokens_list=nz,
                 include_cell_id=False,
-                sep_gene_tokens_neb=sep_gene_tokens_neb)
+                sep_gene_tokens_neb=sep_gene_tokens_neb,
+                nz_spc=nz_spc)
             train_cell_datasets.append(cell_d)
 
     else:
@@ -357,7 +408,8 @@ def train(args: dict,
             sampling_strategy=sampling_strategy,
             n_nonzero_tokens_list=n_nonzero_tokens,
             include_cell_id=False,
-            sep_gene_tokens_neb=sep_gene_tokens_neb)
+            sep_gene_tokens_neb=sep_gene_tokens_neb,
+            nz_spc=nz_spc)
 
     if isinstance(train_dataset, list):
         train_loaders = []
@@ -374,7 +426,8 @@ def train(args: dict,
                 num_workers=num_workers,
                 drop_last=True,
                 prefetch_factor=(4 if num_workers > 0 else None),
-                persistent_workers=False)
+                persistent_workers=False,
+                mega_batch_mult_max=mega_batch_mult_max)
             train_loaders.append(train_loader)
             train_samplers.append(train_sampler)
 
@@ -390,7 +443,8 @@ def train(args: dict,
             num_workers=num_workers,
             drop_last=True,
             prefetch_factor=(4 if num_workers > 0 else None),
-            persistent_workers=False)
+            persistent_workers=False,
+            mega_batch_mult_max=mega_batch_mult_max)
 
     ipe = len(train_loader)
 
@@ -520,7 +574,7 @@ def train(args: dict,
         #maskA_meter = AverageMeter()
         #maskB_meter = AverageMeter()
 
-        for itr, (udata, masks_enc, masks_pred, masks_attention) in enumerate(train_loader):
+        for itr, (udata, masks_enc, masks_pred, masks_attention, pad_special_tokens) in enumerate(train_loader):
             for key, val in udata.items():
                 udata[key] = val.to(device, non_blocking=True)
             masks_enc = [u.to(device, non_blocking=True) for u in masks_enc]
@@ -546,7 +600,8 @@ def train(args: dict,
                 with torch.no_grad():
                     h, _ = target_encoder(
                         batch=udata, masks_attention=masks_attention)
-                    h = F.layer_norm(h, (h.size(-1),))
+                    if target_enc_layer_norm:
+                        h = F.layer_norm(h, (h.size(-1),))
                     h = apply_masks(h, masks_pred, concat=False)
 
                 # Forward pass of context encoder
@@ -569,11 +624,44 @@ def train(args: dict,
                 loss = 0.
                 for zi, hi in zip(z, h):
                     if loss_fn_type == 'smooth_l1':
-                        loss += F.smooth_l1_loss(zi, hi)
+                        if excl_spc_from_loss and not pad_special_tokens:
+                            loss += F.smooth_l1_loss(zi[:, n_special_tokens:, :], hi[:, n_special_tokens:, :])
+                        else:
+                            loss += F.smooth_l1_loss(zi, hi)
                     elif loss_fn_type == 'l1':
-                        loss += torch.mean(
-                            torch.abs(zi - hi)**loss_exp) / loss_exp
+                        if excl_spc_from_loss and not pad_special_tokens:
+                            loss += torch.mean(
+                                torch.abs(zi[:, n_special_tokens:, :] - hi[:, n_special_tokens:, :])**loss_exp) / loss_exp
+                        else:
+                            loss += torch.mean(
+                                torch.abs(zi - hi)**loss_exp) / loss_exp
                 loss /= len(masks_pred)
+
+                # ----------------------------------------------------
+                # VICReg-style variance + covariance regularization
+                # ----------------------------------------------------
+                if lambda_var > 0 or lambda_cov > 0:
+
+                    all_z = torch.cat(z, dim=0)
+                    all_z = all_z.reshape(-1, all_z.shape[-1])
+
+                    # ----- variance loss -----
+                    def variance_loss(z, gamma=1.0, eps=1e-4):
+                        std = z.std(dim=0) + eps
+                        return torch.mean(torch.relu(gamma - std))
+
+                    # ----- covariance loss -----
+                    def covariance_loss(z):
+                        z = z - z.mean(dim=0)
+                        N, D = z.shape
+                        cov = (z.T @ z) / (N - 1)
+                        off_diag = cov - torch.diag(torch.diag(cov))
+                        return (off_diag**2).sum() / D
+
+                    loss_var = variance_loss(all_z)
+                    loss_cov = covariance_loss(all_z)
+
+                    loss = loss + lambda_var * loss_var + lambda_cov * loss_cov
 
             # Step 2: backward pass and step
             _enc_norm, _pred_norm = 0., 0.

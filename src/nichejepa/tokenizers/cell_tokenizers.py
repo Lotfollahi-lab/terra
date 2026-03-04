@@ -70,7 +70,10 @@ import anndata as ad
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
-import squidpy as sq
+try:
+    import squidpy as sq
+except:
+    print("Could not import squidpy...")
 from datasets import Dataset
 
 from ..preprocessors.filters import filter_cells
@@ -184,7 +187,7 @@ class CellBaseTokenizer(ABC):
             norm_factor_file_path: Path | str = norm_factor_file_path,
             token_dictionary_file_path: Path | str = token_dictionary_file_path,
             add_neigh_cell_ids: bool = False,
-            include_special_tokens: bool = False,
+            include_special_tokens: bool = True,
             ):
         self.nproc = nproc
         self.processing_mode = processing_mode

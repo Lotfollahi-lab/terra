@@ -27,6 +27,7 @@ class CustomDistributedLengthGroupedSampler(DistributedSampler):
                  seed: int = 0,
                  drop_last: bool = False,
                  lengths: list[int] | None = None,
+                 mega_batch_mult_max: int = 1000,
                  ):
         """
         Distributed Sampler that samples indices in a way that groups
@@ -92,13 +93,16 @@ class CustomDistributedLengthGroupedSampler(DistributedSampler):
         self.total_size = self.num_samples * self.num_replicas
         self.seed = seed
         self.lengths = self.cell_dataset.n_nz_tokens
+        self.mega_batch_mult_max = mega_batch_mult_max
 
     def __iter__(self) -> Iterator:
         # Deterministically shuffle based on epoch and seed
         g = torch.Generator()
         g.manual_seed(self.seed + self.epoch)
 
-        indices = self._get_length_grouped_indices(generator=g)
+        indices = self._get_length_grouped_indices(
+            generator=g,
+            mega_batch_mult_max=self.mega_batch_mult_max)
 
         if not self.drop_last:
             # Add extra samples to make it evenly divisible
@@ -117,6 +121,7 @@ class CustomDistributedLengthGroupedSampler(DistributedSampler):
     def _get_length_grouped_indices(self,
                                     mega_batch_mult: int | None = None,
                                     generator: torch.Generator | None = None,
+                                    mega_batch_mult_max: int = 1000,
                                     ) -> list[int]:
         """
         Return a list of indices so that each slice of `batch_size`
@@ -135,7 +140,8 @@ class CustomDistributedLengthGroupedSampler(DistributedSampler):
             # Default for mega_batch_mult: 1000 or the number to get 4
             # mega batches, whichever is smaller.
             mega_batch_mult = min(
-                len(self.lengths) // (self.batch_size * 4), 1000)
+                len(self.lengths) // (self.batch_size * 4),
+                mega_batch_mult_max) # 1000
             # Just in case, for tiny datasets
             if mega_batch_mult == 0:
                 mega_batch_mult = 1
@@ -177,6 +183,7 @@ def init_dataloader_and_sampler(cell_dataset: CellBaseDataset,
                                 distributed: bool,
                                 world_size: int,
                                 rank: int,
+                                mega_batch_mult_max: int,
                                 **dataloader_kwargs,
     ) -> tuple[torch.utils.data.DataLoader,
                torch.utils.data.distributed.DistributedSampler | None]:
@@ -211,7 +218,8 @@ def init_dataloader_and_sampler(cell_dataset: CellBaseDataset,
             batch_size=batch_size,
             num_replicas=world_size,
             rank=rank,
-            seed=_GLOBAL_SEED)
+            seed=_GLOBAL_SEED,
+            mega_batch_mult_max=mega_batch_mult_max)
     else:
         dist_sampler = DistributedSampler(
             dataset=cell_dataset,

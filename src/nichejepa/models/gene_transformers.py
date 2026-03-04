@@ -100,6 +100,7 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                  use_layer_norm: bool = True,
                  api_version: Literal['v1', 'v2', 'v3'] = 'v3',
                  sep_gene_tokens_neb: bool = False,
+                 nz_spc: bool = False,
                  **kwargs
                  ):
         super().__init__()
@@ -113,6 +114,7 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         self.init_std = init_std
         self.api_version = api_version
         self.sep_gene_tokens_neb = sep_gene_tokens_neb
+        self.nz_spc = nz_spc
             
         # Initialize token embeddings
         self.token_embed = nn.Embedding(
@@ -123,7 +125,7 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         # Initialize segment embeddings
         if self.cell_pos_enc == 'segment':
             self.seg_embed = nn.Embedding(
-                1 + n_segments + (105 if api_version == 'v1' else 0), # include <pad>
+                1 + n_segments + (105 if api_version == 'v1' else 0) + (self.n_special_tokens if self.nz_spc else 0), # include <pad>
                 embed_dim,
                 padding_idx=0)
         
@@ -133,7 +135,7 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
             seg_embed = get_1d_sincos_pos_embed(
                 embed_dim=embed_dim,
                 n_zero_pos=0,
-                n_sincos_pos=n_segments + (105 if api_version == 'v1' else 0))
+                n_sincos_pos=n_segments + (105 if api_version == 'v1' else 0) + (self.n_special_tokens if self.nz_spc else 0))
             self.seg_embed.weight[1:].copy_(torch.from_numpy(seg_embed).float())
 
         # Initialize encoder blocks and norm layer
@@ -192,10 +194,11 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
             attn_base: torch.Tensor | None,
             layers: Sequence[int],
             masks: list[torch.Tensor] | torch.Tensor | None,
-            cell_only: bool) -> dict[int, torch.Tensor]:
+            n_included_cells: int,
+            ignore_spc_tokens: bool = False) -> dict[int, torch.Tensor]:
         """
         Helper function to return embeddings for either full context or
-        cell only context.
+        masked cell context.
         """
         layers: list[int] = sorted({int(l) for l in layers})
         max_layer: int = max(layers)
@@ -204,24 +207,28 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         if masks is not None and not isinstance(masks, list):
             masks = [masks]
 
+        x = x.clone()
+
         attn = None
         if attn_base is not None:
-            attn = attn_base.clone()
-            if attn.dim() == 3: # [B, L, L] -> [B, 1, L, L]
-                attn = attn.unsqueeze(1)
-            # Never attend to special tokens
-            if self.n_special_tokens > 0:
-                attn[..., :self.n_special_tokens] = 0
-            # Optionally block cross-attention from cell queries to
-            # neighborhood keys
-            if cell_only:
+            if attn_base.size(2) == 1: # [B, 1, 1, L] -> [B, 1, L, L]
+                attn = attn_base.expand(-1, -1, attn_base.size(-1), -1).clone()
+            else:
+                attn = attn_base.clone()
+            #if ignore_spc_tokens:
+            #    # Never attend to special tokens
+            #    if self.n_special_tokens > 0:
+            #        attn[:, :, :, :self.n_special_tokens] = False
+            # Block attention from included cell queries to excluded cell keys
+            if n_included_cells:
                 attn[
-                    ...,
-                    self.n_special_tokens:(self.n_special_tokens+self.seq_len_cell),
-                    (self.n_special_tokens+self.seq_len_cell):] = 0
+                    :,
+                    :,
+                    self.n_special_tokens: (self.n_special_tokens + self.seq_len_cell * n_included_cells),
+                    (self.n_special_tokens + self.seq_len_cell * n_included_cells):] = False
 
-        #if cell_only:
-        #    x[:, (self.n_special_tokens+self.seq_len_cell):, :] = 0
+        if n_included_cells:
+            x[:, (self.n_special_tokens + self.seq_len_cell * n_included_cells):, :] = 0
 
         # Mask token embeddings if masks are provided
         if masks is not None:
@@ -231,9 +238,9 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         out: dict[int, torch.Tensor] = {}
         for i, blk in enumerate(self.blocks, start=1):
             x = blk(x, masks=attn)
-            if i == len(self.blocks) and (self.norm is not None):
+            #if i == len(self.blocks) and (self.norm is not None):
                 # Apply norm only for last layer as in training
-                x = self.norm(x)
+                #x = self.norm(x)
             if i in layers:
                 # Remove special tokens from output
                 out[i] = x[:, self.n_special_tokens:, :]
@@ -401,6 +408,8 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
                  use_flash_attention: bool = True,
                  use_layer_norm: bool = True,
                  api_version: Literal['v1', 'v2', 'v3'] = 'v3',
+                 nz_spc: bool = False,
+                 new_spc: bool = False,
                  **kwargs
                  ):
         super().__init__()
@@ -412,11 +421,13 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
         self.num_heads = num_heads
         self.init_std = init_std
         self.api_version = api_version
+        self.nz_spc = nz_spc
+        self.new_spc = new_spc
 
         # Initialize segment embeddings
         if self.cell_pos_enc == 'segment':
             self.seg_embed = nn.Embedding(
-                1 + n_segments + (105 if api_version == 'v1' else 0), # include <pad>
+                1 + n_segments + (105 if api_version == 'v1' else 0) + (1 if self.nz_spc else 0), # include <pad>
                 predictor_embed_dim,
                 padding_idx=0)
             
@@ -426,7 +437,7 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
             seg_embed = get_1d_sincos_pos_embed(
                 embed_dim=predictor_embed_dim,
                 n_zero_pos=0,
-                n_sincos_pos=n_segments + (105 if api_version == 'v1' else 0))
+                n_sincos_pos=n_segments + (105 if api_version == 'v1' else 0) + (1 if self.nz_spc else 0))
             self.seg_embed.weight[1:].copy_(torch.from_numpy(seg_embed).float())
 
         # Initialize layer to project from enc to pred embed dim
@@ -637,6 +648,7 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
             masks: list[torch.Tensor] | torch.Tensor | None = None,
             masks_attention: torch.Tensor | None = None,
             need_cell_only_context: bool = True,
+            ignore_spc_tokens: bool = True,
             ) -> tuple[
                 dict[int, torch.Tensor], dict[int, torch.Tensor] | None]:
         """
@@ -688,21 +700,24 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
         x = seg_emb + pos_emb + token_emb # [B, L, D]
 
         # Remove special token contents
-        if self.n_special_tokens:
-            x[:, : self.n_special_tokens, :] = 0
+        if ignore_spc_tokens:
+            if self.n_special_tokens:
+                x[:, :self.n_special_tokens, :] = 0
 
         full_ctx: dict[int, torch.Tensor] = self._compute_layer_emb(
             x,
             masks_attention,
             layers,
             masks,
-            cell_only=False)
+            cell_only=False,
+            ignore_spc_tokens=ignore_spc_tokens)
         cell_only_ctx: dict[int, torch.Tensor] = self._compute_layer_emb(
             x,
             masks_attention,
             layers,
             masks,
-            cell_only=True) if need_cell_only_context else None
+            cell_only=True,
+            ignore_spc_tokens=ignore_spc_tokens) if need_cell_only_context else None
 
         return full_ctx, cell_only_ctx
 
@@ -737,10 +752,11 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
             self.value_embed = nn.Embedding(
                 self.n_value_bins,
                 self.embed_dim)
-            self.special_value_embed = nn.Embedding(
-                1 + (1 + self.n_special_values + 105 if self.api_version == 'v1' else 0), # include only <pad>
-                self.embed_dim,
-                padding_idx=0)
+            if not self.nz_spc:
+                self.special_value_embed = nn.Embedding(
+                    1 + 1 + self.n_special_values + (105 if self.api_version == 'v1' else 0), # include only <pad>
+                    self.embed_dim,
+                    padding_idx=0)
             self.value_emb_weights_projection = ValueEmbWeightsProjection(
                 dim=self.n_value_bins)
         elif self.count_encoding == 'mlp':
@@ -750,6 +766,11 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
                 hidden_features=hidden_dim,
                 out_features=self.embed_dim,
                 act_layer=nn.GELU)
+        if self.nz_spc:
+            self.special_value_embed = nn.Embedding(
+                1 + 1 + self.n_special_values + (105 if self.api_version == 'v1' else 0),
+                self.embed_dim,
+                padding_idx=0)
 
     def forward(self,
                 batch: dict[torch.Tensor],
@@ -804,15 +825,40 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
             value_emb_weights = self.value_emb_weights_projection(
                 batch['values'].unsqueeze(-1))
             value_emb = value_emb_weights @ self.value_embed.weight
-            # Assign padding to 0 counts
-            zero_counts_mask = (batch['values'] == 0)
-            if zero_counts_mask.any():
-                value_emb = torch.where(
-                    zero_counts_mask.unsqueeze(-1),
-                    self.special_value_embed.weight[0].expand_as(value_emb),
-                    value_emb)
+
+            if self.nz_spc:
+                # Assign padding value embedding to 0 counts 
+                zero_counts_mask = batch['values'] == 0.0
+                zero_value_embed = self.special_value_embed(
+                    torch.tensor(0, device=batch['tokens'].device)).to(value_emb.dtype)
+                value_emb[zero_counts_mask] = zero_value_embed
+
+                # Assign special value embeddings to special tokens
+                sp_value_embed = self.special_value_embed(
+                    batch['values'][:, :self.n_special_tokens].int()).to(
+                        value_emb.dtype)
+                value_emb[:, :self.n_special_tokens, :] = sp_value_embed
+            else:
+                # Assign padding to 0 counts
+                zero_counts_mask = (batch['values'] == 0)
+                if zero_counts_mask.any():
+                    value_emb = torch.where(
+                        zero_counts_mask.unsqueeze(-1),
+                        self.special_value_embed.weight[0].expand_as(value_emb),
+                        value_emb)
+
         elif self.count_encoding == 'mlp':
-            value_emb = self.value_embed(batch['values'].unsqueeze(dim=-1))
+            value_emb = self.value_embed(batch['values'].unsqueeze(-1))
+
+            if self.nz_spc:
+                # Assign special value embeddings to special tokens
+                sp_value_embed = self.special_value_embed(
+                    batch['values'][:, :self.n_special_tokens].int()).to(
+                        value_emb.dtype)
+                value_emb[:, :self.n_special_tokens, :] = sp_value_embed
+        else:
+            raise ValueError(
+                f"Unknown count_encoding: {self.count_encoding}.")
 
         # Add gene token and segment embeddings to value embeddings
         x = seg_emb + token_emb + value_emb
@@ -838,6 +884,7 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
             masks: list[torch.Tensor] | torch.Tensor | None = None,
             masks_attention: torch.Tensor | None = None,
             need_cell_only_context: bool = True,
+            ignore_spc_tokens: bool = True,
             ) -> tuple[
                 dict[int, torch.Tensor], dict[int, torch.Tensor] | None]:
         """
@@ -891,15 +938,37 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
             value_emb_weights = self.value_emb_weights_projection(
                 batch['values'].unsqueeze(-1))
             value_emb = value_emb_weights @ self.value_embed.weight
-            # Assign padding to 0 counts
-            zero_counts_mask = (batch['values'] == 0)
-            if zero_counts_mask.any():
-                value_emb = torch.where(
-                    zero_counts_mask.unsqueeze(-1),
-                    self.special_value_embed.weight[0].expand_as(value_emb),
-                    value_emb)
+
+            if self.nz_spc:
+                # Assign padding value embedding to 0 counts 
+                zero_counts_mask = batch['values'] == 0.0
+                zero_value_embed = self.special_value_embed(
+                    torch.tensor(0, device=batch['tokens'].device)).to(value_emb.dtype)
+                value_emb[zero_counts_mask] = zero_value_embed
+
+                # Assign special value embeddings to special tokens
+                sp_value_embed = self.special_value_embed(
+                    batch['values'][:, :self.n_special_tokens].int()).to(
+                        value_emb.dtype)
+                value_emb[:, :self.n_special_tokens, :] = sp_value_embed
+            else:
+                # Assign padding to 0 counts
+                zero_counts_mask = (batch['values'] == 0)
+                if zero_counts_mask.any():
+                    value_emb = torch.where(
+                        zero_counts_mask.unsqueeze(-1),
+                        self.special_value_embed.weight[0].expand_as(value_emb),
+                        value_emb)
+
         elif self.count_encoding == 'mlp':
             value_emb = self.value_embed(batch['values'].unsqueeze(-1))
+
+            if self.nz_spc:
+                # Assign special value embeddings to special tokens
+                sp_value_embed = self.special_value_embed(
+                    batch['values'][:, :self.n_special_tokens].int()).to(
+                        value_emb.dtype)
+                value_emb[:, :self.n_special_tokens, :] = sp_value_embed
         else:
             raise ValueError(
                 f"Unknown count_encoding: {self.count_encoding}.")
@@ -908,21 +977,24 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
         x = seg_emb + token_emb + value_emb # [B, L, D]
 
         # Remove special token contents
-        if self.n_special_tokens:
-            x[:, :self.n_special_tokens, :] = 0
+        # if ignore_spc_tokens:
+        #    if self.n_special_tokens:
+        #        x[:, :self.n_special_tokens, :] = 0
 
         full_ctx: dict[int, torch.Tensor] = self._compute_layer_emb(
             x,
             masks_attention,
             layers,
             masks,
-            cell_only=False)
+            cell_only=False,
+            ignore_spc_tokens=ignore_spc_tokens)
         cell_only_ctx: dict[int, torch.Tensor] = self._compute_layer_emb(
             x,
             masks_attention,
             layers,
             masks,
-            cell_only=True) if need_cell_only_context else None
+            cell_only=True,
+            ignore_spc_tokens=ignore_spc_tokens) if need_cell_only_context else None
 
         return full_ctx, cell_only_ctx
 
@@ -977,10 +1049,11 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
             self.value_embed = nn.Embedding(
                 self.n_value_bins,
                 self.embed_dim)
-            self.special_value_embed = nn.Embedding(
-                1 + (1 + self.n_special_values + 105 if self.api_version == 'v1' else 0), # include only <pad>
-                self.embed_dim,
-                padding_idx=0)
+            if not self.nz_spc:
+                self.special_value_embed = nn.Embedding(
+                    1 + 1 + self.n_special_values + (105 if self.api_version == 'v1' else 0), # include only <pad>
+                    self.embed_dim,
+                    padding_idx=0)
             self.value_emb_weights_projection = ValueEmbWeightsProjection(
                 dim=self.n_value_bins)
         elif self.count_encoding == 'mlp':
@@ -990,6 +1063,11 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
                 hidden_features=hidden_dim,
                 out_features=self.embed_dim,
                 act_layer=nn.GELU)
+        if self.nz_spc:
+            self.special_value_embed = nn.Embedding(
+                1 + 1 + self.n_special_values + (105 if self.api_version == 'v1' else 0),
+                self.embed_dim,
+                padding_idx=0)
 
     def forward(self,
                 batch: dict[torch.Tensor],
@@ -1048,15 +1126,40 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
             value_emb_weights = self.value_emb_weights_projection(
                 batch['values'].unsqueeze(-1))
             value_emb = value_emb_weights @ self.value_embed.weight
-            # Assign padding to 0 counts
-            zero_counts_mask = (batch['values'] == 0)
-            if zero_counts_mask.any():
-                value_emb = torch.where(
-                    zero_counts_mask.unsqueeze(-1),
-                    self.special_value_embed.weight[0].expand_as(value_emb),
-                    value_emb)
+
+            if self.nz_spc:
+                # Assign padding value embedding to 0 counts 
+                zero_counts_mask = batch['values'] == 0.0
+                zero_value_embed = self.special_value_embed(
+                    torch.tensor(0, device=batch['tokens'].device)).to(value_emb.dtype)
+                value_emb[zero_counts_mask] = zero_value_embed
+
+                # Assign special value embeddings to special tokens
+                sp_value_embed = self.special_value_embed(
+                    batch['values'][:, :self.n_special_tokens].int()).to(
+                        value_emb.dtype)
+                value_emb[:, :self.n_special_tokens, :] = sp_value_embed
+            else:
+                # Assign padding to 0 counts
+                zero_counts_mask = (batch['values'] == 0)
+                if zero_counts_mask.any():
+                    value_emb = torch.where(
+                        zero_counts_mask.unsqueeze(-1),
+                        self.special_value_embed.weight[0].expand_as(value_emb),
+                        value_emb)
+
         elif self.count_encoding == 'mlp':
-            value_emb = self.value_embed(batch['values'].unsqueeze(dim=-1))       
+            value_emb = self.value_embed(batch['values'].unsqueeze(-1))
+
+            if self.nz_spc:
+                # Assign special value embeddings to special tokens
+                sp_value_embed = self.special_value_embed(
+                    batch['values'][:, :self.n_special_tokens].int()).to(
+                        value_emb.dtype)
+                value_emb[:, :self.n_special_tokens, :] = sp_value_embed
+        else:
+            raise ValueError(
+                f"Unknown count_encoding: {self.count_encoding}.")
 
         # Add positional, segment, and gene embeddings to value embeddings
         x = seg_emb + pos_emb + token_emb + value_emb
@@ -1081,9 +1184,9 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
             batch: Mapping[str, torch.Tensor],
             masks: list[torch.Tensor] | torch.Tensor | None = None,
             masks_attention: torch.Tensor | None = None,
-            need_cell_only_context: bool = True,
-            ) -> tuple[
-                dict[int, torch.Tensor], dict[int, torch.Tensor] | None]:
+            n_included_cells_list: list[int] = [],
+            ignore_spc_tokens: bool = True,
+            ) -> dict[int, dict[int, torch.Tensor]]:
         """
         Run encoder forward pass on a batch of cell graph sequences,
         applying masks if provided, and return the embeddings for
@@ -1137,15 +1240,37 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
             value_emb_weights = self.value_emb_weights_projection(
                 batch['values'].unsqueeze(-1))
             value_emb = value_emb_weights @ self.value_embed.weight
-            # Assign padding to 0 counts
-            zero_counts_mask = (batch['values'] == 0)
-            if zero_counts_mask.any():
-                value_emb = torch.where(
-                    zero_counts_mask.unsqueeze(-1),
-                    self.special_value_embed.weight[0].expand_as(value_emb),
-                    value_emb)
+
+            if self.nz_spc:
+                # Assign padding value embedding to 0 counts 
+                zero_counts_mask = batch['values'] == 0.0
+                zero_value_embed = self.special_value_embed(
+                    torch.tensor(0, device=batch['tokens'].device)).to(value_emb.dtype)
+                value_emb[zero_counts_mask] = zero_value_embed
+
+                # Assign special value embeddings to special tokens
+                sp_value_embed = self.special_value_embed(
+                    batch['values'][:, :self.n_special_tokens].int()).to(
+                        value_emb.dtype)
+                value_emb[:, :self.n_special_tokens, :] = sp_value_embed
+            else:
+                # Assign padding to 0 counts
+                zero_counts_mask = (batch['values'] == 0)
+                if zero_counts_mask.any():
+                    value_emb = torch.where(
+                        zero_counts_mask.unsqueeze(-1),
+                        self.special_value_embed.weight[0].expand_as(value_emb),
+                        value_emb)
+
         elif self.count_encoding == 'mlp':
             value_emb = self.value_embed(batch['values'].unsqueeze(-1))
+
+            if self.nz_spc:
+                # Assign special value embeddings to special tokens
+                sp_value_embed = self.special_value_embed(
+                    batch['values'][:, :self.n_special_tokens].int()).to(
+                        value_emb.dtype)
+                value_emb[:, :self.n_special_tokens, :] = sp_value_embed
         else:
             raise ValueError(
                 f"Unknown count_encoding: {self.count_encoding}.")
@@ -1154,23 +1279,22 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
         x = seg_emb + pos_emb + token_emb + value_emb # [B, L, D]
 
         # Remove special token contents
-        if self.n_special_tokens:
-            x[:, :self.n_special_tokens, :] = 0
+        #if ignore_spc_tokens:
+        #    if self.n_special_tokens:
+        #        x[:, :self.n_special_tokens, :] = 0
 
-        full_ctx: dict[int, torch.Tensor] = self._compute_layer_emb(
-            x,
-            masks_attention,
-            layers,
-            masks,
-            cell_only=False)
-        cell_only_ctx: dict[int, torch.Tensor] = self._compute_layer_emb(
-            x,
-            masks_attention,
-            layers,
-            masks,
-            cell_only=True) if need_cell_only_context else None
+        ctx_layer_gene_emb = {}
+        for n_included_cells in n_included_cells_list:
+            layer_gene_emb: dict[int, torch.Tensor] = self._compute_layer_emb(
+                x,
+                masks_attention,
+                layers,
+                masks,
+                n_included_cells=n_included_cells,
+                ignore_spc_tokens=ignore_spc_tokens)
+            ctx_layer_gene_emb[n_included_cells] = layer_gene_emb
 
-        return full_ctx, cell_only_ctx
+        return ctx_layer_gene_emb
 
 
 class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
@@ -1293,13 +1417,20 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
             # Repeat context embeddings for all target masks
             z = z.repeat(len(masks_pred), 1, 1)
 
-            # Concatenate mask tokens and context embeddings of gene
-            # tokens
-            z = torch.cat([
-                pred_tokens, # target gene tokens (incl. special tokens)
-                #z # context gene tokens (incl. special tokens)
-                z[:, self.n_special_tokens:, :] # context gene tokens (excl. special tokens)
-                ], dim=1)
+            if self.new_spc:
+                # Concatenate mask tokens and context embeddings of gene tokens
+                z = torch.cat([
+                    z[:, :self.n_special_tokens, :],
+                    pred_tokens[:, self.n_special_tokens:, :], # target gene tokens (incl. special tokens)
+                    z[:, self.n_special_tokens:, :] # context gene tokens (excl. special tokens)
+                    ], dim=1)
+            else:
+                # Concatenate mask tokens and context embeddings of gene tokens
+                z = torch.cat([
+                    pred_tokens, # target gene tokens (incl. special tokens)
+                    z # context gene tokens (incl. special tokens)
+                    #z[:, self.n_special_tokens:, :] # context gene tokens (excl. special tokens)
+                    ], dim=1)
 
             # Run forward prop
             for blk in self.predictor_blocks:
@@ -1414,12 +1545,20 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
         # Repeat context embeddings for all target masks
         z = z.repeat(len(masks_pred), 1, 1)
 
-        # Concatenate mask tokens and context embeddings of gene tokens
-        z = torch.cat([
-            pred_tokens, # target gene tokens (excl. special tokens)
-            #z # context gene tokens (incl. special tokens)
-            z[:, self.n_special_tokens:, :] # context gene tokens (excl. special tokens)
-            ], dim=1)
+        if self.new_spc:
+            # Concatenate mask tokens and context embeddings of gene tokens
+            z = torch.cat([
+                z[:, :self.n_special_tokens, :],
+                pred_tokens[:, self.n_special_tokens:, :], # target gene tokens (incl. special tokens)
+                z[:, self.n_special_tokens:, :] # context gene tokens (excl. special tokens)
+                ], dim=1)
+        else:
+            # Concatenate mask tokens and context embeddings of gene tokens
+            z = torch.cat([
+                pred_tokens, # target gene tokens (incl. special tokens)
+                z # context gene tokens (incl. special tokens)
+                #z[:, self.n_special_tokens:, :] # context gene tokens (excl. special tokens)
+                ], dim=1)
 
         # Run forward prop
         for blk in self.predictor_blocks:
@@ -1580,12 +1719,20 @@ class GeneTransformerCombinedPredictor(GeneTransformerBasePredictor):
         # Repeat context embeddings for all target masks
         z = z.repeat(len(masks_pred), 1, 1)
 
-        # Concatenate mask tokens and context embeddings of gene tokens
-        z = torch.cat([
-            pred_tokens, # target gene tokens (excl. special tokens)
-            #z # context gene tokens (incl. special tokens)
-            z[:, self.n_special_tokens:, :] # context gene tokens (excl. special tokens)
-            ], dim=1)
+        if self.new_spc:
+            # Concatenate mask tokens and context embeddings of gene tokens
+            z = torch.cat([
+                z[:, :self.n_special_tokens, :],
+                pred_tokens[:, self.n_special_tokens:, :], # target gene tokens (incl. special tokens)
+                z[:, self.n_special_tokens:, :] # context gene tokens (excl. special tokens)
+                ], dim=1)
+        else:
+            # Concatenate mask tokens and context embeddings of gene tokens
+            z = torch.cat([
+                pred_tokens, # target gene tokens (incl. special tokens)
+                z # context gene tokens (incl. special tokens)
+                #z[:, self.n_special_tokens:, :] # context gene tokens (excl. special tokens)
+                ], dim=1)
 
         # Run forward prop
         for blk in self.predictor_blocks:

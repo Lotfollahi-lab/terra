@@ -324,4 +324,3 @@ def linear_regressor(
         print("\n--- Evaluation Metrics saved. ---")
 
     return all_preds, model
-
