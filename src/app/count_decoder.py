@@ -2390,3 +2390,29 @@ python -m pdb src/app/count_decoder.py \
   --adata /nfs/team361/sb75/DATASETS/gold/cell-graph-tokenizer/kidney_perturbation/nemokidneyxeniumatlas_annotated_processed.h5ad \
   --wandb-project count_decoder
 '''
+
+
+
+'''
+Neb skin
+python -m pdb src/app/count_decoder.py \
+  --loss-type nb_softplus \
+  --expression-layer counts_neighborhood \
+  --embed-key neighborhood_emb \
+  --disable-slide-batching \
+  --spot-metrics --spot-metrics-only \
+  --gene-selection all \
+  --save-dir ./results_neb_skin \
+  --num-workers 6 \
+  --adata /nfs/team361/am74/skin_nemo/skin_nemoembeddings_pp_done_beforeperturbation.h5ad \
+  --wandb-project count_decoder
+'''
+'''
+python -m pdb src/app/count_decoder.py 
+--loss-type nb_softplus 
+--expression-layer counts 
+--disable-slide-batching 
+--wandb-project count_decoder 
+--spot-metrics --gene-selection all --spot-metrics-only 
+--adata /nfs/team361/sb75/DATASETS/gold/cell-graph-tokenizer/kidney_perturbation/nemokidneyxeniumatlas_annotated_processed.h5ad
+'''
