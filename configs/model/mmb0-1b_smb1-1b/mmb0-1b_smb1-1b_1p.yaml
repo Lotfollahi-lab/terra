@@ -57,6 +57,7 @@ meta:
   new_spc: True # True, False
   excl_spc_from_loss: True # True, False
   target_enc_layer_norm: True
+  restrict_special_attention: False
 mask:
   n_contexts: 1 # 1
   n_targets: 1 # 5 # 1 =, this is the number of blocks in block masking
@@ -67,7 +68,6 @@ mask:
   target_mask_size: 50 # this doesn't have meaning in block masking.
   per_block_mask_ratio: 0.6 # 0.2, 0.4, 0.6, 0.8
   sample_segments: True
-  restrict_special_attention: False
   special_token_pad_ratio: 0.
 optimization:
   warmup: 3

@@ -24,7 +24,7 @@ data:
   seq_len_neighborhood: 640 # 2560, 640, 10240
   n_segments: 11
   sampling_strategy: null
-  batch_size: 256 # 32
+  batch_size: 64 # 32
   num_workers: 16 
   pin_memory: True
   sep_gene_tokens_neb: False
@@ -68,10 +68,11 @@ mask:
   target_mask_size: 50 # this doesn't have meaning in block masking.
   per_block_mask_ratio: 0.6 # 0.2, 0.4, 0.6, 0.8
   sample_segments: True
-  special_token_pad_ratio: 0.0
+  restrict_special_attention: False
+  special_token_pad_ratio: 0.
 optimization:
-  warmup: 24
-  epochs: 2400
+  warmup: 3
+  epochs: 300
   ema:
   - 0.995
   - 1.0
