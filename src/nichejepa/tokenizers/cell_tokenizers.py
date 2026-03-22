@@ -211,6 +211,21 @@ class CellBaseTokenizer(ABC):
         # TODO fix this for radius and delaunay
         self.seq_len_cell = int(self.model_input_size / (self.n_neighs + 1))
 
+        # Define whether ranking differs from count-based ranking
+        self.rank_differs_from_count = True
+        if (
+            self.rank_cell_norm_method == self.count_cell_norm_method
+            and self.rank_gene_norm_method == self.count_gene_norm_method
+            and self.rank_count_norm_method == self.count_count_norm_method
+        ):
+            self.rank_differs_from_count = False
+        if (
+            self.rank_cell_norm_method == self.count_cell_norm_method
+            and self.rank_gene_norm_method == self.count_gene_norm_method
+            and self.count_count_norm_method == 'shifted_log'
+        ):
+            self.rank_differs_from_count = False
+
         # Load token dictionary
         logger.info('Loading token dictionary from '
                     f'{self.token_dictionary_file_path}.')
@@ -677,41 +692,84 @@ class CellGraphTokenizer(CellBaseTokenizer):
         adata_dict['gene_tokens_neighborhood'] = []
         adata_dict['gene_expr_neighborhood'] = []
             
-        # Divide cells into chunks and loop through chunks
-        print('Ranking gene tokens based on normalized counts.')
-        for i in range(0, len(adata), self.chunk_size):
-            rank_block = adata[i:i+self.chunk_size, coding_miRNA_idx].layers['X_rank']
-            count_block = adata[i:i+self.chunk_size, coding_miRNA_idx].layers['X_count']
+        if not self.rank_differs_from_count: # save memory by working with sparse arrays
+            print('Ranking gene tokens based on normalized counts.')
+            for i in range(0, len(adata), self.chunk_size):
+                if self.include_zero_expr_genes:
+                    norm_counts_cell_rank = adata[
+                        i : i + self.chunk_size, coding_miRNA_idx].layers[
+                            'X_rank'].toarray()
+                    norm_counts_cell_count = adata[
+                        i : i + self.chunk_size, coding_miRNA_idx].layers[
+                            'X_count'].toarray()
 
-            if sp.issparse(rank_block):
-                rank_block = rank_block.toarray()
-            else:
-                rank_block = np.asarray(rank_block)
+                    # Rank gene tokens and append across chunks
+                    adata_dict['gene_tokens_cell'] += [
+                        rank_gene_tokens(norm_counts_cell_rank[j],
+                        coding_miRNA_tokens_cell)
+                        for j in range(norm_counts_cell_rank.shape[0])]
 
-            if sp.issparse(count_block):
-                count_block = count_block.toarray()
-            else:
-                count_block = np.asarray(count_block)
+                    # Rank gene expression and append across chunks
+                    adata_dict['gene_expr_cell'] += [
+                        norm_counts_cell_count[j][
+                            np.argsort(-norm_counts_cell_rank[j])]
+                        for j in range(norm_counts_cell_count.shape[0])]
 
-            for j in range(rank_block.shape[0]):
-                rank_row = rank_block[j]
-                count_row = count_block[j]
+                else:
+                    norm_counts_cell_rank = sp.csr_matrix(adata[
+                        i : i + self.chunk_size, coding_miRNA_idx].layers[
+                            'X_rank'])
+                    norm_counts_cell_count = sp.csr_matrix(adata[
+                        i : i + self.chunk_size, coding_miRNA_idx].layers[
+                            'X_count'])              
 
-                # Primary sort: rank_row descending
-                # Tie-breaker: count_row descending
-                order = np.lexsort((-count_row, -rank_row))
+                    # Rank gene tokens and append across chunks
+                    adata_dict['gene_tokens_cell'] += [
+                        rank_gene_tokens(
+                            norm_counts_cell_rank[j].data,
+                            coding_miRNA_tokens_cell[norm_counts_cell_rank[j].indices])
+                        for j in range(norm_counts_cell_rank.shape[0])]
 
-                sorted_tokens = coding_miRNA_tokens_cell[order].copy()
-                sorted_rank = rank_row[order]
-                sorted_expr = count_row[order].astype(np.float64, copy=True)
+                    # Rank gene expression and append across chunks
+                    adata_dict['gene_expr_cell'] += [
+                        norm_counts_cell_count[j].data[
+                            np.argsort(-norm_counts_cell_rank[j].data)]
+                        for j in range(norm_counts_cell_count.shape[0])]
 
-                if not self.include_zero_expr_genes:
-                    zero_mask = (sorted_rank == 0)
-                    sorted_tokens[zero_mask] = 0
-                    sorted_expr[zero_mask] = 0.0
+        else: # conversion to dense arrays which requires higher memory
+            for i in range(0, len(adata), self.chunk_size):
+                rank_block = adata[i:i+self.chunk_size, coding_miRNA_idx].layers['X_rank']
+                count_block = adata[i:i+self.chunk_size, coding_miRNA_idx].layers['X_count']
 
-                adata_dict['gene_tokens_cell'].append(sorted_tokens.tolist())
-                adata_dict['gene_expr_cell'].append(sorted_expr.tolist())
+                if sp.issparse(rank_block):
+                    rank_block = rank_block.toarray()
+                else:
+                    rank_block = np.asarray(rank_block)
+
+                if sp.issparse(count_block):
+                    count_block = count_block.toarray()
+                else:
+                    count_block = np.asarray(count_block)
+
+                for j in range(rank_block.shape[0]):
+                    rank_row = rank_block[j]
+                    count_row = count_block[j]
+
+                    # Primary sort: rank_row descending
+                    # Tie-breaker: count_row descending
+                    order = np.lexsort((-count_row, -rank_row))
+
+                    sorted_tokens = coding_miRNA_tokens_cell[order].copy()
+                    sorted_rank = rank_row[order]
+                    sorted_expr = count_row[order].astype(np.float64, copy=True)
+
+                    if not self.include_zero_expr_genes:
+                        zero_mask = (sorted_rank == 0)
+                        sorted_tokens[zero_mask] = 0
+                        sorted_expr[zero_mask] = 0.0
+
+                    adata_dict['gene_tokens_cell'].append(sorted_tokens.tolist())
+                    adata_dict['gene_expr_cell'].append(sorted_expr.tolist())
 
         adata_dict['gene_tokens_cell_neigh'] = adata_dict['gene_tokens_cell']
         adata_dict['gene_expr_cell_neigh'] = adata_dict['gene_expr_cell']
