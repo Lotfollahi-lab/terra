@@ -88,7 +88,7 @@ class Attention(nn.Module):
         if self.use_flash_attention:
             if masks is not None:
                 x = nn.functional.scaled_dot_product_attention(
-                    q, k, v, attn_mask=masks!= 0, scale=self.scale)
+                    q, k, v, attn_mask=masks, scale=self.scale)
                 attn=None
             else:
                 x = nn.functional.scaled_dot_product_attention(
@@ -307,6 +307,8 @@ class MLP(nn.Module):
     out_features:
         Number of output features. If not specified, equals number of
         input features.
+    bias
+        If `True`, include a bias in linear layers.
     act_layer:
         Activation layer after first fully connected layer.
     drop:
@@ -316,15 +318,16 @@ class MLP(nn.Module):
                  in_features: int, 
                  hidden_features: int | None = None,
                  out_features: int | None = None,
+                 bias: bool = True,
                  act_layer: nn.modules.activation = nn.GELU,
                  drop: float = 0.0,
                  ):
         super().__init__()
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
-        self.fc1 = nn.Linear(in_features, hidden_features)
+        self.fc1 = nn.Linear(in_features, hidden_features, bias=bias)
         self.act = act_layer()
-        self.fc2 = nn.Linear(hidden_features, out_features)
+        self.fc2 = nn.Linear(hidden_features, out_features, bias=bias)
         self.drop = nn.Dropout(drop)
 
     def forward(self,

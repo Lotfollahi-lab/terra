@@ -106,10 +106,10 @@ def compute_mean_unmasked_emb(emb: torch.Tensor,
     Parameters
     -----------
     emb:
-        The input embeddings tensor (3D).
+        Embeddings with shape (BATCH, SEQ_LEN, EMB_DIM).
     mask:
-        A 2D boolean mask tensor indicating the sequence positions that mean
-        should be computed over.
+        Boolean mask with shape (BATCH, SEQ_LEN), indicating the sequence
+        positions that mean should be computed over.
     
     Returns
     -----------
@@ -190,6 +190,8 @@ def create_binary_selection_mask(ns_tokens: torch.Tensor,
     selection_mask:
         The resulting 2D selection mask tensor.
     """
+    #print("HEEEERE")
+    #print(ns_tokens.shape)
     selection_mask = torch.zeros_like(ns_tokens, dtype=torch.bool)
 
     if selection_type == 'agg_cell':

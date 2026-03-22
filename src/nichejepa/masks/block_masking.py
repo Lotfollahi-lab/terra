@@ -68,7 +68,7 @@ class BlockMaskCollator:
         self.restrict_special_attention = restrict_special_attention
         self.cell_segment_sampling_ratio = cell_segment_sampling_ratio
         self.special_token_pad_ratio = special_token_pad_ratio
-        print("Special token pad ratio", self.special_token_pad_ratio)
+        print("Special token pad ratio:", self.special_token_pad_ratio)
 
     def _sample_gene_mask(
         self,
@@ -248,6 +248,9 @@ class BlockMaskCollator:
         # Build attention mask once (bool, broadcast-friendly)
         masks_attention = (
             tokens != 0).unsqueeze(1).unsqueeze(1) # [B, 1, 1, N]
+
+        #print("Attention mask")
+        #print(masks_attention.shape)
 
         if self.restrict_special_attention:
             # Make special tokens only attent to themselves

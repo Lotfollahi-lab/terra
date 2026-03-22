@@ -403,6 +403,7 @@ class CellGraphDataset(CellBaseDataset):
         # Retrieve Hugging Face item once
         item = self.dataset[item]
 
+        # TODO: add special tokens from token dict directly (1 value per row)
         item['tissue_token'] = torch.tensor([103])
         item['assay_token'] = torch.tensor([104])
         item['gene_panel_token'] = torch.tensor([105])
@@ -424,8 +425,6 @@ class CellGraphDataset(CellBaseDataset):
             # Mask out positions where gene_tokens == 0
             seg_tokens = seg_tokens * (item['gene_tokens'] != 0).long()
             item['seg_tokens'] = seg_tokens
-
-        # TODO: add special tokens from token dict directly (1 value per row)
 
         # Get (sampled) gene tokens, positions, segments, and values for
         # index cell segment

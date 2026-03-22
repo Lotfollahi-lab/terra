@@ -263,6 +263,12 @@ def normalize_by_shifted_log(x: sp.csr_matrix) -> sp.csr_matrix:
     y:
         A sparse matrix containing the normalized features.
     """
+    if sp.issparse(x):
+        x = x.tocsr()
+        x = x.astype(np.float32)
+    else:
+        x = np.asarray(x, dtype=np.float32)
+
     y = sc.pp.log1p(x)
 
     return y
