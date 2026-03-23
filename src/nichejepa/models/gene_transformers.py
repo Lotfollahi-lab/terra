@@ -250,7 +250,7 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         valid_mask = x.ne(0).any(dim=-1)
         for i, blk in enumerate(self.blocks, start=1):
             x = blk(x, masks=attn)
-            #if i == len(self.blocks) and (self.norm is not None):
+            if i == len(self.blocks) and (self.norm is not None):
                 # Apply norm only for last layer as in training
                 x = self.norm(x)
                 if DEBUG:
