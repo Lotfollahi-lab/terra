@@ -21,10 +21,10 @@ artifact:
   OUTPUT_DIR: "/nfs/team361/sb75/nichejepa-reproducibility/artifacts/mmb0-1b_smb1-1b_2p"  # Path to store the artifacts.
   LOG_DIR: "/nfs/team361/sb75/nichejepa-reproducibility/artifacts/mmb0-1b_smb1-1b_2p"
   EXPERIMENT_NAME: "terra_mmb0-1b_smb1-1b_2p"  # Name of the experiment.
-  RUN_NAME: "run100_shiftedlog"  # Name of the run.
+  RUN_NAME: "run2_shiftedlog"  # Name of the run.
 
 runner_script:
   RUNNER_SCRIPT: "/nfs/team361/sb75/nichejepa/src/app/training/train_model_lsf_mpirun_sanger.sh"  # Path to the runnaazazer script.
   TRAINING_SCRIPT_PATH: "/nfs/team361/sb75/nichejepa/src/app/training/main.py"  # Path to the training script.
   BACKEND: "nccl"  # Backend for distributed training.
-  CONFIG_FILE: "/nfs/team361/sb75/nichejepa/configs/model/mmb0-1b_smb1-1b/mmb0-1b_smb1-1b_2p_4.yaml"
+  CONFIG_FILE: "/nfs/team361/sb75/nichejepa/configs/model/mmb0-1b_smb1-1b/mmb0-1b_smb1-1b_2p_2.yaml"
