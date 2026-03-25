@@ -147,6 +147,40 @@ def compute_mean_unmasked_emb(emb: torch.Tensor,
     return mean_emb
 
 
+def compute_softmax_weighted_mean_emb(
+    emb: torch.Tensor,
+    weights: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Compute a softmax-weighted mean of embeddings.
+
+    Parameters
+    -----------
+    emb:
+        (BATCH, SEQ_LEN, EMB_DIM)
+    weights:
+        (BATCH, SEQ_LEN) — can be any real values (logits)
+
+    Returns
+    -----------
+    (BATCH, EMB_DIM)
+    """
+
+    if emb.dim() != 3:
+        raise ValueError(f"Expected 3D emb, got {emb.dim()}D")
+
+    if weights.shape != emb.shape[:2]:
+        raise ValueError("weights must match (BATCH, SEQ_LEN)")
+
+    # Convert to attention weights
+    attn = torch.softmax(weights, dim=1)  # (B, S)
+
+    # Weighted sum
+    mean_emb = (emb * attn.unsqueeze(-1)).sum(dim=1)
+
+    return mean_emb
+
+
 def create_binary_selection_mask(ns_tokens: torch.Tensor,
                                  seq_len_cell: int,
                                  selection_type: Literal['cls_cell',

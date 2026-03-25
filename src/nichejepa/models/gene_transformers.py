@@ -225,16 +225,17 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                 attn[
                     :,
                     :,
-                    self.n_special_tokens:(self.n_special_tokens+self.seq_len_cell),
+                    :(self.n_special_tokens+self.seq_len_cell),
                     (self.n_special_tokens+self.seq_len_cell):] = False
 
         if cell_only:
             x[:, (self.n_special_tokens+self.seq_len_cell):, :] = 0
 
+            #print('model cell attn')
             #torch.set_printoptions(profile="full")
             #print(attn.shape)
             #print(attn[0, :, 1, :])
-            #print(attn[0, :, 513, :])
+            #print(attn[0, :, 65, :])
 
         # Mask token embeddings if masks are provided
         if masks is not None:
@@ -251,7 +252,8 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
 
         # Run forward prop and store embeddings for each specified layer
         out: dict[int, torch.Tensor] = {}
-        valid_mask = x.ne(0).any(dim=-1)
+        if DEBUG:
+            valid_mask = x.ne(0).any(dim=-1)
         for i, blk in enumerate(self.blocks, start=1):
             x = blk(x, masks=attn)
             if i == len(self.blocks) and (self.norm is not None):

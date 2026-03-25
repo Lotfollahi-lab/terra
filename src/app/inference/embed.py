@@ -29,6 +29,7 @@ from nichejepa.masks.cell_masking import CellMaskCollator
 from nichejepa.tokenizers import cell_tokenizers
 from nichejepa.utils.embedding import (create_binary_selection_mask,
                                        compute_mean_unmasked_emb,
+                                       compute_softmax_weighted_mean_emb,
                                        compute_unmasked_rank_based_weights,
                                        collect_adata_from_folder,
                                        retrieve_gene_emb,
@@ -63,6 +64,8 @@ def embed_dataset(dataset: Dataset,
                   include_spatial_cell_emb: bool = True,
                   return_token_embeddings: bool = False,
                   ignore_spc_tokens: bool = True,
+                  agg_type: Literal['avg',
+                                    'softmax'] = 'avg',
                   ) -> dict:
     """
     Parameters
@@ -276,6 +279,13 @@ def embed_dataset(dataset: Dataset,
             seq_len_cell=model_config['data']['seq_len_cell'],
             top_k=top_k).cpu()
 
+        #torch.set_printoptions(threshold=float('inf'))
+        #print('ns tokens')
+        #print(ns_tokens[0])
+        #print('cell mask')
+        #print(cell_mask[0])
+        #raise ValueError
+
         # Create mask for neighbor cell genes
         if model_config['data']['tokenizer_type'] == 'cell_neighborhood':
             neighborhood_mask = create_binary_selection_mask(
@@ -293,11 +303,28 @@ def embed_dataset(dataset: Dataset,
                 top_k=top_k,
                 n_segments=model_config['data']['n_segments']).cpu()
 
-        # Average gene embeddings into cell and neighborhood embedding                    
-        cell_emb = compute_mean_unmasked_emb(c_emb, cell_mask)
-        if include_spatial_cell_emb:
-            spatial_cell_emb = compute_mean_unmasked_emb(n_emb, cell_mask)
-        neighborhood_emb = compute_mean_unmasked_emb(n_emb, neighborhood_mask)
+        # Average gene embeddings into cell and neighborhood embedding
+        if agg_type == 'avg':                    
+            cell_emb = compute_mean_unmasked_emb(c_emb, cell_mask)
+            if include_spatial_cell_emb:
+                spatial_cell_emb = compute_mean_unmasked_emb(n_emb, cell_mask)
+            neighborhood_emb = compute_mean_unmasked_emb(n_emb, neighborhood_mask)
+        elif agg_type == 'softmax':
+            values = udata['values'][:, n_special_tokens:].detach().cpu()
+            cell_values = values.masked_fill(~cell_mask, float('-inf'))
+            cell_weights = torch.softmax(cell_values, dim=1)
+            cell_emb = compute_softmax_weighted_mean_emb(c_emb, cell_weights)
+            if include_spatial_cell_emb:
+                spatial_cell_emb = compute_softmax_weighted_mean_emb(n_emb, cell_weights)
+            neighborhood_values = values.masked_fill(~neighborhood_mask, float('-inf'))
+            neighborhood_weights = torch.softmax(neighborhood_values, dim=1)
+            torch.set_printoptions(threshold=float('inf'))
+            #print('cell weights')
+            #print(cell_weights[0])
+            #print('neighborhood weights')
+            #print(neighborhood_weights[0])
+            #raise ValueError
+            neighborhood_emb = compute_softmax_weighted_mean_emb(n_emb, neighborhood_weights)            
 
         all_cell_emb_list.append(cell_emb)
         if include_spatial_cell_emb:
@@ -329,6 +356,7 @@ def embed_dataset(dataset: Dataset,
 def harmonize_tokenize_embed_pipeline(
         adata: ad.AnnData,
         sample_key: str | None,
+        batch_key: str,
         model_folder_path: str,
         cache_directory_path: str,
         gene_mapping_dict_file_path: str | None = '/lustre/scratch126/cellgen/lotfollahi/DATASETS/genes/homo_sapiens_gene_name_to_ensembl_id_dict.pkl',
@@ -364,6 +392,9 @@ def harmonize_tokenize_embed_pipeline(
         An unharmonized AnnData object to be tokenized.
     sample_key:
         Key in `adata.obs` where the sample information is stored.
+    batch_key:
+        Key in `adata.obs` where the batch identifier in the harmonized AnnData
+        will be stored.    
     model_folder_path:
         Path to the folder containing the model config, token dictionary, and
         normalization factors.
@@ -429,6 +460,7 @@ def harmonize_tokenize_embed_pipeline(
         samples = adata.obs[sample_key].unique().tolist()
         idx_list = []
         gene_list = []
+        batch_ids = []
 
         for sample in samples:
             adata_sample = adata[adata.obs[sample_key] == sample]
@@ -445,6 +477,7 @@ def harmonize_tokenize_embed_pipeline(
                 min_genes_per_cell=min_genes_per_cell)
             idx_list.extend(adata_sample.obs.index.tolist())
             gene_list.extend(adata_sample.var.index.tolist())
+            batch_ids.extend([sample] * len(adata_sample))
             print(f"Harmonized sample {sample}.")
             print('==================================================')
             print(f"Tokenizing sample {sample}...")
@@ -459,6 +492,7 @@ def harmonize_tokenize_embed_pipeline(
             print('==================================================')
 
         adata = adata[idx_list, list(set(gene_list))]
+        adata.obs[batch_key] = batch_ids
 
         print(f"Concatenating tokenized data...")
         dataset = concatenate_datasets(datasets)
@@ -479,6 +513,7 @@ def harmonize_tokenize_embed_pipeline(
             species=species,
             min_cells_per_gene=min_cells_per_gene,
             min_genes_per_cell=min_genes_per_cell)
+        adata.obs[batch_key] = harmonized_adata_save_path.split('.')[0].split('/')[-1]
         print(f"Harmonized AnnData.")
         print('==================================================')
         print(f"Tokenizing AnnData.")
