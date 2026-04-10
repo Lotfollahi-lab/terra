@@ -37,7 +37,7 @@ meta:
   api_version: 'v3'
   add_cls: False
   n_cls: 1
-  gt_type: 'combined' # 'rank', 'counts', 'combined'
+  gt_type: 'rank' # 'rank', 'counts', 'combined'
   count_encoding: 'mlp' # 'value_bins', 'mlp'
   n_value_bins: 20
   cell_pos_enc: 'segment'
@@ -66,7 +66,7 @@ mask:
   targets_list: null
   context_mask_size: 200 # this doesn't have meaning in block masking.
   target_mask_size: 50 # this doesn't have meaning in block masking.
-  per_block_mask_ratio: 0.4 # 0.2, 0.4, 0.6, 0.8
+  per_block_mask_ratio: 0.6 # 0.2, 0.4, 0.6, 0.8
   sample_segments: True
   restrict_special_attention: False
   special_token_pad_ratio: 0.
