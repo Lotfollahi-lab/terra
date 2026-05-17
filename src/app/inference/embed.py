@@ -127,8 +127,6 @@ def embed_dataset(dataset: Dataset,
     with open(token_dictionary_file_path, 'rb') as file:
         token_dict = pickle.load(file)
     vocab_size = len(token_dict)
-    #n_special_values = sum(
-    #    1 for key in token_dict if "spv" in key) # this only works now because of the dummy special values
     n_special_values = model_config['data'].get('n_special_values', 0)
 
     if agg_excluded_genes:
@@ -586,6 +584,7 @@ def gene_embed_dataset(dataset: Dataset,
                   return_receptor_average: bool=False,
                   include_spatial_cell_emb: bool = True,
                   description: str='',
+                  ignore_spc_tokens: bool = True,
                   ) -> dict:
     
     """
@@ -659,7 +658,7 @@ def gene_embed_dataset(dataset: Dataset,
     with open(token_dictionary_file_path, 'rb') as file:
         token_dict = pickle.load(file)
     vocab_size = len(token_dict)
-    n_special_values = sum(1 for key in token_dict if "spv" in key)
+    n_special_values = model_config['data'].get('n_special_values', 0)
 
     print('==================================================')
     print(f'STEP 2: {description}')
@@ -714,6 +713,7 @@ def gene_embed_dataset(dataset: Dataset,
         per_block_mask_ratio=model_config['mask']['per_block_mask_ratio'],
         sample_segments=False,
         sample_gene_masks=False,
+        restrict_special_attention=model_config['meta']['restrict_special_attention'],
         special_token_pad_ratio=1.0)
         
     # Create torch dataset
@@ -794,6 +794,7 @@ def gene_embed_dataset(dataset: Dataset,
                 batch=udata,
                 masks_attention=masks_attention,
                 need_cell_only_context=True,
+                ignore_spc_tokens=ignore_spc_tokens,
             )
 
             # Keep embeddings on device for vectorized ops; move to CPU only when storing

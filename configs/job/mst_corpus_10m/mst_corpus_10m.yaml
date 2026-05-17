@@ -21,7 +21,7 @@ artifact:
   OUTPUT_DIR: "/nfs/team361/sb75/nichejepa-reproducibility/artifacts/mst_corpus_10m"  # Path to store the artifacts.
   LOG_DIR: "/nfs/team361/sb75/nichejepa-reproducibility/artifacts/mst_corpus_10m"
   EXPERIMENT_NAME: "terra_mst_corpus_10m"  # Name of the experiment.
-  RUN_NAME: "run11"  # Name of the run.
+  RUN_NAME: "run14"  # Name of the run.
 
 runner_script:
   RUNNER_SCRIPT: "/nfs/team361/sb75/nichejepa/src/app/training/train_model_lsf_mpirun_sanger.sh"  # Path to the runnaazazer script.
