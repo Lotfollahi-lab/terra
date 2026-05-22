@@ -47,12 +47,32 @@ def parse_protein_init_kwargs(args: dict,
     """
     cfg = args.get('protein_init', None)
     if not (cfg and cfg.get('enabled', False)):
+        logger.info(
+            "Protein-init: DISABLED -- using the default learnable "
+            "nn.Embedding for gene tokens.")
         return None
     kwargs = {
         'embedding_path': cfg['embedding_path'],
         'mapping_path':   cfg['mapping_path'],
         'proj_bias':      cfg.get('proj_bias', False),
     }
+    # Optional: override which Ensembl gene-ID prefixes count as gene
+    # tokens (default in protein_init covers human ENSG + mouse ENSMUSG).
+    # YAML can pass a single string or a list.
+    if 'gene_id_prefixes' in cfg:
+        prefixes = cfg['gene_id_prefixes']
+        if isinstance(prefixes, str):
+            prefixes = [prefixes]
+        kwargs['gene_id_prefixes'] = list(prefixes)
+    logger.info(
+        "Protein-init: ENABLED -- frozen ESM + learnable projection "
+        "(UCE-style). embedding=%s | mapping=%s | proj_bias=%s%s",
+        kwargs['embedding_path'],
+        kwargs['mapping_path'],
+        kwargs['proj_bias'],
+        f" | gene_id_prefixes={kwargs['gene_id_prefixes']}"
+        if 'gene_id_prefixes' in kwargs else "",
+    )
     if token_dict is not None:
         kwargs['token_dict'] = token_dict
     return kwargs

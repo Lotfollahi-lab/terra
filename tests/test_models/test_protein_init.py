@@ -96,6 +96,66 @@ def test_build_aligned_protein_matrix_basic():
     assert "ENSG00000000003" in stats["missing_gene_examples"]
 
 
+def _make_synthetic_mouse_token_dict():
+    """Mimic the shape of NicheJEPA's token_dictionary_mus_musculus.pkl:
+    special tokens at low IDs, then ENSMUSG-prefixed gene tokens."""
+    return {
+        "<pad>":              0,
+        "cls_0":              1,
+        "spt_batch":          2,
+        "ENSMUSG00000000001": 3,  # covered
+        "ENSMUSG00000000002": 4,  # missing from ESM file
+        "ENSMUSG00000000003": 5,  # covered
+    }
+
+
+def test_build_aligned_protein_matrix_mouse():
+    """Default prefix tuple must accept ENSMUSG-keyed mouse token dicts.
+    Without this, a mouse run would route every gene through the
+    learnable-random branch with zero protein init — silent failure
+    mode worth a regression test."""
+    token_dict = _make_synthetic_mouse_token_dict()
+    protein_matrix = torch.tensor([
+        [2.0] * 16,                            # row 0 -> ENSMUSG...0001
+        [float(i) * 0.5 for i in range(16)],   # row 1 -> ENSMUSG...0003
+    ], dtype=torch.float32)
+    mapping = {
+        "ENSMUSG00000000001": 0,
+        "ENSMUSG00000000003": 1,
+        # ENSMUSG...0002 deliberately absent.
+    }
+    aligned, gene_mask, stats = build_aligned_protein_matrix(
+        token_dict=token_dict,
+        protein_matrix=protein_matrix,
+        ensembl_to_row=mapping,
+        effective_vocab_size=len(token_dict),
+    )
+    assert torch.equal(aligned[3], protein_matrix[0])  # ENSMUSG...0001
+    assert torch.equal(aligned[5], protein_matrix[1])  # ENSMUSG...0003
+    assert torch.all(aligned[4] == 0.0)                # missing
+    assert gene_mask.tolist() == [False, False, False, True, False, True]
+    assert stats["n_gene_tokens_in_dict"] == 3
+    assert stats["n_gene_tokens_covered"] == 2
+    assert "ENSMUSG" in stats["gene_id_prefixes"]
+
+
+def test_build_aligned_protein_matrix_custom_prefix():
+    """Caller can override gene_id_prefixes to restrict or extend
+    detection (e.g. zebrafish ENSDARG)."""
+    token_dict = {"<pad>": 0, "ENSDARG00000000001": 1, "ENSG00000000001": 2}
+    protein_matrix = torch.zeros(1, 4)
+    mapping = {"ENSDARG00000000001": 0}
+    _, gene_mask, _ = build_aligned_protein_matrix(
+        token_dict=token_dict,
+        protein_matrix=protein_matrix,
+        ensembl_to_row=mapping,
+        effective_vocab_size=len(token_dict),
+        gene_id_prefixes=("ENSDARG",),
+    )
+    # ENSDARG matches; ENSG is excluded by the restricted prefix tuple.
+    assert gene_mask.tolist() == [False, True, False]
+
+
 def test_build_aligned_protein_matrix_sep_gene_tokens_neb():
     """When sep_gene_tokens_neb=True the encoder doubles its vocab so a
     gene gets distinct IDs in cell vs. neighborhood context. The aligned

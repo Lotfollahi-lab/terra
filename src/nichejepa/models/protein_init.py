@@ -20,7 +20,7 @@ NicheJEPA's token IDs without per-batch translation.
 import json
 import logging
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, Sequence, Tuple
 
 import torch
 import torch.nn as nn
@@ -29,7 +29,12 @@ from .utils import trunc_normal_
 
 logger = logging.getLogger(__name__)
 
-_ENSG_PREFIX = "ENSG"
+# Ensembl gene-ID prefixes per species. NicheJEPA's token dictionaries
+# key gene tokens by Ensembl gene ID; the precompute script writes
+# protein embeddings using the same identifier. We accept multiple
+# prefixes so a single helper works for human + mouse (most common) and
+# can be extended without changing call sites (e.g. zebrafish ENSDARG).
+DEFAULT_ENSEMBL_GENE_ID_PREFIXES: Tuple[str, ...] = ("ENSG", "ENSMUSG")
 
 
 def load_protein_embeddings(
@@ -82,13 +87,15 @@ def build_aligned_protein_matrix(
         ensembl_to_row: Dict[str, int],
         effective_vocab_size: int,
         sep_gene_tokens_neb: bool = False,
+        gene_id_prefixes: Sequence[str] = DEFAULT_ENSEMBL_GENE_ID_PREFIXES,
         ) -> Tuple[torch.Tensor, torch.Tensor, dict]:
     """Build a per-token-ID aligned ESM matrix.
 
-    Iterates over ``token_dict`` and, for each key starting with ``ENSG``
-    that has an entry in ``ensembl_to_row``, copies the corresponding
-    protein-embedding row into ``aligned[token_id]`` and flips
-    ``gene_mask[token_id]`` to True. Special-token keys (``<pad>``,
+    Iterates over ``token_dict`` and, for each key that starts with
+    one of ``gene_id_prefixes`` (default: human ``ENSG`` + mouse
+    ``ENSMUSG``) and is present in ``ensembl_to_row``, copies the
+    corresponding protein-embedding row into ``aligned[token_id]`` and
+    flips ``gene_mask[token_id]`` to True. Special-token keys (``<pad>``,
     ``cls_*``, ``spt_*``, ``spv_*``, etc.) and Ensembl IDs not present
     in the protein file leave their rows as zero with ``gene_mask=False``;
     the routed embedding module (see ``ProteinInitTokenEmbedding``)
@@ -138,6 +145,12 @@ def build_aligned_protein_matrix(
             f"len(token_dict)={base_vocab_size} with "
             f"sep_gene_tokens_neb={sep_gene_tokens_neb} (expected {expected_eff}).")
 
+    # Normalize to a tuple so str.startswith() can match any of them.
+    prefixes = tuple(gene_id_prefixes)
+    if not prefixes:
+        raise ValueError(
+            "gene_id_prefixes must be non-empty (got an empty sequence).")
+
     esm_dim = protein_matrix.shape[1]
     aligned = torch.zeros(effective_vocab_size, esm_dim, dtype=torch.float32)
     gene_mask = torch.zeros(effective_vocab_size, dtype=torch.bool)
@@ -147,7 +160,7 @@ def build_aligned_protein_matrix(
     missing_examples = []
 
     for token_str, token_id in token_dict.items():
-        if not token_str.startswith(_ENSG_PREFIX):
+        if not token_str.startswith(prefixes):
             # Special tokens (<pad>, cls_*, spt_*, spv_*, etc.) go through
             # the learnable special-emb branch; leave aligned row = 0.
             continue
@@ -182,6 +195,7 @@ def build_aligned_protein_matrix(
         "coverage_fraction": coverage,
         "missing_gene_examples": missing_examples,
         "esm_dim": esm_dim,
+        "gene_id_prefixes": list(prefixes),
     }
     return aligned, gene_mask, stats
 
@@ -265,6 +279,7 @@ def build_protein_init_token_embedding(
         padding_idx: int = 0,
         init_std: float = 0.02,
         proj_bias: bool = False,
+        gene_id_prefixes: Sequence[str] = DEFAULT_ENSEMBL_GENE_ID_PREFIXES,
         log: bool = True,
         ) -> ProteinInitTokenEmbedding:
     """End-to-end constructor: load files, align, instantiate module.
@@ -280,26 +295,9 @@ def build_protein_init_token_embedding(
         ensembl_to_row=ensembl_to_row,
         effective_vocab_size=effective_vocab_size,
         sep_gene_tokens_neb=sep_gene_tokens_neb,
+        gene_id_prefixes=gene_id_prefixes,
     )
-    if log:
-        logger.info(
-            "Protein-init alignment: %d/%d gene tokens covered (%.1f%%); "
-            "%d gene tokens missing from ESM file; %d non-gene (special) "
-            "tokens routed through learnable branch; esm_dim=%d.",
-            stats["n_gene_tokens_covered"],
-            stats["n_gene_tokens_in_dict"],
-            100.0 * stats["coverage_fraction"],
-            stats["n_gene_tokens_missing_in_esm"],
-            stats["n_non_gene_tokens"],
-            stats["esm_dim"],
-        )
-        if stats["missing_gene_examples"]:
-            logger.info(
-                "Missing-gene examples (first %d): %s",
-                len(stats["missing_gene_examples"]),
-                ", ".join(stats["missing_gene_examples"]),
-            )
-    return ProteinInitTokenEmbedding(
+    module = ProteinInitTokenEmbedding(
         vocab_size=effective_vocab_size,
         embed_dim=embed_dim,
         protein_matrix=aligned,
@@ -308,3 +306,46 @@ def build_protein_init_token_embedding(
         init_std=init_std,
         proj_bias=proj_bias,
     )
+    if log:
+        # Multi-line banner so it's obvious in the training logs that
+        # protein-init actually fired and which numbers it produced.
+        # Logged at INFO so it appears alongside the rest of the
+        # encoder construction info (rank 0 only).
+        n_frozen = int(module.protein_emb.weight.numel())
+        n_trainable_proj = int(module.protein_proj.weight.numel())
+        if module.protein_proj.bias is not None:
+            n_trainable_proj += int(module.protein_proj.bias.numel())
+        n_trainable_special = int(module.special_emb.weight.numel())
+        missing_preview = (
+            ", ".join(stats["missing_gene_examples"])
+            if stats["missing_gene_examples"] else "<none>"
+        )
+        banner = (
+            "\n"
+            "================================================================\n"
+            " PROTEIN-INIT TOKEN EMBEDDING -- INITIALIZED\n"
+            "----------------------------------------------------------------\n"
+            f"   Prefixes recognized as genes : {stats['gene_id_prefixes']}\n"
+            f"   ESM dim -> encoder embed_dim : "
+            f"{stats['esm_dim']} -> {embed_dim}\n"
+            f"   Gene tokens covered by ESM   : "
+            f"{stats['n_gene_tokens_covered']}/{stats['n_gene_tokens_in_dict']} "
+            f"({100.0 * stats['coverage_fraction']:.2f}%)\n"
+            f"   Gene tokens missing from ESM : "
+            f"{stats['n_gene_tokens_missing_in_esm']} "
+            f"(random init, frozen via special_emb)\n"
+            f"   Non-gene (special) tokens    : "
+            f"{stats['n_non_gene_tokens']} (learnable via special_emb)\n"
+            f"   Effective vocab size         : "
+            f"{stats['effective_vocab_size']} "
+            f"(sep_gene_tokens_neb={sep_gene_tokens_neb})\n"
+            f"   Frozen params (ESM matrix)   : {n_frozen:,}\n"
+            f"   Trainable: projection        : {n_trainable_proj:,} "
+            f"({stats['esm_dim']}x{embed_dim}, bias={proj_bias})\n"
+            f"   Trainable: special embedding : {n_trainable_special:,} "
+            f"({stats['effective_vocab_size']}x{embed_dim})\n"
+            f"   Missing-gene examples        : {missing_preview}\n"
+            "================================================================"
+        )
+        logger.info(banner)
+    return module

@@ -130,6 +130,10 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         effective_vocab_size = (
             vocab_size + (vocab_size if sep_gene_tokens_neb else 0))
         if protein_init_kwargs is not None:
+            _pi_extra = {}
+            if "gene_id_prefixes" in protein_init_kwargs:
+                _pi_extra["gene_id_prefixes"] = tuple(
+                    protein_init_kwargs["gene_id_prefixes"])
             self.token_embed = build_protein_init_token_embedding(
                 token_dict=protein_init_kwargs["token_dict"],
                 embedding_path=protein_init_kwargs["embedding_path"],
@@ -140,6 +144,7 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                 padding_idx=0,
                 init_std=init_std,
                 proj_bias=protein_init_kwargs.get("proj_bias", False),
+                **_pi_extra,
             )
         else:
             self.token_embed = nn.Embedding(
