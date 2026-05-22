@@ -16,6 +16,7 @@ import torch
 import torch.nn as nn
 
 from .modules import Attention, Block, MLP, ValueEmbWeightsProjection
+from .protein_init import build_protein_init_token_embedding
 from .utils import (get_1d_sincos_pos_embed,
                     get_1d_sincos_pos_embed_from_coord,
                     repeat_interleave_batch,
@@ -103,6 +104,7 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                  api_version: Literal['v1', 'v2', 'v3'] = 'v3',
                  sep_gene_tokens_neb: bool = False,
                  nz_spc: bool = False,
+                 protein_init_kwargs: dict | None = None,
                  **kwargs
                  ):
         super().__init__()
@@ -117,12 +119,33 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         self.api_version = api_version
         self.sep_gene_tokens_neb = sep_gene_tokens_neb
         self.nz_spc = nz_spc
-            
-        # Initialize token embeddings
-        self.token_embed = nn.Embedding(
-            vocab_size + (vocab_size if sep_gene_tokens_neb else 0), # already includes <pad>
-            embed_dim,
-            padding_idx=0)
+
+        # Initialize token embeddings. When `protein_init_kwargs` is
+        # provided, gene-token rows are sourced from a frozen ESM
+        # protein-embedding matrix and adapted into `embed_dim` by a
+        # learnable linear projection (UCE-style); special tokens and
+        # missing-gene Ensembl IDs go through a separate learnable
+        # embedding table. Otherwise a plain learnable nn.Embedding is
+        # used, as before.
+        effective_vocab_size = (
+            vocab_size + (vocab_size if sep_gene_tokens_neb else 0))
+        if protein_init_kwargs is not None:
+            self.token_embed = build_protein_init_token_embedding(
+                token_dict=protein_init_kwargs["token_dict"],
+                embedding_path=protein_init_kwargs["embedding_path"],
+                mapping_path=protein_init_kwargs["mapping_path"],
+                effective_vocab_size=effective_vocab_size,
+                embed_dim=embed_dim,
+                sep_gene_tokens_neb=sep_gene_tokens_neb,
+                padding_idx=0,
+                init_std=init_std,
+                proj_bias=protein_init_kwargs.get("proj_bias", False),
+            )
+        else:
+            self.token_embed = nn.Embedding(
+                effective_vocab_size,  # already includes <pad>
+                embed_dim,
+                padding_idx=0)
 
         # Initialize segment embeddings
         if self.cell_pos_enc == 'segment':

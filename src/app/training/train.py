@@ -38,7 +38,8 @@ from datasets import load_from_disk
 from torch.nn.parallel import DistributedDataParallel
 from tqdm import tqdm
 
-from app.utils import init_model, init_opt, load_checkpoint
+from app.utils import (init_model, init_opt, load_checkpoint,
+                       parse_protein_init_kwargs)
 from nichejepa.datasets.cell_datasets import init_cell_dataset
 from nichejepa.datasets.dataloaders import init_dataloader_and_sampler
 from nichejepa.masks.block_masking  import BlockMaskCollator
@@ -190,6 +191,13 @@ def train(args: dict,
     else:
         mlp_bias = True
 
+    # Optional protein-embedding initialization for the gene-token
+    # embedding layer (UCE-style: frozen ESM matrix + learnable
+    # projection). Enabled by a top-level `protein_init` block in the
+    # config; absent or `enabled: false` falls back to the default
+    # learnable nn.Embedding.
+    protein_init_kwargs = parse_protein_init_kwargs(args)
+
     n_contexts = args['mask']['n_contexts']
     n_targets = args['mask']['n_targets']
     block_masking = args['mask']['block_masking']
@@ -255,6 +263,10 @@ def train(args: dict,
     with open(token_dict_folder_path, 'rb') as file:
         token_dict = pickle.load(file)
     vocab_size = len(token_dict)
+    # Inject the loaded token_dict into protein_init_kwargs so the
+    # encoder can align ESM rows to NicheJEPA token IDs.
+    if protein_init_kwargs is not None:
+        protein_init_kwargs['token_dict'] = token_dict
     #n_special_values = sum(
     #    1 for key in token_dict if "spv" in key) # this only works now because of the dummy special values
     n_special_values = args['data']['n_special_values']
@@ -352,7 +364,8 @@ def train(args: dict,
         pos_learnable=pos_learnable,
         nz_spc=nz_spc,
         new_spc=new_spc,
-        mlp_bias=mlp_bias)
+        mlp_bias=mlp_bias,
+        protein_init_kwargs=protein_init_kwargs)
     target_encoder = copy.deepcopy(encoder)
 
     # Initialize mask collator

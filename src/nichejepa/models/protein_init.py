@@ -1,0 +1,310 @@
+"""
+Protein-embedding initialization for the gene-token embedding layer.
+
+UCE-style (Rosen et al. 2023): the gene-token embedding is sourced from
+a frozen per-gene protein embedding (ESM-2 / ESM-C) and adapted into the
+encoder's embed_dim by a learnable linear projection. Special tokens and
+gene tokens missing from the protein file use a separate learnable
+embedding table.
+
+Inputs expected:
+    - protein matrix : torch.Tensor of shape (N_proteins, esm_dim),
+      saved via torch.save.
+    - mapping        : JSON file mapping {ensembl_gene_id: row_index}.
+
+The aligned matrix is built once at module-init time and shaped to
+(effective_vocab_size, esm_dim) so it can be looked up directly by
+NicheJEPA's token IDs without per-batch translation.
+"""
+
+import json
+import logging
+from pathlib import Path
+from typing import Dict, Tuple
+
+import torch
+import torch.nn as nn
+
+from .utils import trunc_normal_
+
+logger = logging.getLogger(__name__)
+
+_ENSG_PREFIX = "ENSG"
+
+
+def load_protein_embeddings(
+        embedding_path: str | Path,
+        mapping_path: str | Path,
+        ) -> Tuple[torch.Tensor, Dict[str, int]]:
+    """Load the ESM embedding matrix and its Ensembl-row mapping.
+
+    Parameters
+    ----------
+    embedding_path:
+        Path to a torch-saved tensor of shape (N_proteins, esm_dim).
+    mapping_path:
+        Path to a JSON file mapping ``{ensembl_gene_id: row_index}``.
+
+    Returns
+    -------
+    matrix:
+        Float32 tensor on CPU.
+    mapping:
+        Dict from Ensembl gene ID to the matrix row index.
+    """
+    matrix = torch.load(str(embedding_path), map_location="cpu", weights_only=True)
+    if not isinstance(matrix, torch.Tensor):
+        raise TypeError(
+            f"{embedding_path}: expected a torch.Tensor, got {type(matrix)}.")
+    if matrix.dim() != 2:
+        raise ValueError(
+            f"{embedding_path}: expected a 2-D tensor, got shape {tuple(matrix.shape)}.")
+    matrix = matrix.float()
+
+    with open(mapping_path, "r") as f:
+        mapping = json.load(f)
+    if not isinstance(mapping, dict):
+        raise TypeError(
+            f"{mapping_path}: expected a JSON object (dict), got {type(mapping)}.")
+    if not all(isinstance(v, int) for v in mapping.values()):
+        raise TypeError(
+            f"{mapping_path}: all row indices must be int.")
+    if mapping and max(mapping.values()) >= matrix.shape[0]:
+        raise ValueError(
+            f"{mapping_path}: max row index {max(mapping.values())} >= "
+            f"matrix rows {matrix.shape[0]}.")
+    return matrix, mapping
+
+
+def build_aligned_protein_matrix(
+        token_dict: Dict[str, int],
+        protein_matrix: torch.Tensor,
+        ensembl_to_row: Dict[str, int],
+        effective_vocab_size: int,
+        sep_gene_tokens_neb: bool = False,
+        ) -> Tuple[torch.Tensor, torch.Tensor, dict]:
+    """Build a per-token-ID aligned ESM matrix.
+
+    Iterates over ``token_dict`` and, for each key starting with ``ENSG``
+    that has an entry in ``ensembl_to_row``, copies the corresponding
+    protein-embedding row into ``aligned[token_id]`` and flips
+    ``gene_mask[token_id]`` to True. Special-token keys (``<pad>``,
+    ``cls_*``, ``spt_*``, ``spv_*``, etc.) and Ensembl IDs not present
+    in the protein file leave their rows as zero with ``gene_mask=False``;
+    the routed embedding module (see ``ProteinInitTokenEmbedding``)
+    sends those token IDs through a separate learnable table.
+
+    When ``sep_gene_tokens_neb`` is enabled, the encoder doubles its
+    vocab so that gene token ``t`` in the cell context has a distinct
+    token ID ``t + base_vocab_size`` in the neighborhood context. Since
+    both IDs refer to the same protein, we mirror the first half of the
+    aligned matrix into the second half.
+
+    Parameters
+    ----------
+    token_dict:
+        NicheJEPA token-name → token-id mapping (from the pickled
+        ``token_dictionary_*.pkl``).
+    protein_matrix:
+        Tensor of shape (N_proteins, esm_dim).
+    ensembl_to_row:
+        Mapping from Ensembl gene ID to its row in ``protein_matrix``.
+    effective_vocab_size:
+        Size of the encoder's token-embedding table. This is
+        ``len(token_dict)`` when ``sep_gene_tokens_neb=False``, and
+        ``2 * len(token_dict)`` when True.
+    sep_gene_tokens_neb:
+        Mirrors the encoder flag of the same name.
+
+    Returns
+    -------
+    aligned:
+        Float32 tensor of shape (effective_vocab_size, esm_dim). Rows
+        with no protein embedding are zero.
+    gene_mask:
+        Bool tensor of shape (effective_vocab_size,). True where the
+        token ID has a real protein embedding.
+    stats:
+        Coverage diagnostics for logging.
+    """
+    if protein_matrix.dim() != 2:
+        raise ValueError(
+            f"protein_matrix must be 2-D, got shape {tuple(protein_matrix.shape)}.")
+    base_vocab_size = len(token_dict)
+    expected_eff = base_vocab_size * (2 if sep_gene_tokens_neb else 1)
+    if effective_vocab_size != expected_eff:
+        raise ValueError(
+            f"effective_vocab_size={effective_vocab_size} does not match "
+            f"len(token_dict)={base_vocab_size} with "
+            f"sep_gene_tokens_neb={sep_gene_tokens_neb} (expected {expected_eff}).")
+
+    esm_dim = protein_matrix.shape[1]
+    aligned = torch.zeros(effective_vocab_size, esm_dim, dtype=torch.float32)
+    gene_mask = torch.zeros(effective_vocab_size, dtype=torch.bool)
+
+    n_gene_tokens = 0
+    n_covered = 0
+    missing_examples = []
+
+    for token_str, token_id in token_dict.items():
+        if not token_str.startswith(_ENSG_PREFIX):
+            # Special tokens (<pad>, cls_*, spt_*, spv_*, etc.) go through
+            # the learnable special-emb branch; leave aligned row = 0.
+            continue
+        if not (0 <= token_id < base_vocab_size):
+            raise ValueError(
+                f"token_dict[{token_str!r}] = {token_id} out of range "
+                f"[0, {base_vocab_size}).")
+        n_gene_tokens += 1
+        row_idx = ensembl_to_row.get(token_str)
+        if row_idx is None:
+            if len(missing_examples) < 10:
+                missing_examples.append(token_str)
+            continue
+        aligned[token_id] = protein_matrix[row_idx]
+        gene_mask[token_id] = True
+        n_covered += 1
+
+    if sep_gene_tokens_neb:
+        offset = base_vocab_size
+        aligned[offset:offset + base_vocab_size] = aligned[:base_vocab_size]
+        gene_mask[offset:offset + base_vocab_size] = gene_mask[:base_vocab_size]
+
+    coverage = n_covered / n_gene_tokens if n_gene_tokens else 0.0
+    n_missing = n_gene_tokens - n_covered
+    stats = {
+        "effective_vocab_size": effective_vocab_size,
+        "base_vocab_size": base_vocab_size,
+        "n_gene_tokens_in_dict": n_gene_tokens,
+        "n_gene_tokens_covered": n_covered,
+        "n_gene_tokens_missing_in_esm": n_missing,
+        "n_non_gene_tokens": base_vocab_size - n_gene_tokens,
+        "coverage_fraction": coverage,
+        "missing_gene_examples": missing_examples,
+        "esm_dim": esm_dim,
+    }
+    return aligned, gene_mask, stats
+
+
+class ProteinInitTokenEmbedding(nn.Module):
+    """Routed token embedding: frozen ESM + learnable projection for gene
+    tokens, learnable embedding for special tokens and missing genes.
+
+    Drop-in replacement for ``nn.Embedding(vocab_size, embed_dim,
+    padding_idx=0)``: takes a LongTensor of token IDs of arbitrary
+    shape, returns a Tensor with an appended ``embed_dim`` axis.
+
+    Two branches are always computed every forward pass; ``torch.where``
+    selects the appropriate one per token ID, so gradients for the
+    unused branch are zero by construction. This keeps the call site
+    identical to ``nn.Embedding(tokens)`` in every encoder variant.
+    """
+
+    def __init__(self,
+                 vocab_size: int,
+                 embed_dim: int,
+                 protein_matrix: torch.Tensor,
+                 gene_mask: torch.Tensor,
+                 padding_idx: int = 0,
+                 init_std: float = 0.02,
+                 proj_bias: bool = False,
+                 ):
+        super().__init__()
+        if protein_matrix.shape[0] != vocab_size:
+            raise ValueError(
+                f"protein_matrix.shape[0]={protein_matrix.shape[0]} must "
+                f"equal vocab_size={vocab_size}.")
+        if gene_mask.shape != (vocab_size,):
+            raise ValueError(
+                f"gene_mask must have shape ({vocab_size},), got {tuple(gene_mask.shape)}.")
+        esm_dim = protein_matrix.shape[1]
+
+        # Frozen ESM lookup. freeze=True sets requires_grad=False on the
+        # embedding weight, so the optimizer cannot update it.
+        self.protein_emb = nn.Embedding.from_pretrained(
+            protein_matrix.float().contiguous(),
+            freeze=True,
+            padding_idx=padding_idx,
+        )
+
+        self.protein_proj = nn.Linear(esm_dim, embed_dim, bias=proj_bias)
+
+        self.special_emb = nn.Embedding(vocab_size, embed_dim, padding_idx=padding_idx)
+        trunc_normal_(self.special_emb.weight, std=init_std)
+        with torch.no_grad():
+            # nn.Embedding(..., padding_idx=p) zeros row p on construction,
+            # but trunc_normal_ overwrote it. Re-zero explicitly.
+            self.special_emb.weight[padding_idx].zero_()
+
+        self.register_buffer("gene_mask", gene_mask.to(torch.bool), persistent=True)
+
+        self.vocab_size = vocab_size
+        self.embed_dim = embed_dim
+        self.esm_dim = esm_dim
+        self.padding_idx = padding_idx
+
+    def forward(self, tokens: torch.Tensor) -> torch.Tensor:
+        proj_emb = self.protein_proj(self.protein_emb(tokens))
+        spec_emb = self.special_emb(tokens)
+        route = self.gene_mask[tokens].unsqueeze(-1)
+        return torch.where(route, proj_emb, spec_emb)
+
+    def extra_repr(self) -> str:
+        return (f"vocab_size={self.vocab_size}, embed_dim={self.embed_dim}, "
+                f"esm_dim={self.esm_dim}, padding_idx={self.padding_idx}, "
+                f"n_gene_tokens={int(self.gene_mask.sum().item())}")
+
+
+def build_protein_init_token_embedding(
+        token_dict: Dict[str, int],
+        embedding_path: str | Path,
+        mapping_path: str | Path,
+        effective_vocab_size: int,
+        embed_dim: int,
+        sep_gene_tokens_neb: bool = False,
+        padding_idx: int = 0,
+        init_std: float = 0.02,
+        proj_bias: bool = False,
+        log: bool = True,
+        ) -> ProteinInitTokenEmbedding:
+    """End-to-end constructor: load files, align, instantiate module.
+
+    The encoder's ``__init__`` calls this to swap its ``self.token_embed``
+    when a ``protein_init`` config section is provided.
+    """
+    protein_matrix, ensembl_to_row = load_protein_embeddings(
+        embedding_path, mapping_path)
+    aligned, gene_mask, stats = build_aligned_protein_matrix(
+        token_dict=token_dict,
+        protein_matrix=protein_matrix,
+        ensembl_to_row=ensembl_to_row,
+        effective_vocab_size=effective_vocab_size,
+        sep_gene_tokens_neb=sep_gene_tokens_neb,
+    )
+    if log:
+        logger.info(
+            "Protein-init alignment: %d/%d gene tokens covered (%.1f%%); "
+            "%d gene tokens missing from ESM file; %d non-gene (special) "
+            "tokens routed through learnable branch; esm_dim=%d.",
+            stats["n_gene_tokens_covered"],
+            stats["n_gene_tokens_in_dict"],
+            100.0 * stats["coverage_fraction"],
+            stats["n_gene_tokens_missing_in_esm"],
+            stats["n_non_gene_tokens"],
+            stats["esm_dim"],
+        )
+        if stats["missing_gene_examples"]:
+            logger.info(
+                "Missing-gene examples (first %d): %s",
+                len(stats["missing_gene_examples"]),
+                ", ".join(stats["missing_gene_examples"]),
+            )
+    return ProteinInitTokenEmbedding(
+        vocab_size=effective_vocab_size,
+        embed_dim=embed_dim,
+        protein_matrix=aligned,
+        gene_mask=gene_mask,
+        padding_idx=padding_idx,
+        init_std=init_std,
+        proj_bias=proj_bias,
+    )

@@ -1,0 +1,352 @@
+"""Tests for the protein-embedding initialization of the gene-token
+embedding layer (UCE-style: frozen ESM + learnable projection).
+"""
+
+import json
+import pickle
+from pathlib import Path
+
+import pytest
+import torch
+
+from nichejepa.models.protein_init import (
+    ProteinInitTokenEmbedding,
+    build_aligned_protein_matrix,
+    build_protein_init_token_embedding,
+    load_protein_embeddings,
+)
+
+
+def _make_synthetic_token_dict():
+    """Mimic the shape of NicheJEPA's token_dictionary_homo_sapiens.pkl:
+    a handful of special tokens at the low IDs, then ENSG-prefixed gene
+    tokens. Token 0 is <pad>."""
+    return {
+        "<pad>":         0,
+        "cls_0":         1,
+        "cls_1":         2,
+        "spt_batch":     3,
+        "spv_batch_a":   4,
+        "ENSG00000000001": 5,  # gene with ESM embedding
+        "ENSG00000000002": 6,  # gene with ESM embedding
+        "ENSG00000000003": 7,  # gene WITHOUT ESM embedding (missing)
+        "ENSG00000000004": 8,  # gene with ESM embedding
+    }
+
+
+def _make_synthetic_protein_matrix(esm_dim: int = 16):
+    """Three rows of distinctive ESM-like vectors for genes 1, 2, 4."""
+    return torch.tensor([
+        [1.0] * esm_dim,                          # row 0 -> ENSG...0001
+        [-1.0] * esm_dim,                         # row 1 -> ENSG...0002
+        [float(i) for i in range(esm_dim)],       # row 2 -> ENSG...0004
+    ], dtype=torch.float32)
+
+
+def _make_synthetic_mapping():
+    return {
+        "ENSG00000000001": 0,
+        "ENSG00000000002": 1,
+        "ENSG00000000004": 2,
+        # ENSG...0003 deliberately absent — missing-gene case.
+    }
+
+
+def test_build_aligned_protein_matrix_basic():
+    token_dict = _make_synthetic_token_dict()
+    protein_matrix = _make_synthetic_protein_matrix(esm_dim=16)
+    mapping = _make_synthetic_mapping()
+
+    aligned, gene_mask, stats = build_aligned_protein_matrix(
+        token_dict=token_dict,
+        protein_matrix=protein_matrix,
+        ensembl_to_row=mapping,
+        effective_vocab_size=len(token_dict),
+        sep_gene_tokens_neb=False,
+    )
+
+    # Shape
+    assert aligned.shape == (len(token_dict), 16)
+    assert gene_mask.shape == (len(token_dict),)
+    assert gene_mask.dtype == torch.bool
+
+    # Gene tokens with ESM embeddings: rows match source matrix
+    assert torch.equal(aligned[5], protein_matrix[0])  # ENSG...0001
+    assert torch.equal(aligned[6], protein_matrix[1])  # ENSG...0002
+    assert torch.equal(aligned[8], protein_matrix[2])  # ENSG...0004
+
+    # Missing gene token (ENSG...0003): zero row, mask False
+    assert torch.all(aligned[7] == 0.0)
+    assert gene_mask[7].item() is False
+
+    # Special tokens: zero rows, mask False
+    for tid in [0, 1, 2, 3, 4]:
+        assert torch.all(aligned[tid] == 0.0)
+        assert gene_mask[tid].item() is False
+
+    # Gene tokens covered: mask True
+    for tid in [5, 6, 8]:
+        assert gene_mask[tid].item() is True
+
+    # Stats
+    assert stats["n_gene_tokens_in_dict"] == 4
+    assert stats["n_gene_tokens_covered"] == 3
+    assert stats["n_gene_tokens_missing_in_esm"] == 1
+    assert stats["coverage_fraction"] == pytest.approx(0.75)
+    assert "ENSG00000000003" in stats["missing_gene_examples"]
+
+
+def test_build_aligned_protein_matrix_sep_gene_tokens_neb():
+    """When sep_gene_tokens_neb=True the encoder doubles its vocab so a
+    gene gets distinct IDs in cell vs. neighborhood context. The aligned
+    matrix must mirror the first half into the second half so both
+    point at the same protein row."""
+    token_dict = _make_synthetic_token_dict()
+    protein_matrix = _make_synthetic_protein_matrix(esm_dim=16)
+    mapping = _make_synthetic_mapping()
+    base = len(token_dict)
+
+    aligned, gene_mask, stats = build_aligned_protein_matrix(
+        token_dict=token_dict,
+        protein_matrix=protein_matrix,
+        ensembl_to_row=mapping,
+        effective_vocab_size=base * 2,
+        sep_gene_tokens_neb=True,
+    )
+
+    assert aligned.shape == (2 * base, 16)
+    # Second-half rows must mirror first-half rows.
+    assert torch.equal(aligned[:base], aligned[base:])
+    assert torch.equal(gene_mask[:base], gene_mask[base:])
+
+    # Neighborhood-context copy of ENSG...0001 (cell-context ID = 5)
+    # lives at ID base + 5 and points at the same ESM row.
+    assert torch.equal(aligned[base + 5], protein_matrix[0])
+
+
+def test_build_aligned_protein_matrix_mismatched_vocab_raises():
+    token_dict = _make_synthetic_token_dict()
+    protein_matrix = _make_synthetic_protein_matrix()
+    mapping = _make_synthetic_mapping()
+    with pytest.raises(ValueError, match="effective_vocab_size"):
+        build_aligned_protein_matrix(
+            token_dict=token_dict,
+            protein_matrix=protein_matrix,
+            ensembl_to_row=mapping,
+            effective_vocab_size=len(token_dict) + 1,  # off by one
+            sep_gene_tokens_neb=False,
+        )
+
+
+def test_protein_init_token_embedding_forward_routes_correctly():
+    token_dict = _make_synthetic_token_dict()
+    protein_matrix = _make_synthetic_protein_matrix(esm_dim=16)
+    mapping = _make_synthetic_mapping()
+    aligned, gene_mask, _ = build_aligned_protein_matrix(
+        token_dict=token_dict,
+        protein_matrix=protein_matrix,
+        ensembl_to_row=mapping,
+        effective_vocab_size=len(token_dict),
+    )
+    embed_dim = 8
+    module = ProteinInitTokenEmbedding(
+        vocab_size=len(token_dict),
+        embed_dim=embed_dim,
+        protein_matrix=aligned,
+        gene_mask=gene_mask,
+    )
+
+    # Shape check
+    tokens = torch.tensor([[0, 1, 5, 6, 7, 8]], dtype=torch.long)
+    out = module(tokens)
+    assert out.shape == (1, 6, embed_dim)
+
+    # Gene-token rows match proj(esm_row)
+    for tid in [5, 6, 8]:
+        expected = module.protein_proj(
+            module.protein_emb(torch.tensor([tid])))
+        out_at = module(torch.tensor([[tid]]))
+        torch.testing.assert_close(out_at, expected.unsqueeze(0))
+
+    # Special / missing tokens match special_emb(tid)
+    for tid in [1, 3, 7]:
+        expected = module.special_emb(torch.tensor([tid]))
+        out_at = module(torch.tensor([[tid]]))
+        torch.testing.assert_close(out_at, expected.unsqueeze(0))
+
+
+def test_protein_init_token_embedding_pad_is_zero():
+    token_dict = _make_synthetic_token_dict()
+    protein_matrix = _make_synthetic_protein_matrix(esm_dim=16)
+    mapping = _make_synthetic_mapping()
+    aligned, gene_mask, _ = build_aligned_protein_matrix(
+        token_dict=token_dict,
+        protein_matrix=protein_matrix,
+        ensembl_to_row=mapping,
+        effective_vocab_size=len(token_dict),
+    )
+    module = ProteinInitTokenEmbedding(
+        vocab_size=len(token_dict),
+        embed_dim=8,
+        protein_matrix=aligned,
+        gene_mask=gene_mask,
+        padding_idx=0,
+    )
+    out = module(torch.tensor([[0]], dtype=torch.long))
+    # padding_idx is non-gene, routes through special_emb whose row 0
+    # is zeroed by padding_idx semantics. proj_bias=False so the
+    # alternative branch would also produce zeros, but the route uses
+    # special_emb because gene_mask[0] is False.
+    assert torch.all(out == 0.0)
+
+
+def test_protein_init_token_embedding_frozen_protein_emb():
+    """The ESM matrix must not receive gradient updates. The projection
+    and the special-token table must."""
+    token_dict = _make_synthetic_token_dict()
+    protein_matrix = _make_synthetic_protein_matrix(esm_dim=16)
+    mapping = _make_synthetic_mapping()
+    aligned, gene_mask, _ = build_aligned_protein_matrix(
+        token_dict=token_dict,
+        protein_matrix=protein_matrix,
+        ensembl_to_row=mapping,
+        effective_vocab_size=len(token_dict),
+    )
+    module = ProteinInitTokenEmbedding(
+        vocab_size=len(token_dict),
+        embed_dim=8,
+        protein_matrix=aligned,
+        gene_mask=gene_mask,
+    )
+
+    assert module.protein_emb.weight.requires_grad is False
+    assert module.protein_proj.weight.requires_grad is True
+    assert module.special_emb.weight.requires_grad is True
+
+    # Backward through gene + special tokens; verify gradients land
+    # only on protein_proj and special_emb, not protein_emb.
+    tokens = torch.tensor([[1, 5, 6, 8]], dtype=torch.long)
+    out = module(tokens)
+    out.sum().backward()
+    assert module.protein_emb.weight.grad is None
+    assert module.protein_proj.weight.grad is not None
+    assert module.special_emb.weight.grad is not None
+
+
+def test_protein_init_token_embedding_handles_arbitrary_shape():
+    """The wrapper must accept any LongTensor shape that nn.Embedding
+    would accept — encoders call it as `self.token_embed(batch['tokens'])`
+    with shape (B, L)."""
+    token_dict = _make_synthetic_token_dict()
+    protein_matrix = _make_synthetic_protein_matrix(esm_dim=16)
+    mapping = _make_synthetic_mapping()
+    aligned, gene_mask, _ = build_aligned_protein_matrix(
+        token_dict=token_dict,
+        protein_matrix=protein_matrix,
+        ensembl_to_row=mapping,
+        effective_vocab_size=len(token_dict),
+    )
+    module = ProteinInitTokenEmbedding(
+        vocab_size=len(token_dict),
+        embed_dim=8,
+        protein_matrix=aligned,
+        gene_mask=gene_mask,
+    )
+    for shape in [(4,), (3, 5), (2, 3, 7)]:
+        tokens = torch.randint(0, len(token_dict), shape, dtype=torch.long)
+        out = module(tokens)
+        assert out.shape == shape + (8,)
+
+
+def test_load_protein_embeddings_round_trip(tmp_path: Path):
+    matrix = _make_synthetic_protein_matrix(esm_dim=16)
+    mapping = _make_synthetic_mapping()
+    emb_path = tmp_path / "esm.pt"
+    map_path = tmp_path / "esm.json"
+    torch.save(matrix, str(emb_path))
+    with open(map_path, "w") as f:
+        json.dump(mapping, f)
+
+    loaded_matrix, loaded_mapping = load_protein_embeddings(emb_path, map_path)
+    assert torch.equal(loaded_matrix, matrix)
+    assert loaded_mapping == mapping
+
+
+def test_load_protein_embeddings_rejects_oob_row(tmp_path: Path):
+    matrix = _make_synthetic_protein_matrix(esm_dim=16)  # 3 rows
+    bad_mapping = {"ENSG00000000001": 0, "ENSG00000000099": 99}
+    emb_path = tmp_path / "esm.pt"
+    map_path = tmp_path / "esm.json"
+    torch.save(matrix, str(emb_path))
+    with open(map_path, "w") as f:
+        json.dump(bad_mapping, f)
+    with pytest.raises(ValueError, match="row index"):
+        load_protein_embeddings(emb_path, map_path)
+
+
+def test_build_protein_init_token_embedding_end_to_end(tmp_path: Path):
+    token_dict = _make_synthetic_token_dict()
+    matrix = _make_synthetic_protein_matrix(esm_dim=16)
+    mapping = _make_synthetic_mapping()
+    emb_path = tmp_path / "esm.pt"
+    map_path = tmp_path / "esm.json"
+    torch.save(matrix, str(emb_path))
+    with open(map_path, "w") as f:
+        json.dump(mapping, f)
+
+    module = build_protein_init_token_embedding(
+        token_dict=token_dict,
+        embedding_path=emb_path,
+        mapping_path=map_path,
+        effective_vocab_size=len(token_dict),
+        embed_dim=8,
+        sep_gene_tokens_neb=False,
+        log=False,
+    )
+    assert isinstance(module, ProteinInitTokenEmbedding)
+    assert module.vocab_size == len(token_dict)
+    assert module.embed_dim == 8
+    assert module.esm_dim == 16
+    assert module.protein_emb.weight.requires_grad is False
+
+
+def test_encoder_with_protein_init_swaps_token_embed(tmp_path: Path):
+    """Sanity-check the integration: building a real encoder with
+    protein_init_kwargs replaces `self.token_embed` with the routed
+    module without breaking the existing forward signature."""
+    from nichejepa.models.gene_transformers import GeneTransformerRankEncoder
+
+    token_dict = _make_synthetic_token_dict()
+    matrix = _make_synthetic_protein_matrix(esm_dim=16)
+    mapping = _make_synthetic_mapping()
+    emb_path = tmp_path / "esm.pt"
+    map_path = tmp_path / "esm.json"
+    torch.save(matrix, str(emb_path))
+    with open(map_path, "w") as f:
+        json.dump(mapping, f)
+
+    # Realistic-ish but tiny encoder. seq_len must be (n_special + cell + neb).
+    n_special = 4
+    cell = 4
+    neb = 8
+    seq_len = n_special + cell + neb
+    n_segments = 2
+
+    encoder = GeneTransformerRankEncoder(
+        vocab_size=len(token_dict),
+        seq_len=seq_len,
+        n_special_tokens=n_special,
+        n_segments=n_segments,
+        cell_pos_enc="segment",
+        embed_dim=8,
+        depth=1,
+        num_heads=2,
+        use_flash_attention=False,
+        protein_init_kwargs={
+            "token_dict": token_dict,
+            "embedding_path": str(emb_path),
+            "mapping_path": str(map_path),
+        },
+    )
+    assert isinstance(encoder.token_embed, ProteinInitTokenEmbedding)
+    assert encoder.token_embed.protein_emb.weight.requires_grad is False

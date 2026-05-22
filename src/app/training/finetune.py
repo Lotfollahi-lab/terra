@@ -6,7 +6,7 @@ import anndata as ad
 import torch
 from tqdm import tqdm
 
-from app.utils import init_model, load_checkpoint
+from app.utils import init_model, load_checkpoint, parse_protein_init_kwargs
 from nichejepa.datasets.cell_datasets import CellBaseDataset
 from nichejepa.datasets.dataloaders import init_dataloader_and_sampler
 from nichejepa.models.modules import ClassificationModel
@@ -142,6 +142,11 @@ def finetune(args: dict,
     use_flash_attention = args['meta']['use_flash_attention']
     use_layer_norm = args['meta']['use_layer_norm']
 
+    # Mirror train.py: if the original training run used protein
+    # initialization for the token embedding, the encoder must be
+    # rebuilt with the same structure or state_dict loading will fail.
+    protein_init_kwargs = parse_protein_init_kwargs(args)
+
     n_contexts = args['mask']['n_contexts']
     n_targets = args['mask']['n_targets']
     block_masking = args['mask']['block_masking']
@@ -190,6 +195,8 @@ def finetune(args: dict,
     with open(token_dict_folder_path, 'rb') as file:
         token_dict = pickle.load(file)
     vocab_size = len(token_dict)
+    if protein_init_kwargs is not None:
+        protein_init_kwargs['token_dict'] = token_dict
     n_special_values = sum(
         1 for key in token_dict if "spv" in key)
     max_special_tokens = sum(
@@ -250,7 +257,8 @@ def finetune(args: dict,
         mlp_ratio=mlp_ratio,
         use_flash_attention=use_flash_attention,
         use_layer_norm=use_layer_norm,
-        sep_gene_tokens_neb=sep_gene_tokens_neb)
+        sep_gene_tokens_neb=sep_gene_tokens_neb,
+        protein_init_kwargs=protein_init_kwargs)
 
     if api_version != 'v3':
         return_layer_emb_fn = target_encoder.return_layer_emb
