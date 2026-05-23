@@ -24,6 +24,7 @@ class CellBaseDataset(Dataset):
                  include_cell_id: bool = False,
                  sep_gene_tokens_neb: bool = False,
                  nz_spc: bool = True,
+                 pad_special_tokens: bool = False,
                  ):
         """
         Torch CellBaseDataset class.
@@ -97,6 +98,7 @@ class CellBaseDataset(Dataset):
         self.include_cell_id = include_cell_id
         self.sep_gene_tokens_neb = sep_gene_tokens_neb
         self.nz_spc = nz_spc
+        self.pad_special_tokens = pad_special_tokens
 
     def __len__(self) -> int:
         return self.len
@@ -548,6 +550,10 @@ class CellGraphDataset(CellBaseDataset):
 
         # Add special tokens
         if self.n_special_tokens > 0:
+            if self.pad_special_tokens:
+                for spc_tk in self.special_tokens:
+                    item[f'{spc_tk}_token'] = torch.tensor([0] * self.n_special_tokens)
+                    item[f'{spc_tk}_value'] = torch.tensor([0] * self.n_special_tokens)
             item_dict = self._add_special_seq(item=item,
                                               item_dict=item_dict)
 
@@ -559,7 +565,7 @@ class CellGraphDataset(CellBaseDataset):
             item_dict['segments'][
                 (item_dict['segments'] != 0) & (
                     torch.arange(len(item_dict['segments'])
-                    ) >= self.n_special_tokens)] += 1
+                    ) >= self.n_special_tokens)] += self.n_special_tokens
         #print(item_dict['tokens'])
         #print(item_dict['values'])
         #print(item_dict['segments'])
@@ -583,6 +589,111 @@ class CellNeighborhoodDataset(CellBaseDataset):
         """
         super().__init__(**base_dataset_kwargs)
 
+    def _get_segment_seq(self,
+                         item: int,
+                         segment: int,
+                         segment_seq_len: int,
+                         ) -> tuple[list[int], list[float]]:
+        """
+        Get gene tokens and values for a given segment. Overrides the
+        base class method to handle the two-segment layout (cell +
+        aggregated neighborhood) used by the CellNeighborhoodTokenizer.
+
+        Parameters
+        -----------
+        item:
+            Index of the cell in the Hugging Face dataset.
+        segment:
+            Index of the segment for which tokens are retrieved.
+        segment_seq_len:
+            Desired length of the segment token sequence.
+
+        Returns
+        --------
+        segment_tokens:
+            List of tokens for a given segment.
+        segment_values:
+            List of values for a given segment.
+        segment_rel_x_coords:
+            List of relative x coordinates for a given segment.
+        segment_rel_y_coords:
+            List of relative y coordinates for a given segment.
+        """
+        # Determine segment boundaries based on the two-segment layout
+        if segment == 1:
+            segment_start_idx = 0
+            segment_end_idx = self.seq_len_cell
+        elif segment == 2:
+            segment_start_idx = self.seq_len_cell
+            segment_end_idx = self.seq_len_cell + self.seq_len_neighborhood
+        else:
+            raise ValueError(
+                f"CellNeighborhoodDataset only supports segments 1 and 2, "
+                f"got {segment}.")
+
+        segment_tokens = item['gene_tokens'][
+            segment_start_idx:segment_end_idx]
+        if self.gt_type != 'rank':
+            segment_values = item['gene_expr'][
+                segment_start_idx:segment_end_idx]
+        else:
+            segment_values = None
+        if self.cell_pos_enc == 'coord':
+            segment_rel_x_coords = item['rel_x_coord'][
+                segment_start_idx:segment_end_idx]
+            segment_rel_y_coords = item['rel_y_coord'][
+                segment_start_idx:segment_end_idx]
+        else:
+            segment_rel_x_coords = None
+            segment_rel_y_coords = None
+
+        if segment != 1 and self.sep_gene_tokens_neb:
+            segment_token_nz_mask = segment_tokens.ne(0)
+            segment_tokens[segment_token_nz_mask] += self.vocab_size
+
+        # Validate segment length
+        if (self.sampling_strategy is not None and 'rep' in
+        self.sampling_strategy):
+            pass
+        else:
+            if segment_tokens.size(0) < segment_seq_len:
+                raise ValueError(
+                    'Sequence length for a given segment cannot be larger '
+                    'than segment size when not sampling with replacement.')
+
+        # If no sampling strategy is specified, use all tokens up to
+        # specified length
+        if self.sampling_strategy is None:
+            segment_tokens = segment_tokens[:segment_seq_len]
+            if self.gt_type != 'rank':
+                segment_values = segment_values[:segment_seq_len]
+            if self.cell_pos_enc == 'coord':
+                segment_rel_x_coords = segment_rel_x_coords[
+                    :segment_seq_len]
+                segment_rel_y_coords = segment_rel_y_coords[
+                    :segment_seq_len]
+        # Otherwise, sample a subset of tokens based on the sampling
+        # strategy
+        else:
+            segment_n_nz_tokens = int(
+                torch.count_nonzero(segment_tokens))
+
+            segment_tokens, \
+            segment_values, \
+            segment_rel_x_coords, \
+            segment_rel_y_coords = self._sample_seq(
+                tokens=segment_tokens,
+                values=segment_values,
+                rel_x_coords=segment_rel_x_coords,
+                rel_y_coords=segment_rel_y_coords,
+                n_nz_tokens=segment_n_nz_tokens,
+                size=segment_seq_len)
+
+        return (segment_tokens,
+                segment_values,
+                segment_rel_x_coords,
+                segment_rel_y_coords)
+
     def __getitem__(self,
                     item: int
                     ) -> dict:
@@ -590,6 +701,22 @@ class CellNeighborhoodDataset(CellBaseDataset):
 
         # Retrieve Hugging Face item once
         item = self.dataset[item]
+
+        # TODO: add special tokens from token dict directly (1 value per row)
+        item['tissue_token'] = torch.tensor([103])
+        item['assay_token'] = torch.tensor([104])
+        item['gene_panel_token'] = torch.tensor([105])
+        item['batch_token'] = torch.tensor([106])
+
+        # Add segment to item (TODO: if statement to support old API)
+        if 'seg_tokens' not in item.keys():
+            seg_tokens = torch.cat([
+                torch.ones(self.seq_len_cell, dtype=torch.long),
+                torch.full((self.seq_len_neighborhood,), 2, dtype=torch.long),
+            ])
+            # Mask out positions where gene_tokens == 0
+            seg_tokens = seg_tokens * (item['gene_tokens'] != 0).long()
+            item['seg_tokens'] = seg_tokens
         
         # Get (sampled) gene tokens, positions, segments, and values
         gene_tokens_cell, \
@@ -623,23 +750,38 @@ class CellNeighborhoodDataset(CellBaseDataset):
             item_dict['rel_y_coords'] = torch.cat(
                 [rel_y_coords_cell, rel_y_coords_neigh], dim=0)
 
-        if self.gt_type != 'count':
+        if self.gt_type != 'counts':
             item_dict['positions'] = torch.cat([
                 torch.arange(1, gene_tokens_cell.size(0) + 1),
                 torch.arange(1, gene_tokens_neigh.size(0) + 1)])
             item_dict['positions'] = item_dict['positions'] * (
-                item_dict['tokens'] != 0).to(positions.dtype)
+                item_dict['tokens'] != 0).to(item_dict['positions'].dtype)
 
         if self.gt_type != 'rank':
             item_dict['values'] = torch.cat([values_cell, values_neigh], dim=0)
 
         # Add special tokens
-        item_dict = self._add_special_seq(item=item,
-                                          item_dict=item_dict)
+        if self.n_special_tokens > 0:
+            if self.pad_special_tokens:
+                for spc_tk in self.special_tokens:
+                    item[f'{spc_tk}_token'] = torch.tensor([0] * self.n_special_tokens)
+                    item[f'{spc_tk}_value'] = torch.tensor([0] * self.n_special_tokens)
+            item_dict = self._add_special_seq(item=item,
+                                              item_dict=item_dict)
 
         # Add cell ID
         if self.include_cell_id:
             item_dict['cell_id'] = item['cell_id']
+
+        if self.nz_spc:
+            item_dict['segments'][
+                (item_dict['segments'] != 0) & (
+                    torch.arange(len(item_dict['segments'])
+                    ) >= self.n_special_tokens)] += self.n_special_tokens
+        #print(item_dict['tokens'])
+        #print(item_dict['values'])
+        #print(item_dict['segments'])
+        #print(item_dict['positions'])
         
         return item_dict
 

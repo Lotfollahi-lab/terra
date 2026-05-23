@@ -63,6 +63,7 @@ bsub <<EOF
 #BSUB -e ${LOG_DIR}/${EXPERIMENT_NAME}_${RUN_NAME}_e.%J
 #BSUB -n ${TOTAL_NUM_CORES}
 #BSUB -q "${QUEUE}"
+#BSUB -G s10396
 #BSUB -gpu "num=$NUM_GPUS_NODE:gmem=80000:mode=exclusive_process:block=yes"
 #BSUB -M ${MEM_NODE}G
 #BSUB -R "select[mem>${MEM_NODE}G] rusage[mem=${MEM_NODE}G] span[ptile=$NUM_PROCESSES_NODE]"

@@ -170,6 +170,7 @@ def get_1d_sincos_pos_embed_from_coord(embed_dim: int,
 
     mask = torch.isneginf(coord)
     # Replace -inf with zero for computation (safe dummy value)
+    coord = coord.clone()
     coord[mask] = 0.0
 
     omega = omega.to(coord.device) # TODO

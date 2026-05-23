@@ -48,6 +48,7 @@ def tokenize_adata(adata: ad.AnnData,
                    add_neigh_cell_ids: bool = False,
                    use_generator: bool = True,
                    keep_in_memory: bool = False,
+                   include_special_tokens: bool = False,
                    ) -> Dataset:
     """
     Harmonize and tokenize an AnnData object based on the parameters in the
@@ -95,7 +96,7 @@ def tokenize_adata(adata: ad.AnnData,
     print('STEP 2: TOKENIZING ANNDATA OBJECT...')
     print('==================================================')
     # Tokenize adata
-    if model_config['data']['tokenizer_type'] == 'cell_neighborhood':
+    if model_config['data']['tokenizer_type'] == 'cell_neigh':
         Tokenizer = cell_tokenizers.CellNeighborhoodTokenizer
     elif model_config['data']['tokenizer_type'] == 'cell_graph':
         Tokenizer = cell_tokenizers.CellGraphTokenizer
@@ -114,7 +115,8 @@ def tokenize_adata(adata: ad.AnnData,
         count_count_norm_method=model_config['data']['count_count_norm_method'],
         norm_factor_file_path=norm_factor_file_path,
         token_dictionary_file_path=token_dictionary_file_path,
-        add_neigh_cell_ids=add_neigh_cell_ids)
+        add_neigh_cell_ids=add_neigh_cell_ids,
+        include_special_tokens=include_special_tokens)
     dataset_dict = tk._tokenize_adata(adata=adata)
     dataset = tk._create_dataset(
         dataset_dict=dataset_dict,

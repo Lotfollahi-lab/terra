@@ -6,11 +6,11 @@ data:
   rank_gene_norm_method: null
   rank_count_norm_method: null
   count_cell_norm_method: null
-  count_gene_norm_method: 'mean'
+  count_gene_norm_method: null
   count_count_norm_method: null
   raw_data_folder_path: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/silver/mmb0-1b_smb1-1b_2p'
   token_dict_folder_path: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/tokenizer/token_dictionary_mus_musculus.pkl'
-  tokenized_data_folder_path: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/gold/cell-graph-tokenizer/mmb0-1b_smb1-1b_2p/mmb0-1b_smb1-1b_2p_32_None_None_None_None_mean_None_knn_10_704.dataset' # '/lustre/scratch126/cellgen/lotfollahi/DATASETS/gold/cell-graph-tokenizer/mmb0-1b_smb1-1b_1p/mmb0-1b_smb1-1b_1p_32_None_None_None_None_None_shifted_log_knn_10_2816.dataset', '/lustre/scratch126/cellgen/lotfollahi/DATASETS/gold/cell-graph-tokenizer/mmb0-1b_smb1-1b_1p/mmb0-1b_smb1-1b_1p_32_None_None_None_None_None_shifted_log_knn_10_704.dataset', '/lustre/scratch126/cellgen/lotfollahi/DATASETS/gold/cell-graph-tokenizer/mmb0-1b_smb1-1b_1p/mmb0-1b_smb1-1b_1p_32_None_None_None_None_None_shifted_log_knn_10_11264.dataset'
+  tokenized_data_folder_path: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/gold/cell-graph-tokenizer/mmb0-1b_smb1-1b_2p/mmb0-1b_smb1-1b_2p_32_None_None_None_None_None_None_knn_10_704.dataset' # '/lustre/scratch126/cellgen/lotfollahi/DATASETS/gold/cell-graph-tokenizer/mmb0-1b_smb1-1b_1p/mmb0-1b_smb1-1b_1p_32_None_None_None_None_None_shifted_log_knn_10_2816.dataset', '/lustre/scratch126/cellgen/lotfollahi/DATASETS/gold/cell-graph-tokenizer/mmb0-1b_smb1-1b_1p/mmb0-1b_smb1-1b_1p_32_None_None_None_None_None_shifted_log_knn_10_704.dataset', '/lustre/scratch126/cellgen/lotfollahi/DATASETS/gold/cell-graph-tokenizer/mmb0-1b_smb1-1b_1p/mmb0-1b_smb1-1b_1p_32_None_None_None_None_None_shifted_log_knn_10_11264.dataset'
   precomputed_split: null
   precomputed_n_nonzero_tokens: null
   test_batch_ids: null
@@ -47,7 +47,7 @@ meta:
   pred_emb_dim: 768 # 384
   num_heads: 8
   mlp_ratio: 4
-  special_tokens: ['batch'] # ['batch'] # ['batch', 'assay'] # ['batch'] []
+  special_tokens: [] # ['batch'] # ['batch', 'assay'] # ['batch'] []
   pos_learnable: False
   seg_learnable: False
   use_bfloat16: True
@@ -66,13 +66,13 @@ mask:
   targets_list: null
   context_mask_size: 200 # this doesn't have meaning in block masking.
   target_mask_size: 50 # this doesn't have meaning in block masking.
-  per_block_mask_ratio: 0.6 # 0.2, 0.4, 0.6, 0.8
+  per_block_mask_ratio: 0.95 # 0.2, 0.4, 0.6, 0.8
   sample_segments: True
   restrict_special_attention: False
   special_token_pad_ratio: 0.
 optimization:
   warmup: 3
-  epochs: 300
+  epochs: 900
   ema:
   - 0.995
   - 1.0
@@ -87,7 +87,7 @@ optimization:
   lambda_cov: 0.
 state:
   log_freq: 20
-  checkpoint_freq: 5
+  checkpoint_freq: 100
   write_tag: nichejepa
   read_timestamp: ''
   folder_path: null

@@ -179,21 +179,7 @@ def harmonize_adata(adata: ad.AnnData,
     print(f"After gene filtering: {n_genes_after} genes "
           f"(removed {n_genes_before - n_genes_after} genes).")
 
-    # Add dummy values as special values
-    print('==================================================')
-    print('STEP 4: ADDING SPECIAL VALUES...')
-    print('==================================================')
     if 'cell_id' not in adata.obs.keys():
         adata.obs['cell_id'] = adata.obs_names
-    if 'dataset_id' not in adata.uns.keys():
-        adata.uns['dataset_id'] = 14  # just dummy value to prevent errors
-    if 'batch' not in adata.uns.keys():
-        adata.uns['batch'] = 'batch0' # just dummy value to prevent errors
-    if 'assay' not in adata.uns.keys():
-        adata.uns['assay'] = 'xenium' # just dummy value to prevent errors
-    if 'species' not in adata.uns.keys():
-        adata.uns['species'] = 'homo_sapiens' # just dummy value to prevent errors
-    if 'tissue' not in adata.uns.keys():
-        adata.uns['tissue'] = 'lung' # just dummy value to prevent errors
 
     return adata
