@@ -223,6 +223,7 @@ class ProteinInitTokenEmbedding(nn.Module):
                  init_std: float = 0.02,
                  proj_bias: bool = False,
                  use_layer_norm: bool = True,
+                 freeze_esm: bool = True,
                  ):
         super().__init__()
         if protein_matrix.shape[0] != vocab_size:
@@ -234,13 +235,24 @@ class ProteinInitTokenEmbedding(nn.Module):
                 f"gene_mask must have shape ({vocab_size},), got {tuple(gene_mask.shape)}.")
         esm_dim = protein_matrix.shape[1]
 
-        # Frozen ESM lookup. freeze=True sets requires_grad=False on the
-        # embedding weight, so the optimizer cannot update it.
+        # ESM lookup. `freeze_esm=True` (UCE-style) keeps the matrix
+        # frozen forever -- gives a stable protein prior but caps
+        # per-gene expressiveness at whatever the projection can do.
+        # `freeze_esm=False` uses ESM as an *initialization* and lets
+        # the matrix train -- gives the model full per-gene capacity
+        # (same as baseline) starting from a sensible point. The
+        # `_no_weight_decay` marker is honored by init_opt so that the
+        # prior is not eroded by weight decay over training.
         self.protein_emb = nn.Embedding.from_pretrained(
             protein_matrix.float().contiguous(),
-            freeze=True,
+            freeze=freeze_esm,
             padding_idx=padding_idx,
         )
+        self.freeze_esm = freeze_esm
+        if not freeze_esm:
+            # Flag for init_opt to route this parameter into the
+            # no-weight-decay group.
+            self.protein_emb.weight._no_weight_decay = True
 
         # LayerNorm on the ESM input before projection. Without this,
         # the projection has to absorb per-gene magnitude variation in
@@ -285,6 +297,7 @@ class ProteinInitTokenEmbedding(nn.Module):
         return (f"vocab_size={self.vocab_size}, embed_dim={self.embed_dim}, "
                 f"esm_dim={self.esm_dim}, padding_idx={self.padding_idx}, "
                 f"use_layer_norm={self.use_layer_norm}, "
+                f"freeze_esm={self.freeze_esm}, "
                 f"n_gene_tokens={int(self.gene_mask.sum().item())}")
 
 
@@ -299,6 +312,7 @@ def build_protein_init_token_embedding(
         init_std: float = 0.02,
         proj_bias: bool = False,
         use_layer_norm: bool = True,
+        freeze_esm: bool = True,
         gene_id_prefixes: Sequence[str] = DEFAULT_ENSEMBL_GENE_ID_PREFIXES,
         log: bool = True,
         ) -> ProteinInitTokenEmbedding:
@@ -326,19 +340,24 @@ def build_protein_init_token_embedding(
         init_std=init_std,
         proj_bias=proj_bias,
         use_layer_norm=use_layer_norm,
+        freeze_esm=freeze_esm,
     )
     if log:
         # Multi-line banner so it's obvious in the training logs that
         # protein-init actually fired and which numbers it produced.
         # Logged at INFO so it appears alongside the rest of the
         # encoder construction info (rank 0 only).
-        n_frozen = int(module.protein_emb.weight.numel())
+        n_esm_params = int(module.protein_emb.weight.numel())
         n_trainable_proj = int(module.protein_proj.weight.numel())
         if module.protein_proj.bias is not None:
             n_trainable_proj += int(module.protein_proj.bias.numel())
         n_trainable_special = int(module.special_emb.weight.numel())
         n_trainable_ln = (sum(p.numel() for p in module.protein_norm.parameters())
                           if use_layer_norm else 0)
+        esm_status = (
+            f"FROZEN ({n_esm_params:,} params)" if freeze_esm
+            else f"TRAINABLE ({n_esm_params:,} params, weight decay excluded)"
+        )
         missing_preview = (
             ", ".join(stats["missing_gene_examples"])
             if stats["missing_gene_examples"] else "<none>"
@@ -393,7 +412,7 @@ def build_protein_init_token_embedding(
             f"{stats['effective_vocab_size']} "
             f"(sep_gene_tokens_neb={sep_gene_tokens_neb})\n"
             f"   LayerNorm before projection  : {use_layer_norm}\n"
-            f"   Frozen params (ESM matrix)   : {n_frozen:,}\n"
+            f"   ESM matrix                   : {esm_status}\n"
             f"   Trainable: projection        : {n_trainable_proj:,} "
             f"({stats['esm_dim']}x{embed_dim}, bias={proj_bias})\n"
             f"   Trainable: LayerNorm         : {n_trainable_ln:,}\n"

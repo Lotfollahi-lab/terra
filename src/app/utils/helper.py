@@ -56,6 +56,7 @@ def parse_protein_init_kwargs(args: dict,
         'mapping_path':    cfg['mapping_path'],
         'proj_bias':       cfg.get('proj_bias', False),
         'use_layer_norm':  cfg.get('use_layer_norm', True),
+        'freeze_esm':      cfg.get('freeze_esm', True),
     }
     # Optional: override which Ensembl gene-ID prefixes count as gene
     # tokens (default in protein_init covers human ENSG + mouse ENSMUSG).
@@ -65,14 +66,20 @@ def parse_protein_init_kwargs(args: dict,
         if isinstance(prefixes, str):
             prefixes = [prefixes]
         kwargs['gene_id_prefixes'] = list(prefixes)
+    mode_desc = (
+        "frozen ESM + learnable projection (UCE-style)"
+        if kwargs['freeze_esm']
+        else "ESM as init only -- matrix is TRAINABLE (no weight decay)"
+    )
     logger.info(
-        "Protein-init: ENABLED -- frozen ESM + learnable projection "
-        "(UCE-style). embedding=%s | mapping=%s | proj_bias=%s | "
-        "use_layer_norm=%s%s",
+        "Protein-init: ENABLED -- %s. embedding=%s | mapping=%s | "
+        "proj_bias=%s | use_layer_norm=%s | freeze_esm=%s%s",
+        mode_desc,
         kwargs['embedding_path'],
         kwargs['mapping_path'],
         kwargs['proj_bias'],
         kwargs['use_layer_norm'],
+        kwargs['freeze_esm'],
         f" | gene_id_prefixes={kwargs['gene_id_prefixes']}"
         if 'gene_id_prefixes' in kwargs else "",
     )
@@ -396,16 +403,28 @@ def init_opt(encoder: gt.GeneTransformerBaseEncoder,
     scheduler:
     wd_scheduler:    
     """
-    param_groups = [{'params': (p for n, p in encoder.named_parameters()
-                                if ('bias' not in n) and (len(p.shape) != 1))},
-                    {'params': (p for n, p in predictor.named_parameters()
-                                if ('bias' not in n) and (len(p.shape) != 1))},
-                    {'params': (p for n, p in encoder.named_parameters()
-                                if ('bias' in n) or (len(p.shape) == 1)),
+    # A param goes into the no-weight-decay group if it's a bias, a 1-D
+    # weight (LayerNorm scale, etc.), OR has been explicitly flagged
+    # by a module setting ``param._no_weight_decay = True`` on it.
+    # The flag is used by protein-init's unfrozen ESM matrix so weight
+    # decay can't erode the pretrained prior over training.
+    def _no_wd(name, param) -> bool:
+        if 'bias' in name or len(param.shape) == 1:
+            return True
+        if getattr(param, '_no_weight_decay', False):
+            return True
+        return False
+
+    param_groups = [{'params': [p for n, p in encoder.named_parameters()
+                                if not _no_wd(n, p)]},
+                    {'params': [p for n, p in predictor.named_parameters()
+                                if not _no_wd(n, p)]},
+                    {'params': [p for n, p in encoder.named_parameters()
+                                if _no_wd(n, p)],
                      'WD_exclude': True,
                      'weight_decay': 0},
-                    {'params': (p for n, p in predictor.named_parameters()
-                                if ('bias' in n) or (len(p.shape) == 1)),
+                    {'params': [p for n, p in predictor.named_parameters()
+                                if _no_wd(n, p)],
                      'WD_exclude': True,
                      'weight_decay': 0}]
 

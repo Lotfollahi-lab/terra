@@ -146,6 +146,7 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                 proj_bias=protein_init_kwargs.get("proj_bias", False),
                 use_layer_norm=protein_init_kwargs.get(
                     "use_layer_norm", True),
+                freeze_esm=protein_init_kwargs.get("freeze_esm", True),
                 **_pi_extra,
             )
         else:
