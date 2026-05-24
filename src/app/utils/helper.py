@@ -54,9 +54,12 @@ def parse_protein_init_kwargs(args: dict,
     kwargs = {
         'embedding_path':  cfg['embedding_path'],
         'mapping_path':    cfg['mapping_path'],
+        'mode':            cfg.get('mode', 'routing'),
         'proj_bias':       cfg.get('proj_bias', False),
         'use_layer_norm':  cfg.get('use_layer_norm', True),
         'freeze_esm':      cfg.get('freeze_esm', True),
+        'warm_start_target_std': cfg.get('warm_start_target_std', 1.0),
+        'warm_start_seed':       cfg.get('warm_start_seed', 0),
     }
     # Optional: override which Ensembl gene-ID prefixes count as gene
     # tokens (default in protein_init covers human ENSG + mouse ENSMUSG).
@@ -66,20 +69,24 @@ def parse_protein_init_kwargs(args: dict,
         if isinstance(prefixes, str):
             prefixes = [prefixes]
         kwargs['gene_id_prefixes'] = list(prefixes)
-    mode_desc = (
-        "frozen ESM + learnable projection (UCE-style)"
-        if kwargs['freeze_esm']
-        else "ESM as init only -- matrix is TRAINABLE (no weight decay)"
-    )
+    if kwargs['mode'] == 'warm_start':
+        mode_desc = (
+            "warm-start (PCA-reduced ESM into plain nn.Embedding, "
+            "architecture identical to baseline)"
+        )
+    else:
+        mode_desc = (
+            "routing (frozen ESM + learnable projection, UCE-style)"
+            if kwargs['freeze_esm']
+            else "routing (ESM as init, matrix TRAINABLE, no weight decay)"
+        )
     logger.info(
         "Protein-init: ENABLED -- %s. embedding=%s | mapping=%s | "
-        "proj_bias=%s | use_layer_norm=%s | freeze_esm=%s%s",
+        "mode=%s%s",
         mode_desc,
         kwargs['embedding_path'],
         kwargs['mapping_path'],
-        kwargs['proj_bias'],
-        kwargs['use_layer_norm'],
-        kwargs['freeze_esm'],
+        kwargs['mode'],
         f" | gene_id_prefixes={kwargs['gene_id_prefixes']}"
         if 'gene_id_prefixes' in kwargs else "",
     )

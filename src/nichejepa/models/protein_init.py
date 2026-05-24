@@ -301,6 +301,166 @@ class ProteinInitTokenEmbedding(nn.Module):
                 f"n_gene_tokens={int(self.gene_mask.sum().item())}")
 
 
+def _warm_start_init_tensor(
+        aligned: torch.Tensor,
+        gene_mask: torch.Tensor,
+        embed_dim: int,
+        padding_idx: int = 0,
+        target_std: float = 1.0,
+        seed: int = 0,
+        ) -> Tuple[torch.Tensor, dict]:
+    """Build a (vocab, embed_dim) initialization tensor from ESM.
+
+    Used by warm-start mode: gene-token rows are PCA-reduced from
+    ``aligned`` to ``embed_dim`` so they carry the ESM signal in the
+    encoder's own dimension, while non-gene tokens get the same
+    N(0, 1) init as a plain ``nn.Embedding``. The output is written
+    directly into a ``nn.Embedding`` whose architecture is identical
+    to the baseline, so subsequent training dynamics are unchanged.
+
+    PCA is computed on the gene rows of ``aligned`` only. Non-gene
+    rows are left as random N(0, 1) so special tokens behave exactly
+    like the baseline. The pad row (``padding_idx``) is zeroed last.
+
+    The output is rescaled so its per-element std across the full
+    vocab matches ``target_std`` (default 1.0, matching baseline
+    nn.Embedding's default init). This keeps gene-token magnitudes
+    comparable to special tokens.
+    """
+    vocab_size, esm_dim = aligned.shape
+    stats: dict = {"target_std": target_std, "esm_dim": esm_dim}
+
+    # Random non-gene rows -- match baseline nn.Embedding default
+    # init (mean=0, std=1) so special tokens behave identically.
+    g = torch.Generator(device="cpu").manual_seed(seed)
+    init = torch.randn(vocab_size, embed_dim, generator=g) * target_std
+
+    gene_rows = aligned[gene_mask]
+    if gene_rows.shape[0] > 0:
+        # Center and PCA-reduce. SVD on (n_genes, esm_dim).
+        centered = gene_rows - gene_rows.mean(dim=0, keepdim=True)
+        # full_matrices=False -> Vt has shape (min(n_genes, esm_dim), esm_dim)
+        _, S, Vt = torch.linalg.svd(centered, full_matrices=False)
+        k = min(embed_dim, Vt.shape[0])
+        reduced = centered @ Vt[:k].T  # (n_genes, k)
+        if k < embed_dim:
+            # esm_dim < embed_dim: pad the extra dims with N(0, target_std)
+            # so the gene rows don't have a structurally-zero subspace.
+            pad = torch.randn(
+                reduced.shape[0], embed_dim - k, generator=g
+            ) * target_std
+            reduced = torch.cat([reduced, pad], dim=1)
+        # Rescale so per-element std matches target. Each PCA dim has
+        # a different natural variance (decreasing with k); a uniform
+        # rescale to target_std keeps the relative variances intact
+        # while matching baseline magnitude overall.
+        current_std = float(reduced.std().item())
+        if current_std > 1e-8:
+            reduced = reduced * (target_std / current_std)
+        init[gene_mask] = reduced.to(init.dtype)
+        # Variance retained by the top-`k` components.
+        total_var = float((S ** 2).sum().item())
+        kept_var = float((S[:k] ** 2).sum().item())
+        stats["pca_variance_retained"] = kept_var / max(total_var, 1e-12)
+        stats["pca_components_used"] = int(k)
+        stats["pca_target_components"] = int(embed_dim)
+    else:
+        stats["pca_variance_retained"] = 0.0
+        stats["pca_components_used"] = 0
+        stats["pca_target_components"] = int(embed_dim)
+
+    # Pad row is always zero.
+    init[padding_idx] = 0.0
+    stats["init_elem_std_overall"] = float(init.std().item())
+    stats["init_elem_std_genes"] = float(init[gene_mask].std().item()) if gene_mask.any() else 0.0
+    stats["init_elem_std_special"] = (
+        float(init[~gene_mask].std().item()) if (~gene_mask).any() else 0.0
+    )
+    return init, stats
+
+
+def build_warm_start_token_embedding(
+        token_dict: Dict[str, int],
+        embedding_path: str | Path,
+        mapping_path: str | Path,
+        effective_vocab_size: int,
+        embed_dim: int,
+        sep_gene_tokens_neb: bool = False,
+        padding_idx: int = 0,
+        gene_id_prefixes: Sequence[str] = DEFAULT_ENSEMBL_GENE_ID_PREFIXES,
+        target_std: float = 1.0,
+        seed: int = 0,
+        log: bool = True,
+        ) -> nn.Embedding:
+    """Build a plain ``nn.Embedding`` initialized from ESM via PCA.
+
+    Returns the same type and shape as the baseline encoder's
+    ``self.token_embed``, so the only thing that differs from baseline
+    is the initial weight values for gene-token rows. No routing
+    module, no LayerNorm in the forward path, no separate
+    ``special_emb`` table.
+    """
+    protein_matrix, ensembl_to_row = load_protein_embeddings(
+        embedding_path, mapping_path)
+    aligned, gene_mask, align_stats = build_aligned_protein_matrix(
+        token_dict=token_dict,
+        protein_matrix=protein_matrix,
+        ensembl_to_row=ensembl_to_row,
+        effective_vocab_size=effective_vocab_size,
+        sep_gene_tokens_neb=sep_gene_tokens_neb,
+        gene_id_prefixes=gene_id_prefixes,
+    )
+    init_tensor, init_stats = _warm_start_init_tensor(
+        aligned=aligned,
+        gene_mask=gene_mask,
+        embed_dim=embed_dim,
+        padding_idx=padding_idx,
+        target_std=target_std,
+        seed=seed,
+    )
+    emb = nn.Embedding(
+        effective_vocab_size, embed_dim, padding_idx=padding_idx)
+    with torch.no_grad():
+        emb.weight.copy_(init_tensor)
+
+    if log:
+        banner = (
+            "\n"
+            "================================================================\n"
+            " PROTEIN-INIT TOKEN EMBEDDING -- WARM-START MODE\n"
+            "----------------------------------------------------------------\n"
+            "   (PCA-reduced ESM written into a plain nn.Embedding; "
+            "architecture identical to baseline.)\n"
+            f"   Prefixes recognized as genes : {align_stats['gene_id_prefixes']}\n"
+            f"   ESM dim -> encoder embed_dim : "
+            f"{align_stats['esm_dim']} -> {embed_dim} via PCA\n"
+            f"   Gene tokens covered by ESM   : "
+            f"{align_stats['n_gene_tokens_covered']}/{align_stats['n_gene_tokens_in_dict']} "
+            f"({100.0 * align_stats['coverage_fraction']:.2f}%)\n"
+            f"   PCA components used          : "
+            f"{init_stats['pca_components_used']}/"
+            f"{init_stats['pca_target_components']} "
+            f"(variance retained "
+            f"{100.0 * init_stats['pca_variance_retained']:.2f}%)\n"
+            f"   target per-elem std          : {target_std:.3f}\n"
+            f"   init elem_std (overall)      : "
+            f"{init_stats['init_elem_std_overall']:.3f}\n"
+            f"   init elem_std (gene rows)    : "
+            f"{init_stats['init_elem_std_genes']:.3f}\n"
+            f"   init elem_std (special rows) : "
+            f"{init_stats['init_elem_std_special']:.3f}\n"
+            f"   Effective vocab size         : "
+            f"{align_stats['effective_vocab_size']} "
+            f"(sep_gene_tokens_neb={sep_gene_tokens_neb})\n"
+            f"   All params trainable         : "
+            f"{emb.weight.numel():,} (single nn.Embedding, no projection)\n"
+            "================================================================"
+        )
+        logger.info(banner)
+
+    return emb
+
+
 def build_protein_init_token_embedding(
         token_dict: Dict[str, int],
         embedding_path: str | Path,

@@ -16,7 +16,8 @@ import torch
 import torch.nn as nn
 
 from .modules import Attention, Block, MLP, ValueEmbWeightsProjection
-from .protein_init import build_protein_init_token_embedding
+from .protein_init import (build_protein_init_token_embedding,
+                           build_warm_start_token_embedding)
 from .utils import (get_1d_sincos_pos_embed,
                     get_1d_sincos_pos_embed_from_coord,
                     repeat_interleave_batch,
@@ -134,21 +135,45 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
             if "gene_id_prefixes" in protein_init_kwargs:
                 _pi_extra["gene_id_prefixes"] = tuple(
                     protein_init_kwargs["gene_id_prefixes"])
-            self.token_embed = build_protein_init_token_embedding(
-                token_dict=protein_init_kwargs["token_dict"],
-                embedding_path=protein_init_kwargs["embedding_path"],
-                mapping_path=protein_init_kwargs["mapping_path"],
-                effective_vocab_size=effective_vocab_size,
-                embed_dim=embed_dim,
-                sep_gene_tokens_neb=sep_gene_tokens_neb,
-                padding_idx=0,
-                init_std=init_std,
-                proj_bias=protein_init_kwargs.get("proj_bias", False),
-                use_layer_norm=protein_init_kwargs.get(
-                    "use_layer_norm", True),
-                freeze_esm=protein_init_kwargs.get("freeze_esm", True),
-                **_pi_extra,
-            )
+            mode = protein_init_kwargs.get("mode", "routing")
+            if mode == "warm_start":
+                # Identical architecture to baseline: a plain
+                # nn.Embedding whose gene rows are pre-initialized
+                # with PCA-reduced ESM. No routing module, no
+                # LayerNorm, no projection in the forward path.
+                self.token_embed = build_warm_start_token_embedding(
+                    token_dict=protein_init_kwargs["token_dict"],
+                    embedding_path=protein_init_kwargs["embedding_path"],
+                    mapping_path=protein_init_kwargs["mapping_path"],
+                    effective_vocab_size=effective_vocab_size,
+                    embed_dim=embed_dim,
+                    sep_gene_tokens_neb=sep_gene_tokens_neb,
+                    padding_idx=0,
+                    target_std=protein_init_kwargs.get(
+                        "warm_start_target_std", 1.0),
+                    seed=protein_init_kwargs.get("warm_start_seed", 0),
+                    **_pi_extra,
+                )
+            elif mode == "routing":
+                self.token_embed = build_protein_init_token_embedding(
+                    token_dict=protein_init_kwargs["token_dict"],
+                    embedding_path=protein_init_kwargs["embedding_path"],
+                    mapping_path=protein_init_kwargs["mapping_path"],
+                    effective_vocab_size=effective_vocab_size,
+                    embed_dim=embed_dim,
+                    sep_gene_tokens_neb=sep_gene_tokens_neb,
+                    padding_idx=0,
+                    init_std=init_std,
+                    proj_bias=protein_init_kwargs.get("proj_bias", False),
+                    use_layer_norm=protein_init_kwargs.get(
+                        "use_layer_norm", True),
+                    freeze_esm=protein_init_kwargs.get("freeze_esm", True),
+                    **_pi_extra,
+                )
+            else:
+                raise ValueError(
+                    f"protein_init mode={mode!r} not recognized. "
+                    "Expected 'routing' or 'warm_start'.")
         else:
             self.token_embed = nn.Embedding(
                 effective_vocab_size,  # already includes <pad>
