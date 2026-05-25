@@ -272,11 +272,12 @@ def test_polar_alibi_compute_attention_bias_returns_alibi():
 # 'laplacian' mode
 # ---------------------------------------------------------------------------
 
-def _make_laplacian_batch(B: int, encoder):
+def _make_laplacian_batch(B: int, encoder, nz_spc: bool = False):
     """Build a fake batch that obeys the standard sequence layout:
     [n_special tokens][cell_1 tokens][cell_2 tokens]... in n_segments
-    blocks of seq_len_cell each.
-    """
+    blocks of seq_len_cell each. ``nz_spc=True`` mimics the dataset's
+    behavior of assigning special tokens non-zero segment IDs (as
+    happens in the real configs that triggered the original bug)."""
     L = encoder.seq_len
     n_special = encoder.n_special_tokens
     n_cells = encoder.n_segments
@@ -290,16 +291,24 @@ def _make_laplacian_batch(B: int, encoder):
     rel_x = torch.full((B, L), float("-inf"))
     rel_y = torch.full((B, L), float("-inf"))
     segments = torch.zeros(B, L, dtype=torch.long)
+    # Mark special-token positions with non-trivial segment IDs in
+    # the nz_spc=True case (the dataset uses arange(2, n_special+2)).
+    if nz_spc:
+        for s in range(n_special):
+            segments[:, s] = 2 + s
     for c in range(n_cells):
         start = n_special + c * seq_len_cell
         end = start + seq_len_cell
         rel_x[:, start:end] = cell_positions[:, c, 0:1]
         rel_y[:, start:end] = cell_positions[:, c, 1:2]
         segments[:, start:end] = c + 1  # 1-indexed
+    # All tokens non-zero (no pad) so the pad-mask path doesn't fire.
+    tokens = torch.ones(B, L, dtype=torch.long)
     return {
         "rel_x_coords": rel_x,
         "rel_y_coords": rel_y,
         "segments": segments,
+        "tokens": tokens,
     }, cell_positions
 
 
@@ -374,3 +383,35 @@ def test_laplacian_k_zero_raises():
             use_flash_attention=False,
             laplacian_k=1,
         )
+
+
+def test_laplacian_pe_handles_nz_spc_special_segments():
+    """Regression test for the index-out-of-bounds reported on the
+    cluster: with ``nz_spc=True`` the dataset assigns special tokens
+    segment IDs that overflow ``n_cells`` (e.g. special token gets
+    segment 2 while there are only 2 cells in the test layout). The
+    broadcast must be layout-based, not segments-based, so this no
+    longer crashes ``torch.gather``."""
+    enc = _make_rank_encoder("laplacian", embed_dim=32)
+    batch, _ = _make_laplacian_batch(B=2, encoder=enc, nz_spc=True)
+    # Sanity: the batch actually has special segments > n_cells
+    n_cells = enc.n_segments
+    assert (batch["segments"][:, :enc.n_special_tokens] > n_cells - 1).any()
+    # Must not raise; must produce zero PE on the special-token prefix.
+    seg_emb = enc._get_seg_emb(batch)
+    special_block = seg_emb[:, :enc.n_special_tokens, :]
+    assert torch.all(special_block == 0.0)
+
+
+def test_laplacian_pe_pad_tokens_zeroed():
+    """Pad tokens within a cell block (token == 0) get zero PE."""
+    enc = _make_rank_encoder("laplacian", embed_dim=32)
+    batch, _ = _make_laplacian_batch(B=1, encoder=enc)
+    # Mark the last position of the first cell as pad.
+    pad_pos = enc.n_special_tokens + enc.seq_len_cell - 1
+    batch["tokens"][:, pad_pos] = 0
+    seg_emb = enc._get_seg_emb(batch)
+    assert torch.all(seg_emb[0, pad_pos, :] == 0.0)
+    # The rest of cell 1 keeps its PE (non-zero somewhere).
+    cell_pos = enc.n_special_tokens
+    assert torch.any(seg_emb[0, cell_pos, :] != 0.0)

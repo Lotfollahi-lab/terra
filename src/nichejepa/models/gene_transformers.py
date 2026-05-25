@@ -532,18 +532,43 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
             pe = pe * (~cell_missing).unsqueeze(-1).to(pe.dtype)
 
         # 5. Project k-dim eigenvectors into embed_dim, then broadcast
-        #    each cell's PE to every token whose segment ID matches.
+        #    each cell's PE to every token of that cell.
         cell_pe = self.laplacian_proj(pe)                    # (B, n_cells, D)
-        # Build (B, L, D) by gathering per-token from the per-cell PE
-        # using segments-1 as the index (segment 0 = special / pad).
-        # Special tokens point to index 0 by clamping; we then zero
-        # them out via the segments==0 mask.
-        cell_idx = (segments.long() - 1).clamp(min=0)        # (B, L)
-        cell_idx_exp = cell_idx.unsqueeze(-1).expand(B, L, cell_pe.size(-1))
+
+        # Per-position cell index. Mirrors the cell-position
+        # *extraction* above (which also uses the sequence layout):
+        # positions in ``[n_special, n_special + n_cells * seq_len_cell)``
+        # belong to cell ``(pos - n_special) // seq_len_cell``.
+        # Doing this layout-based rather than segments-based is
+        # important because ``segments`` does NOT always range over
+        # ``[0, n_cells]`` -- with ``nz_spc=True`` the dataset puts
+        # the special tokens at segment IDs like ``2, 3, ...``, which
+        # would otherwise overflow ``n_cells`` and trigger an
+        # out-of-bounds in ``torch.gather``.
+        pos_idx = torch.arange(L, device=device)
+        cell_idx_per_pos = (
+            (pos_idx - self.n_special_tokens)
+            .div(self.seq_len_cell, rounding_mode='floor')
+            .clamp(min=0, max=n_cells - 1)
+        )                                                    # (L,)
+        cell_idx_per_pos = cell_idx_per_pos.unsqueeze(0).expand(B, L)
+        cell_idx_exp = cell_idx_per_pos.unsqueeze(-1).expand(
+            B, L, cell_pe.size(-1))
         per_token_pe = torch.gather(cell_pe, dim=1, index=cell_idx_exp)
-        special_mask = (segments == 0).unsqueeze(-1)
+
+        # Zero PE for (a) positions in the special-token prefix, and
+        # (b) any in-cell pad tokens (token == 0 -> segment == 0 in
+        # nz_spc=False, but with nz_spc=True we can't rely on the
+        # segments value; use the original tokens tensor if it's in
+        # the batch). The position-based special-token mask handles
+        # the prefix uniformly.
+        in_special_region = (pos_idx < self.n_special_tokens).view(1, L, 1)
+        zero_mask = in_special_region.expand(B, L, 1)
+        if 'tokens' in batch:
+            pad_mask = (batch['tokens'] == 0).unsqueeze(-1)
+            zero_mask = zero_mask | pad_mask
         per_token_pe = torch.where(
-            special_mask, torch.zeros_like(per_token_pe), per_token_pe)
+            zero_mask, torch.zeros_like(per_token_pe), per_token_pe)
         return per_token_pe
 
     @staticmethod
