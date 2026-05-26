@@ -360,8 +360,14 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
             if m.bias is not None:
                 torch.nn.init.constant_(m.bias, 0)
         elif isinstance(m, torch.nn.LayerNorm):
-            torch.nn.init.constant_(m.bias, 0)
-            torch.nn.init.constant_(m.weight, 1.0)
+            # Affine-less LayerNorm (e.g. inside AdaLN) has
+            # m.bias / m.weight = None. Guard against that case so the
+            # post-construction re-init pass doesn't crash when AdaLN
+            # is enabled.
+            if m.bias is not None:
+                torch.nn.init.constant_(m.bias, 0)
+            if m.weight is not None:
+                torch.nn.init.constant_(m.weight, 1.0)
 
     for m in encoder.modules():
         init_weights(m)

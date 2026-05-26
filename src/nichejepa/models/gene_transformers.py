@@ -336,8 +336,14 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
             if isinstance(m, nn.Linear) and m.bias is not None:
                 nn.init.constant_(m.bias, 0)
         elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
+            # Affine-less LayerNorm (elementwise_affine=False) has
+            # None .bias / .weight -- e.g. the LayerNorm inside AdaLN,
+            # whose affine is applied externally as (gamma, beta) from
+            # the modulation MLP. Guard against the None case.
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+            if m.weight is not None:
+                nn.init.constant_(m.weight, 1.0)
 
     def _compute_layer_emb(
             self,
@@ -1189,8 +1195,14 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
             if isinstance(m, nn.Linear) and m.bias is not None:
                 nn.init.constant_(m.bias, 0)
         elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
+            # Affine-less LayerNorm (elementwise_affine=False) has
+            # None .bias / .weight -- e.g. the LayerNorm inside AdaLN,
+            # whose affine is applied externally as (gamma, beta) from
+            # the modulation MLP. Guard against the None case.
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+            if m.weight is not None:
+                nn.init.constant_(m.weight, 1.0)
 
     def _get_seg_emb(
             self,
