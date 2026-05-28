@@ -55,6 +55,38 @@ from nichejepa.masks.cell_masking import CellMaskCollator
 from nichejepa.masks.utils import apply_masks
 from nichejepa.models.utils import repeat_interleave_batch
 from nichejepa.utils.distributed import init_distributed
+
+
+def _all_gather_with_local_grad(
+        local: torch.Tensor) -> torch.Tensor:
+    """All-gather a per-rank tensor across DDP ranks.
+
+    Gradients flow through THIS rank's contribution only -- other
+    ranks' slots are detached values produced by ``dist.all_gather``
+    (which has no autograd). This is the standard pattern used by
+    MoCo / SimCLR / VICReg / Barlow Twins distributed training:
+    each rank computes the loss on the concatenated pool from all
+    ranks (so the cov / var statistics see a large effective sample
+    size), but backprop only updates the local subset's parameters,
+    which is exactly what DDP's all-reduce of gradients then
+    averages across ranks.
+
+    Returns ``local`` unchanged when distributed is not initialized
+    or world_size == 1.
+    """
+    import torch.distributed as dist
+    if not (dist.is_available() and dist.is_initialized()):
+        return local
+    ws = dist.get_world_size()
+    if ws == 1:
+        return local
+    rank = dist.get_rank()
+    gathered = [torch.zeros_like(local) for _ in range(ws)]
+    dist.all_gather(gathered, local.contiguous())
+    # Restore the gradient-tracked local tensor in this rank's slot
+    # so backward() can flow through the loss term.
+    gathered[rank] = local
+    return torch.cat(gathered, dim=0)
 from nichejepa.utils.logging import (AverageMeter,
                                      CSVLogger,
                                      grad_logger)
@@ -385,6 +417,15 @@ def train(args: dict,
             f"granularity='{vicreg_granularity}'. Computed on encoder "
             "output, gene tokens only, float32-cast for numerical "
             "stability under bfloat16 autocast.")
+        if vicreg_granularity == 'cell':
+            logger.info(
+                "[VICReg] cell mode: per-cell embeddings are "
+                "all-gathered across DDP ranks before var/cov so "
+                f"the effective batch is world_size ({world_size}) x "
+                "local_batch. Watch vicreg/n_samples in WandB; if "
+                "it is < ~2*enc_emb_dim, the cov estimate is still "
+                "rank-deficient and cov_loss may be noisy -- either "
+                "raise batch size, use more GPUs, or set lambda_cov=0.")
 
     log_freq = args['state']['log_freq']
     checkpoint_freq = args['state']['checkpoint_freq']
@@ -443,6 +484,52 @@ def train(args: dict,
     logger.info(f'Initialized (rank/world-size) {rank}/{world_size}.')
     if rank > 0:
         logger.setLevel(logging.ERROR)
+
+    # VICReg cell-mode sample-size sanity check.
+    # In 'cell' granularity, the covariance loss requires the
+    # effective sample count (world_size * batch_size, post-gather)
+    # to exceed the feature dimension; otherwise the empirical cov
+    # is rank-deficient and the off-diagonal gradient is noise.
+    # The previous failure mode here was silent: training would
+    # appear to run but the encoder learned nothing useful. Hard-
+    # error so misconfigured runs fail loud. To override (e.g. you
+    # know you need lambda_cov for variance regularization context
+    # even at small N), set ``vicreg_allow_underdetermined_cov:
+    # True`` in the optimization block.
+    if vicreg_granularity == 'cell' and lambda_cov > 0:
+        effective_n = world_size * batch_size
+        allow_underdetermined = bool(args['optimization'].get(
+            'vicreg_allow_underdetermined_cov', False))
+        if effective_n <= enc_emb_dim and not allow_underdetermined:
+            raise ValueError(
+                "VICReg cell-mode covariance loss is statistically "
+                "ill-posed at the configured scale: "
+                f"effective_N = world_size ({world_size}) * "
+                f"batch_size ({batch_size}) = {effective_n}, but "
+                f"enc_emb_dim = {enc_emb_dim}. The empirical "
+                f"covariance matrix (D x D = {enc_emb_dim}x{enc_emb_dim}) "
+                "has rank at most effective_N - 1, so its "
+                "off-diagonal entries are dominated by sampling "
+                "noise. Fix one of:\n"
+                f"  (1) Increase world_size or batch_size so that "
+                f"world_size * batch_size > {enc_emb_dim} (ideally "
+                f">= {2 * enc_emb_dim}).\n"
+                "  (2) Set optimization.vicreg_granularity: 'token' "
+                "(thousands of samples, well-conditioned).\n"
+                "  (3) Set optimization.lambda_cov: 0 (keep the "
+                "variance hinge, drop the decorrelation term).\n"
+                "  (4) Set "
+                "optimization.vicreg_allow_underdetermined_cov: "
+                "True to suppress this check (you accept noisy "
+                "cov gradients)."
+            )
+        if effective_n <= enc_emb_dim and allow_underdetermined:
+            logger.warning(
+                f"[VICReg] cell mode with effective_N={effective_n} "
+                f"<= enc_emb_dim={enc_emb_dim}: cov estimate is "
+                "rank-deficient. Proceeding because "
+                "vicreg_allow_underdetermined_cov=True. The cov "
+                "gradient may be noisy.")
 
     # Create folder to store artifacts
     if not save_folder_path:
@@ -773,6 +860,10 @@ def train(args: dict,
     # training is resumed from a checkpoint (where start_epoch != 0).
     _laplacian_diag_logged = False
 
+    # One-shot runtime sanity check for VICReg cell mode. Same
+    # rationale as _laplacian_diag_logged: survives checkpoint resume.
+    _vicreg_runtime_checked = False
+
     # Run training loop
     for epoch in range(start_epoch, num_epochs):
         logger.info(f"Epoch {epoch}")
@@ -968,8 +1059,40 @@ def train(args: dict,
                             denom = gene_count.clamp(min=1).to(
                                 zi.dtype).unsqueeze(-1)
                             mean_per_cell = sum_per_cell / denom     # (B, D)
-                            valid = gene_count > 0
-                            samples_list.append(mean_per_cell[valid])
+                            valid_local = (gene_count > 0)           # (B,) bool
+
+                            # Cast to float32 BEFORE all-gather so
+                            # NCCL ops + downstream var/cov accumulate
+                            # in stable precision. (Encoder output is
+                            # bfloat16 under autocast.)
+                            mean_per_cell_fp32 = mean_per_cell.float()
+
+                            # Critical for DDP: with B = per-GPU
+                            # batch size (typically 32-64) and
+                            # D = enc_emb_dim (e.g. 768), the empirical
+                            # covariance is rank-deficient and the
+                            # off-diagonal entries are dominated by
+                            # sampling noise. All-gather across ranks
+                            # so var/cov see the full global batch
+                            # (B * world_size). Same pattern MoCo /
+                            # SimCLR / VICReg / Barlow Twins use to
+                            # make decorrelation losses work under
+                            # DDP. Gradients flow only through this
+                            # rank's slot (DDP all-reduce then
+                            # averages across ranks).
+                            #
+                            # NOTE: even with gather, if
+                            # B*world_size < ~2*D, the cov estimate
+                            # is still rank-deficient and ``lambda_cov``
+                            # should be very small (or zero). The
+                            # ``vicreg/n_samples`` WandB metric tells
+                            # you the effective sample count.
+                            mean_gathered = _all_gather_with_local_grad(
+                                mean_per_cell_fp32)                   # (B*ws, D)
+                            valid_gathered = _all_gather_with_local_grad(
+                                valid_local.to(torch.float32)
+                            ) > 0.5                                   # (B*ws,)
+                            samples_list.append(mean_gathered[valid_gathered])
 
                     # Concatenate samples across context masks, then
                     # cast to float32 for numerically stable reductions.
@@ -992,6 +1115,42 @@ def train(args: dict,
                     # e.g. all cells had zero gene tokens in the mask).
                     # std/cov need at least 2 samples to be defined.
                     vicreg_n_samples = int(vicreg_samples.size(0))
+
+                    # One-shot runtime sanity check: confirm the
+                    # actual post-gather sample count is what the
+                    # startup check assumed. If gather silently
+                    # failed (e.g. dist not initialized) or a lot of
+                    # cells got filtered, this catches it on the
+                    # first batch. Errors out unless explicitly
+                    # allowed.
+                    if (vicreg_granularity == 'cell'
+                            and lambda_cov > 0
+                            and not _vicreg_runtime_checked):
+                        if vicreg_n_samples <= enc_emb_dim and not bool(
+                                args['optimization'].get(
+                                    'vicreg_allow_underdetermined_cov',
+                                    False)):
+                            raise RuntimeError(
+                                "VICReg cell-mode runtime check: "
+                                f"vicreg_samples.size(0) = "
+                                f"{vicreg_n_samples} <= enc_emb_dim "
+                                f"= {enc_emb_dim} on first VICReg "
+                                "iteration. Cov is rank-deficient. "
+                                "Either DDP all-gather isn't firing "
+                                "(check dist.is_initialized() and "
+                                f"world_size = {world_size}), too "
+                                "many cells were filtered as "
+                                "invalid (empty gene_count after "
+                                "masking), or your effective batch "
+                                "is genuinely too small. See "
+                                "startup banner for fixes.")
+                        logger.info(
+                            f"[VICReg] cell-mode runtime check passed: "
+                            f"vicreg_n_samples={vicreg_n_samples}, "
+                            f"enc_emb_dim={enc_emb_dim}, "
+                            f"ratio={vicreg_n_samples / enc_emb_dim:.2f}.")
+                        _vicreg_runtime_checked = True
+
                     if vicreg_n_samples >= 2:
                         loss_var = variance_loss(vicreg_samples)
                         loss_cov = covariance_loss(vicreg_samples)
