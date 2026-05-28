@@ -366,6 +366,25 @@ def train(args: dict,
         lambda_cov = args['optimization']['lambda_cov']
     else:
         lambda_cov = 0.
+    # VICReg granularity:
+    #   'token' (default, I-JEPA convention): each gene-token embedding
+    #           counts as one sample. N = total gene tokens in minibatch.
+    #   'cell'  (original VICReg convention): mean-pool gene tokens per
+    #           cell first, then apply var/cov on the (B, D) cell-level
+    #           embedding. One sample per cell. Aligned with the
+    #           adversarial classifier / distribution alignment recipe.
+    vicreg_granularity = str(args['optimization'].get(
+        'vicreg_granularity', 'token')).lower()
+    if vicreg_granularity not in ('token', 'cell'):
+        raise ValueError(
+            "optimization.vicreg_granularity must be 'token' or 'cell' "
+            f"(got {vicreg_granularity!r}).")
+    if lambda_var > 0 or lambda_cov > 0:
+        logger.info(
+            f"[VICReg] lambda_var={lambda_var}, lambda_cov={lambda_cov}, "
+            f"granularity='{vicreg_granularity}'. Computed on encoder "
+            "output, gene tokens only, float32-cast for numerical "
+            "stability under bfloat16 autocast.")
 
     log_freq = args['state']['log_freq']
     checkpoint_freq = args['state']['checkpoint_freq']
@@ -891,58 +910,91 @@ def train(args: dict,
                 # ----------------------------------------------------
                 # VICReg-style variance + covariance regularization
                 # ----------------------------------------------------
-                # NOTE: this used to operate on the (already overwritten)
-                # predictor output, and on every token including pad +
-                # special tokens. Both are off-spec from the original
-                # VICReg setup and dilute the constraint. Switched to:
-                #  (1) the ENCODER output ``z_encoder_output`` (saved
-                #      above before the predictor overwrites z), and
-                #  (2) gene-token positions only -- pad tokens (token
-                #      == 0) and special-token positions are filtered
-                #      out via the JEPA mask indices.
+                # Operates on the ENCODER output ``z_encoder_output``
+                # (saved above before the predictor overwrites z),
+                # restricted to gene-token positions (special tokens
+                # and pad excluded via the JEPA mask indices).
+                #
+                # Granularity:
+                #   'token' -- each gene-token embedding is one sample
+                #              (I-JEPA convention; high N, dense signal,
+                #              but tokens within a cell are correlated).
+                #   'cell'  -- mean-pool gene tokens per cell first;
+                #              one sample per cell (original VICReg
+                #              convention; matches the granularity used
+                #              by the adversarial classifier and the
+                #              distribution-alignment losses).
+                #
+                # Numerical note: under amp.autocast(bfloat16) the
+                # encoder output is bfloat16. Computing std and
+                # (z.T @ z) on N x D bfloat16 tensors with N in the
+                # thousands accumulates large rounding error in the
+                # sum dimension, which can corrupt the gradient signal.
+                # We explicitly cast to float32 before reducing.
+                loss_var = None
+                loss_cov = None
+                vicreg_n_samples = 0
                 if lambda_var > 0 or lambda_cov > 0:
 
-                    # Build a (B, mask_size) boolean gene-token mask
-                    # from the JEPA mask indices: gather the original
-                    # token ID at each unmasked position, then exclude
-                    # the special-token prefix and any pad positions.
-                    mask_positions = masks_enc[0]  # (B, mask_size)
-                    masked_tokens = torch.gather(
-                        udata['tokens'], 1, mask_positions)
-                    is_special = mask_positions < n_special_tokens
-                    is_pad = (masked_tokens == 0)
-                    is_gene = (~is_special) & (~is_pad)  # (B, mask_size)
-
-                    # z_encoder_output is a list (one per context mask);
-                    # n_contexts=1 in current configs but iterate to
-                    # support multi-context. Each element shape:
-                    # (B, mask_size, D).
+                    # z_encoder_output is a list (one per context mask).
                     enc_z_list = z_encoder_output
                     if not isinstance(enc_z_list, list):
                         enc_z_list = [enc_z_list]
-                    gene_emb_list = [zi[is_gene] for zi in enc_z_list]
-                    gene_emb = torch.cat(gene_emb_list, dim=0)  # (N, D)
 
-                    # ----- variance loss -----
+                    # Build the gene-token sample tensor per context
+                    # mask. Each mask has its own (B, mask_size) layout,
+                    # so we recompute the gene-token filter per mask --
+                    # the previous shared-filter version was wrong for
+                    # len(masks_enc) > 1.
+                    samples_list = []
+                    for mi, zi in enumerate(enc_z_list):
+                        mask_positions = masks_enc[mi]              # (B, M_i)
+                        masked_tokens = torch.gather(
+                            udata['tokens'], 1, mask_positions)     # (B, M_i)
+                        is_special = mask_positions < n_special_tokens
+                        is_pad = (masked_tokens == 0)
+                        is_gene = (~is_special) & (~is_pad)         # (B, M_i)
+
+                        if vicreg_granularity == 'token':
+                            samples_list.append(zi[is_gene])         # (N_i, D)
+                        else:  # 'cell'
+                            # Mean-pool gene tokens per cell. Cells
+                            # with zero gene tokens after masking are
+                            # dropped (no valid mean).
+                            gene_count = is_gene.sum(dim=1)          # (B,)
+                            zi_masked = (
+                                zi * is_gene.unsqueeze(-1).to(zi.dtype))
+                            sum_per_cell = zi_masked.sum(dim=1)      # (B, D)
+                            denom = gene_count.clamp(min=1).to(
+                                zi.dtype).unsqueeze(-1)
+                            mean_per_cell = sum_per_cell / denom     # (B, D)
+                            valid = gene_count > 0
+                            samples_list.append(mean_per_cell[valid])
+
+                    # Concatenate samples across context masks, then
+                    # cast to float32 for numerically stable reductions.
+                    vicreg_samples = torch.cat(samples_list, dim=0).float()
+
+                    # ----- variance loss (per-feature std hinge) -----
                     def variance_loss(z, gamma=1.0, eps=1e-4):
                         std = z.std(dim=0) + eps
                         return torch.mean(torch.relu(gamma - std))
 
-                    # ----- covariance loss -----
+                    # ----- covariance loss (off-diag squared) -----
                     def covariance_loss(z):
                         z = z - z.mean(dim=0)
                         N, D = z.shape
                         cov = (z.T @ z) / (N - 1)
                         off_diag = cov - torch.diag(torch.diag(cov))
-                        return (off_diag**2).sum() / D
+                        return (off_diag ** 2).sum() / D
 
-                    # Guard against degenerate batches (no gene tokens
-                    # in the mask, e.g. extremely sparse cells). At
-                    # least 2 samples are required for std/cov to be
-                    # well-defined.
-                    if gene_emb.size(0) >= 2:
-                        loss_var = variance_loss(gene_emb)
-                        loss_cov = covariance_loss(gene_emb)
+                    # Guard against degenerate batches (no valid samples,
+                    # e.g. all cells had zero gene tokens in the mask).
+                    # std/cov need at least 2 samples to be defined.
+                    vicreg_n_samples = int(vicreg_samples.size(0))
+                    if vicreg_n_samples >= 2:
+                        loss_var = variance_loss(vicreg_samples)
+                        loss_cov = covariance_loss(vicreg_samples)
                         loss = (loss
                                 + lambda_var * loss_var
                                 + lambda_cov * loss_cov)
@@ -1181,6 +1233,12 @@ def train(args: dict,
                     log_payload["cycle/loss"] = float(
                         cycle_loss_val.detach())
                     log_payload["cycle/n_changed"] = int(cycle_n_changed)
+                if loss_var is not None:
+                    log_payload["vicreg/var_loss"] = float(loss_var.detach())
+                    log_payload["vicreg/n_samples"] = int(vicreg_n_samples)
+                    log_payload["vicreg/granularity"] = vicreg_granularity
+                if loss_cov is not None:
+                    log_payload["vicreg/cov_loss"] = float(loss_cov.detach())
                 wandb.log(log_payload)
             assert not np.isnan(float(loss)), 'loss is nan'
             if itr % checkpoint_freq_iter == 0:
