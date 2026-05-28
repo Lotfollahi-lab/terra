@@ -55,6 +55,9 @@ from nichejepa.masks.cell_masking import CellMaskCollator
 from nichejepa.masks.utils import apply_masks
 from nichejepa.models.utils import repeat_interleave_batch
 from nichejepa.utils.distributed import init_distributed
+from nichejepa.utils.logging import (AverageMeter,
+                                     CSVLogger,
+                                     grad_logger)
 
 
 def _all_gather_with_local_grad(
@@ -87,9 +90,6 @@ def _all_gather_with_local_grad(
     # so backward() can flow through the loss term.
     gathered[rank] = local
     return torch.cat(gathered, dim=0)
-from nichejepa.utils.logging import (AverageMeter,
-                                     CSVLogger,
-                                     grad_logger)
 
 os.environ["NCCL_ASYNC_ERROR_HANDLING"] = "1" # Better error propagation
 
@@ -1152,8 +1152,20 @@ def train(args: dict,
                         _vicreg_runtime_checked = True
 
                     if vicreg_n_samples >= 2:
-                        loss_var = variance_loss(vicreg_samples)
-                        loss_cov = covariance_loss(vicreg_samples)
+                        # CRITICAL: torch.matmul (and @) is on the
+                        # autocast cast list, so the (z.T @ z) inside
+                        # covariance_loss would be silently demoted
+                        # back to bf16 by the enclosing
+                        # ``with torch.cuda.amp.autocast(dtype=bf16)``
+                        # block -- undoing the .float() cast above
+                        # and putting the cov gradient back in
+                        # bf16 noise. Disable autocast for the var/cov
+                        # CALL SITE (defining the funcs inside
+                        # autocast(False) does nothing -- autocast
+                        # follows the call site, not the def site).
+                        with torch.cuda.amp.autocast(enabled=False):
+                            loss_var = variance_loss(vicreg_samples)
+                            loss_cov = covariance_loss(vicreg_samples)
                         loss = (loss
                                 + lambda_var * loss_var
                                 + lambda_cov * loss_cov)
