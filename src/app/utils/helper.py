@@ -466,9 +466,15 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
             f"[Protocol-MoE] enabled (n_experts="
             f"{protocol_moe_kwargs.get('n_experts')}, "
             f"routing_index="
-            f"{protocol_moe_kwargs.get('routing_index')}). "
+            f"{protocol_moe_kwargs.get('routing_index')}, "
+            f"routing_offset="
+            f"{protocol_moe_kwargs.get('routing_offset', 0)}). "
             "Per-protocol additive bias on predictor output; "
-            "zero-init -> step-0 no-op.")
+            "zero-init -> step-0 no-op. NOTE: "
+            "values[:, routing_index] is offset-subtracted across "
+            "ALL spv_* slots; set routing_offset to the cumulative "
+            "size of preceding slots (or set n_experts large "
+            "enough to cover the full range).")
 
     encoder = gt.__dict__["init_gt_encoder"](
         encoder_type=gt_type,

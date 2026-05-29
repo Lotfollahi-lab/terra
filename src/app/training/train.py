@@ -1142,10 +1142,14 @@ def train(args: dict,
                     # failed (e.g. dist not initialized) or a lot of
                     # cells got filtered, this catches it on the
                     # first batch. Errors out unless explicitly
-                    # allowed.
+                    # allowed. Defer when vicreg_n_samples == 0
+                    # (no valid cells this step): we can't evaluate
+                    # cov rank-deficiency without samples, so wait
+                    # for the next iteration with real data.
                     if (vicreg_granularity == 'cell'
                             and lambda_cov > 0
-                            and not _vicreg_runtime_checked):
+                            and not _vicreg_runtime_checked
+                            and vicreg_n_samples > 0):
                         if vicreg_n_samples <= enc_emb_dim and not bool(
                                 args['optimization'].get(
                                     'vicreg_allow_underdetermined_cov',

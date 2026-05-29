@@ -1181,12 +1181,20 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
             from .protocol_moe import ProtocolBias
             self.protocol_moe_routing_index = int(
                 protocol_moe_kwargs['routing_index'])
+            # routing_offset: subtract from values[:, routing_index]
+            # so the lookup index is 0-indexed by the chosen
+            # protocol slot. Default 0 (assume already 0-indexed,
+            # which is rare -- typically you want to set this to
+            # the cumulative size of preceding spv_* slots).
+            self.protocol_moe_routing_offset = int(
+                protocol_moe_kwargs.get('routing_offset', 0))
             self.protocol_moe = ProtocolBias(
                 n_experts=int(protocol_moe_kwargs['n_experts']),
                 embed_dim=predictor_embed_dim,
             )
         else:
             self.protocol_moe_routing_index = -1
+            self.protocol_moe_routing_offset = 0
             self.protocol_moe = None
 
         # Initialize segment embeddings. Used by 'segment' mode (full
@@ -1197,8 +1205,21 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
         # for slotting target tokens in). 'polar+alibi' uses polar on
         # the predictor side too.
         if self.cell_pos_enc in ('segment', 'alibi', 'laplacian'):
+            # IMPORTANT: with nz_spc=True, the dataset assigns segment
+            # IDs [1..n_special_tokens] to the special-token positions
+            # and [n_special_tokens+1..n_special_tokens+n_segments] to
+            # the gene-token cells, so the max segment ID observed is
+            # n_special_tokens + n_segments. The table size must
+            # therefore add n_special_tokens (not 1) when nz_spc is
+            # on. Previously the predictor used `+ 1`, which was an
+            # off-by-(n_special_tokens-1) sized table -- fine for the
+            # default n_special_tokens=1 case, but caused
+            # indexSelectLargeIndex CUDA assertions as soon as more
+            # than one special token was used (e.g.
+            # special_tokens=['batch', 'assay']). Mirror the encoder's
+            # sizing exactly.
             self.seg_embed = nn.Embedding(
-                1 + n_segments + (105 if api_version == 'v1' else 0) + (1 if self.nz_spc else 0), # include <pad>
+                1 + n_segments + (105 if api_version == 'v1' else 0) + (self.n_special_tokens if self.nz_spc else 0), # include <pad>
                 predictor_embed_dim,
                 padding_idx=0)
 
@@ -1208,7 +1229,7 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
             seg_embed = get_1d_sincos_pos_embed(
                 embed_dim=predictor_embed_dim,
                 n_zero_pos=0,
-                n_sincos_pos=n_segments + (105 if api_version == 'v1' else 0) + (1 if self.nz_spc else 0))
+                n_sincos_pos=n_segments + (105 if api_version == 'v1' else 0) + (self.n_special_tokens if self.nz_spc else 0))
             self.seg_embed.weight[1:].copy_(torch.from_numpy(seg_embed).float())
 
         # Initialize layer to project from enc to pred embed dim
@@ -1442,7 +1463,10 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
             return z
         from .protocol_moe import extract_protocol_index
         protocol_idx = extract_protocol_index(
-            batch, self.protocol_moe_routing_index)         # (B,)
+            batch,
+            self.protocol_moe_routing_index,
+            routing_offset=self.protocol_moe_routing_offset,
+        )                                                    # (B,)
         bias = self.protocol_moe(protocol_idx)              # (B, D)
         bias = bias.repeat(n_pred_masks, 1).unsqueeze(1)    # (B*M, 1, D)
         return z + bias.to(z.dtype)

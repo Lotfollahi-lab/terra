@@ -19,10 +19,19 @@ Why bias-only and not full experts?
 
 The routing key is a per-cell integer index in
 ``batch['values'][:, routing_index]`` (e.g. the assay_value or
-gene_panel_value slot, depending on tokenizer convention). The
-config carries the integer ``routing_index`` and the size
-``n_experts``; the user is responsible for ensuring those match
-the dataset.
+gene_panel_value slot, depending on tokenizer convention).
+
+Important: the value at ``values[:, routing_index]`` is the
+**offset-subtracted spv_* token ID**, which lives in a GLOBAL
+range across all spv_* slots, not 0-indexed per slot. With
+``special_tokens=['batch', 'assay']``, n_batches=10, n_assays=104,
+``values[:, 0]`` (batch slot) is in ``[0, 10)`` and
+``values[:, 1]`` (assay slot) is in ``[10, 114)`` -- NOT
+``[0, 104)``. Use ``routing_offset`` to subtract the per-slot
+base offset so the embedding lookup index is 0-indexed by the
+protocol, or alternatively set ``n_experts`` large enough to
+cover the full global range (e.g. ``n_special_values`` from your
+data config).
 """
 
 from __future__ import annotations
@@ -83,22 +92,46 @@ class ProtocolBias(nn.Module):
             raise RuntimeError(
                 "ProtocolBias routing index out of range: observed "
                 f"[{min_obs}, {max_obs}] but n_experts="
-                f"{self.n_experts}. Increase "
-                "batch_correction.protocol_moe.n_experts to at "
-                f"least {max_obs + 1}, or verify the routing_index "
-                "points at the correct values column.")
+                f"{self.n_experts}.\n"
+                "Most common cause: ``values[:, routing_index]`` is "
+                "the offset-subtracted spv_*_<id> token ID, which "
+                "lives in a GLOBAL range across ALL spv_* slots, "
+                "NOT 0-indexed per slot. For example, with "
+                "special_tokens=['batch', 'assay'], n_batches=10, "
+                "n_assays=104: values[:, 1] (assay) is in "
+                "[10, 114), not [0, 104).\n"
+                "Two fixes:\n"
+                "  (1) Set batch_correction.protocol_moe."
+                f"routing_offset = {min_obs} so the lookup index "
+                "becomes values[:, routing_index] - routing_offset "
+                "and falls in [0, n_experts). Recommended -- saves "
+                "memory and keeps embeddings semantically aligned.\n"
+                f"  (2) Increase n_experts to at least "
+                f"{max_obs + 1} (a safe upper bound is the total "
+                "n_special_values from your data config). Wastes "
+                "unused embedding rows but works.\n"
+                "If min_obs is negative, your routing_offset is too "
+                "large -- decrease it.")
         return self.bias(protocol_idx)
 
 
 def extract_protocol_index(batch: dict,
                            routing_index: int,
+                           routing_offset: int = 0,
                            ) -> torch.Tensor:
     """Pull the per-cell protocol ID from ``batch['values']``.
 
-    Reads ``batch['values'][:, routing_index]`` and casts to long.
-    By the tokenizer convention this slot holds the
-    offset-subtracted spv_* token ID corresponding to the chosen
-    metadata column (assay_value, gene_panel_value, ...).
+    Reads ``batch['values'][:, routing_index]``, casts to long, and
+    subtracts ``routing_offset`` so the returned value can index
+    a ``[0, n_experts)`` embedding directly.
+
+    By the tokenizer convention, ``values[:, routing_index]``
+    holds the offset-subtracted spv_*_<id> token ID for that
+    metadata column. This is **NOT** 0-indexed per slot -- it
+    lives in a global range across all spv_* slots. Pass
+    ``routing_offset`` equal to the base of the desired slot's
+    range to recover a 0-indexed protocol id. See module docstring
+    for an example.
     """
     values = batch['values']
     if values.dim() < 2:
@@ -110,4 +143,7 @@ def extract_protocol_index(batch: dict,
         raise RuntimeError(
             f"protocol_moe.routing_index={routing_index} out of "
             f"bounds for values of length {L}.")
-    return values[:, routing_index].long()
+    raw = values[:, routing_index].long()
+    if routing_offset:
+        raw = raw - int(routing_offset)
+    return raw
