@@ -350,18 +350,48 @@ def train(args: dict,
         moe_kwargs = None
     elif moe_kwargs is not None:
         moe_kwargs = dict(moe_kwargs)
-        if (moe_kwargs.get('routing_indices') is None
-                and moe_kwargs.get('routing_index') is None):
+        # Resolve multi-key spec with fallback to shared. This lets
+        # MoE inherit the same ``keys`` / ``n_classes`` / ``offsets``
+        # used by adaln / adv_classifier / dist_align / cycle when
+        # the top-level shared spec is set.
+        moe_spec = _rspec(moe_kwargs, shared={
+            'keys': shared_keys,
+            'n_classes': shared_n_classes,
+            'offsets': shared_offsets,
+        })
+        if moe_spec['keys']:
+            # MoE uses ``routing_keys`` / ``n_experts`` /
+            # ``routing_offsets`` internally for backward compat
+            # with the original protocol_moe API. Translate from
+            # the unified spec.
+            moe_kwargs.setdefault('routing_keys', moe_spec['keys'])
+            moe_kwargs.setdefault('n_experts', moe_spec['n_classes'])
+            moe_kwargs.setdefault('routing_offsets', moe_spec['offsets'])
+        # After resolution, MoE needs SOMETHING to route by: either
+        # ``routing_keys`` (metadata, recommended), ``routing_indices``
+        # (sequence columns, legacy), or the singular variants.
+        has_routing = any(
+            moe_kwargs.get(name) is not None for name in (
+                'routing_keys', 'routing_key',
+                'routing_indices', 'routing_index',
+            )
+        )
+        if not has_routing:
             raise ValueError(
-                "batch_correction.special_token_moe.enabled=True "
-                "requires routing_indices (list) or routing_index "
-                "(scalar) -- the values column(s) for the routing "
-                "id(s).")
+                "special_token_moe.enabled=True requires a routing "
+                "spec. Set one of:\n"
+                "  - special_token_correction.keys (shared, "
+                "recommended), or\n"
+                "  - special_token_moe.routing_keys (metadata field "
+                "names), or\n"
+                "  - special_token_moe.routing_indices (values "
+                "column ints, legacy).")
         if moe_kwargs.get('n_experts') is None:
             raise ValueError(
-                "batch_correction.special_token_moe.enabled=True "
-                "requires n_experts (scalar for single-slot or list "
-                "for multi-slot).")
+                "special_token_moe.enabled=True requires n_experts "
+                "(scalar for single-slot or list for multi-slot). "
+                "If using shared spec, set "
+                "special_token_correction.n_classes.")
 
     # Cycle-consistency: re-encode each minibatch with random batch
     # labels and penalize the MSE between original and swapped
@@ -991,6 +1021,17 @@ def train(args: dict,
     # rationale as _laplacian_diag_logged: survives checkpoint resume.
     _vicreg_runtime_checked = False
 
+    # Reset the function-level one-shot flag for the adv_classifier
+    # range check. Without this, a second invocation of ``train()``
+    # in the same Python process (e.g. notebook re-runs / unit
+    # tests) would skip the range check against a freshly-built
+    # classifier, masking config mismatches at startup. The AdaLN
+    # range-check flag lives on the encoder/predictor instances,
+    # which are re-created on each call to ``train()``, so they
+    # don't need this dance.
+    if hasattr(train, '_adv_range_logged'):
+        train._adv_range_logged = False
+
     # Run training loop
     for epoch in range(start_epoch, num_epochs):
         logger.info(f"Epoch {epoch}")
@@ -1343,24 +1384,31 @@ def train(args: dict,
                     ) or [shared_batch_label_offset]
                     labels_per_key = _xbs(
                         udata, keys=bc_keys, offsets=bc_offsets)
-                    # Sum CE over heads; range-check each head's
-                    # labels against that head's output dim.
+                    # Sum CE over heads. Range-check each head's
+                    # labels against that head's output dim ONCE
+                    # per process (first iteration only -- saves a
+                    # CUDA sync per step). After the one-shot
+                    # check, any OOB would still surface as a CUDA
+                    # async assertion from inside F.cross_entropy.
+                    do_adv_range_check = not getattr(
+                        train, '_adv_range_logged', False)
                     adv_loss = 0.0
                     adv_accuracy_per_key = []
                     for k, (logits, label) in enumerate(zip(
                             batch_logits_per_key, labels_per_key)):
                         n_cls = logits.size(-1)
-                        with torch.no_grad():
-                            max_obs = int(label.max().item())
-                            min_obs = int(label.min().item())
-                        if max_obs >= n_cls or min_obs < 0:
-                            raise RuntimeError(
-                                f"adv_classifier head {k} "
-                                f"(key={bc_keys[k]!r}): labels in "
-                                f"[{min_obs}, {max_obs}] but "
-                                f"n_classes={n_cls}. Increase "
-                                f"n_classes[{k}] (or set "
-                                f"offsets[{k}]={min_obs}).")
+                        if do_adv_range_check:
+                            with torch.no_grad():
+                                max_obs = int(label.max().item())
+                                min_obs = int(label.min().item())
+                            if max_obs >= n_cls or min_obs < 0:
+                                raise RuntimeError(
+                                    f"adv_classifier head {k} "
+                                    f"(key={bc_keys[k]!r}): labels in "
+                                    f"[{min_obs}, {max_obs}] but "
+                                    f"n_classes={n_cls}. Increase "
+                                    f"n_classes[{k}] (or set "
+                                    f"offsets[{k}]={min_obs}).")
                         ce = F.cross_entropy(logits, label)
                         adv_loss = adv_loss + ce
                         with torch.no_grad():
@@ -1368,6 +1416,8 @@ def train(args: dict,
                                 (logits.argmax(dim=-1) == label)
                                 .float().mean().item()))
                     loss = loss + lambda_adv * adv_loss
+                    if do_adv_range_check:
+                        train._adv_range_logged = True
                     # Report mean accuracy across heads for the WandB
                     # log; per-head values are also logged below.
                     adv_accuracy = (

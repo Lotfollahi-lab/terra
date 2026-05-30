@@ -282,17 +282,21 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                 # for every cell -- different from training. Migrate
                 # to the metadata key path
                 # (``adaln.keys=['batch_value']``) for inference-safe
-                # behavior.
-                import logging as _adaln_logging
-                _adaln_logging.getLogger(
-                    "nichejepa.models.gene_transformers"
-                ).warning(
-                    "[AdaLN] using LEGACY single-key path "
-                    "(reads values[:, 0]). At inference with "
-                    "pad_special_tokens=True this silently "
-                    "conditions on batch_label=0. Recommend "
-                    "migrating to ``adaln.keys=['batch_value']`` + "
-                    "matching n_classes / offsets.")
+                # behavior. Rank-0 gate so DDP runs don't print
+                # n_ranks * n_modules duplicate warnings.
+                import os as _adaln_os
+                if int(_adaln_os.environ.get('RANK', '0')) == 0:
+                    import logging as _adaln_logging
+                    _adaln_logging.getLogger(
+                        "nichejepa.models.gene_transformers"
+                    ).warning(
+                        "[AdaLN] using LEGACY single-key path "
+                        "(reads values[:, 0]). At inference with "
+                        "pad_special_tokens=True this silently "
+                        "conditions on batch_label=0. Recommend "
+                        "migrating to "
+                        "``adaln.keys=['batch_value']`` + "
+                        "matching n_classes / offsets.")
                 self.adaln_keys = [None]
                 self.adaln_offsets = [0]
                 self.adaln_n_classes_per_key = [
@@ -634,6 +638,17 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
             seq_len=self.seq_len,
         )
         return x + depth_emb.to(x.dtype)
+
+    def reset_adaln_range_check(self) -> None:
+        """Re-arm the one-shot AdaLN label range check on the next
+        ``_compute_cond`` call. Useful when reusing the same model
+        instance across train -> inference within one process (e.g.
+        notebooks): the range check would otherwise be skipped at
+        inference because the flag persists from training. Call
+        this between phases to get a fresh diagnostic.
+        """
+        if hasattr(self, '_adaln_label_range_logged'):
+            self._adaln_label_range_logged = False
 
     def _compute_cond(self,
                       batch: Mapping[str, torch.Tensor],
@@ -1378,17 +1393,21 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
                 # for every cell -- different from training. Migrate
                 # to the metadata key path
                 # (``adaln.keys=['batch_value']``) for inference-safe
-                # behavior.
-                import logging as _adaln_logging
-                _adaln_logging.getLogger(
-                    "nichejepa.models.gene_transformers"
-                ).warning(
-                    "[AdaLN] using LEGACY single-key path "
-                    "(reads values[:, 0]). At inference with "
-                    "pad_special_tokens=True this silently "
-                    "conditions on batch_label=0. Recommend "
-                    "migrating to ``adaln.keys=['batch_value']`` + "
-                    "matching n_classes / offsets.")
+                # behavior. Rank-0 gate so DDP runs don't print
+                # n_ranks * n_modules duplicate warnings.
+                import os as _adaln_os
+                if int(_adaln_os.environ.get('RANK', '0')) == 0:
+                    import logging as _adaln_logging
+                    _adaln_logging.getLogger(
+                        "nichejepa.models.gene_transformers"
+                    ).warning(
+                        "[AdaLN] using LEGACY single-key path "
+                        "(reads values[:, 0]). At inference with "
+                        "pad_special_tokens=True this silently "
+                        "conditions on batch_label=0. Recommend "
+                        "migrating to "
+                        "``adaln.keys=['batch_value']`` + "
+                        "matching n_classes / offsets.")
                 self.adaln_keys = [None]
                 self.adaln_offsets = [0]
                 self.adaln_n_classes_per_key = [
@@ -1650,6 +1669,15 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
             self._adaln_label_range_logged = True
 
         return cond
+
+    def reset_adaln_range_check(self) -> None:
+        """Re-arm the one-shot AdaLN label range check on the next
+        ``_compute_cond`` call. Mirrors the encoder method so a
+        caller iterating both can do ``encoder.reset...();
+        predictor.reset...()`` symmetrically.
+        """
+        if hasattr(self, '_adaln_label_range_logged'):
+            self._adaln_label_range_logged = False
 
     def _compose_predictor_coords(
             self,

@@ -25,13 +25,19 @@ def test_metadata_path_with_offset():
     assert out.tolist() == [0, 2]
 
 
-def test_falls_back_to_values_when_key_missing():
+def test_raises_when_key_requested_but_missing():
+    """A key that's explicitly requested but absent from the batch
+    is treated as a hard error, NOT a silent fallback. Silent
+    fallback would corrupt DDP gradients by routing different ranks
+    through different label sources."""
     batch = {'values': torch.tensor([[5.0, 0.0], [9.0, 0.0]])}
-    out = extract_batch_label(batch, key='batch_value')   # not in batch
-    assert out.tolist() == [5, 9]
+    with pytest.raises(RuntimeError, match="not present in the batch"):
+        extract_batch_label(batch, key='batch_value')
 
 
-def test_falls_back_when_key_none():
+def test_explicit_none_key_uses_legacy_values_path():
+    """Passing key=None is the explicit opt-in for the legacy
+    values[:, 0] path."""
     batch = {'values': torch.tensor([[3.0], [4.0]])}
     out = extract_batch_label(batch, key=None)
     assert out.tolist() == [3, 4]

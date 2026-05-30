@@ -106,13 +106,15 @@ def make_swapped_batch(
             f"make_swapped_batch: offsets length {len(offsets)} "
             f"does not match n_classes_per_key length {n_slots}.")
 
-    # Multiple slots that ALL fall back to the legacy ``values[:, 0]``
-    # path would overwrite each other's swaps -- only the last slot's
-    # write survives, but ``changed_mask`` would still claim earlier
-    # slots changed. That makes the cycle loss silently incoherent.
-    # Forbid it: each slot must have a distinct destination (either a
-    # unique metadata key, or at most ONE legacy slot using
-    # values[:, 0]). Misconfigurations should fail loud.
+    # Each slot must have a UNIQUE destination, otherwise later
+    # iterations silently overwrite earlier ones while
+    # ``changed_mask`` would still claim earlier slots changed -- a
+    # silently incoherent cycle loss. Two failure modes are
+    # forbidden:
+    #   (a) ≥ 2 slots fall back to the legacy values[:, 0] path
+    #       (key is None or missing from batch), or
+    #   (b) ≥ 2 slots reference the SAME metadata key (duplicate
+    #       writes to swapped_batch[key]).
     legacy_slot_count = sum(
         1 for k in keys if k is None or k not in batch)
     if legacy_slot_count > 1:
@@ -124,6 +126,13 @@ def make_swapped_batch(
             "metadata key per slot (and make sure each is present in "
             f"the batch dict). keys={keys}, "
             f"available batch fields={sorted(batch.keys())}.")
+    real_keys = [k for k in keys if k is not None and k in batch]
+    if len(set(real_keys)) != len(real_keys):
+        dupes = [k for k in set(real_keys) if real_keys.count(k) > 1]
+        raise RuntimeError(
+            "make_swapped_batch: duplicate metadata keys across "
+            "slots would cause later swaps to overwrite earlier "
+            f"ones. Duplicate(s): {dupes}. keys={keys}.")
 
     swapped_batch = dict(batch)
     # Track per-cell "did ANY key change" using bitwise OR.

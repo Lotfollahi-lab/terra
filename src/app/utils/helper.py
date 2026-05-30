@@ -194,23 +194,40 @@ def parse_arch_kwargs(args: dict) -> dict:
         moe = None
     elif moe is not None:
         moe = dict(moe)
-        # Accept either the new 'routing_indices' or the legacy
-        # 'routing_index' field.
-        if (moe.get('routing_indices') is None
-                and moe.get('routing_index') is None):
+        # Resolve multi-key spec with fallback to the shared
+        # top-level keys/n_classes/offsets. This way a MoE config
+        # that inherits from ``special_token_correction.keys``
+        # round-trips correctly at inference time too.
+        from nichejepa.models.batch_labels import resolve_label_spec
+        spec = resolve_label_spec(moe, shared={
+            'keys': bc.get('keys'),
+            'n_classes': bc.get('n_classes'),
+            'offsets': bc.get('offsets'),
+        })
+        if spec['keys']:
+            # Translate from the unified spec to MoE's internal API
+            # names (routing_keys / n_experts / routing_offsets).
+            moe.setdefault('routing_keys', spec['keys'])
+            moe.setdefault('n_experts', spec['n_classes'])
+            moe.setdefault('routing_offsets', spec['offsets'])
+        has_routing = any(
+            moe.get(name) is not None for name in (
+                'routing_keys', 'routing_key',
+                'routing_indices', 'routing_index',
+            )
+        )
+        if not has_routing:
             raise ValueError(
-                "batch_correction.special_token_moe.enabled=True "
-                "but neither routing_indices nor routing_index is "
-                "set. Set routing_indices to a list of values-column "
-                "indices (e.g. [0, 1] for batch+assay) or a scalar "
-                "for single-slot routing.")
+                "special_token_moe.enabled=True in the saved config "
+                "but no routing spec found. The MoE needs one of:\n"
+                "  - special_token_correction.keys (shared), or\n"
+                "  - special_token_moe.routing_keys, or\n"
+                "  - special_token_moe.routing_indices (legacy).")
         if moe.get('n_experts') is None:
             raise ValueError(
-                "batch_correction.special_token_moe.enabled=True "
-                "but n_experts is missing. Set it (scalar for "
-                "single-slot, list-per-slot for multi-slot) to at "
-                "least 1 + the max routing-id observed for each "
-                "slot.")
+                "special_token_moe.enabled=True in the saved config "
+                "but n_experts is missing. Set it (scalar or list) "
+                "to at least 1 + the max routing-id observed.")
     return {
         'laplacian_k': int(meta.get('laplacian_k', 8)),
         'laplacian_sigma': float(meta.get('laplacian_sigma', 1.0)),

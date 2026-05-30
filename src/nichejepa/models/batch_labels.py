@@ -144,20 +144,38 @@ def extract_batch_label(
         ) -> torch.Tensor:
     """Return per-cell batch label as a ``(B,)`` LongTensor (single-key).
 
-    If ``key`` is given AND present in ``batch``, reads ``batch[key]``
-    (the metadata path -- decoupled from ``special_tokens``).
-    Otherwise falls back to ``batch['values'][:, 0]`` (legacy path,
-    works only when ``special_tokens=['batch', ...]``).
+    Two resolution paths:
+      - ``key=None``: legacy path, reads ``batch['values'][:, 0]``.
+        Caller has explicitly opted into this.
+      - ``key='<name>'`` AND present in ``batch``: metadata path,
+        reads ``batch[key]``.
+      - ``key='<name>'`` AND NOT in ``batch``: this is almost always
+        a misconfiguration (wrong key, dataset doesn't expose the
+        column, or different schemas across DDP ranks). Raises a
+        hard error rather than silently falling back to
+        ``values[:, 0]`` -- a silent fallback would let different
+        ranks compute losses against different label sources, which
+        DDP all-reduce then averages, corrupting the gradient.
     """
-    if key is not None and key in batch:
-        raw = batch[key]
-    else:
+    if key is None:
         values = batch['values']
         if values.dim() < 2:
             raise RuntimeError(
                 "extract_batch_label fallback expected `values` to "
                 f"be at least 2-D (B, L); got shape {tuple(values.shape)}.")
         raw = values[:, 0]
+    elif key in batch:
+        raw = batch[key]
+    else:
+        raise RuntimeError(
+            f"extract_batch_label: requested key {key!r} is not "
+            f"present in the batch dict. Available keys: "
+            f"{sorted(batch.keys())}. Either set this key in the "
+            "dataset's auto-exposed *_value columns, or pass "
+            "key=None to use the legacy values[:, 0] fallback "
+            "explicitly. Silent fallback was removed because it "
+            "lets DDP ranks compute labels from inconsistent "
+            "sources, which corrupts gradients after all-reduce.")
     raw = raw.long()
     if offset:
         raw = raw - int(offset)

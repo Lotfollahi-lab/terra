@@ -110,6 +110,50 @@ def test_make_swapped_batch_mismatched_lengths_raises():
         )
 
 
+def test_make_swapped_batch_multiple_legacy_slots_raises():
+    """Two slots both falling back to the legacy values[:, 0] path
+    would overwrite each other -- must raise."""
+    batch = {'values': torch.zeros(4, 3)}
+    with pytest.raises(RuntimeError, match="legacy values"):
+        make_swapped_batch(
+            batch,
+            n_classes_per_key=[5, 7],
+            keys=[None, None],   # both legacy
+        )
+
+
+def test_make_swapped_batch_duplicate_metadata_keys_raises():
+    """Two slots referencing the same metadata key would overwrite
+    each other in swapped_batch[key] -- must raise."""
+    batch = {
+        'values': torch.zeros(4, 3),
+        'batch_value': torch.zeros(4, dtype=torch.long),
+    }
+    with pytest.raises(RuntimeError, match="[Dd]uplicate"):
+        make_swapped_batch(
+            batch,
+            n_classes_per_key=[5, 7],
+            keys=['batch_value', 'batch_value'],
+        )
+
+
+def test_make_swapped_batch_one_legacy_one_metadata_ok():
+    """Mixed mode is fine -- only multiple legacy slots are bad."""
+    torch.manual_seed(0)
+    batch = {
+        'values': torch.zeros(4, 3),
+        'assay_value': torch.zeros(4, dtype=torch.long),
+    }
+    # First slot uses legacy values[:, 0], second uses metadata.
+    swapped, changed = make_swapped_batch(
+        batch,
+        n_classes_per_key=[5, 7],
+        keys=[None, 'assay_value'],
+    )
+    assert swapped is not None
+    assert changed.shape == (4,)
+
+
 # ---------------------------------------------------------------------------
 # cycle_consistency_loss
 # ---------------------------------------------------------------------------

@@ -132,9 +132,31 @@ class CellBaseDataset(Dataset):
         # is what gets used by AdaLN / adv_classifier /
         # distribution_alignment / cycle_consistency /
         # special_token_moe for their batch-label needs.
+        # Only include numeric ``_value`` columns. HF dataset
+        # features expose a dtype via ``.dtype`` for primitive columns
+        # and via the ``feature.dtype`` of a Sequence's inner element
+        # for list-of-X columns. A string-typed metadata column (e.g.
+        # if someone names a column ``tissue_value`` storing strings)
+        # would crash ``torch.tensor(...)`` in ``_attach_metadata`` --
+        # filter it out at init time so per-item iteration stays
+        # fast and crash-free.
+        def _is_numeric_feature(feat) -> bool:
+            try:
+                # Sequence-of-X: inspect the element dtype.
+                inner = getattr(feat, 'feature', None)
+                dt = getattr(inner if inner is not None else feat,
+                             'dtype', None)
+                if dt is None:
+                    return False
+                dt = str(dt)
+                return any(prefix in dt for prefix in (
+                    'int', 'float', 'bool'))
+            except Exception:
+                return False
         self.metadata_keys = [
             col for col in self.dataset.features.keys()
             if col.endswith('_value')
+            and _is_numeric_feature(self.dataset.features[col])
         ]
 
     def __len__(self) -> int:
