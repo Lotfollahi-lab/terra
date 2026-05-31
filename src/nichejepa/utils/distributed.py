@@ -38,6 +38,27 @@ def init_distributed(port: int=40112, rank_and_world_size=(None, None)):
             world_size, rank = 1, 0
             return world_size, rank
 
+    # Bind this rank to a specific GPU BEFORE NCCL init. Without
+    # this, multiple ranks on the same node default to GPU 0 and
+    # NCCL's first collective fails with "Cuda failure 1 'invalid
+    # argument'". The local rank comes from SLURM_LOCALID (per-node
+    # rank) when available, with LOCAL_RANK (torchrun) and
+    # rank % n_visible_devices as fallbacks.
+    if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+        local_rank_env = (
+            os.environ.get('SLURM_LOCALID')
+            or os.environ.get('LOCAL_RANK')
+        )
+        if local_rank_env is not None:
+            local_rank = int(local_rank_env)
+        else:
+            local_rank = rank % torch.cuda.device_count()
+        torch.cuda.set_device(local_rank)
+        logger.info(
+            f'Bound rank {rank} (world_size={world_size}) to local '
+            f'cuda:{local_rank} '
+            f'(visible devices: {torch.cuda.device_count()}).')
+
     try:
         os.environ['MASTER_PORT'] = str(port)
         torch.distributed.init_process_group(
