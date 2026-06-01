@@ -8,4 +8,5 @@ from .harmonize import harmonize_adata
 from .infer import infer
 from .perturb import perturb_dataset
 from .score import get_emd_distance, get_spatial_score
+from .token_distance import infer_token_distance
 from .tokenize import tokenize_adata
