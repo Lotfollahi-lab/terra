@@ -140,6 +140,14 @@ class CellBaseTokenizer(ABC):
         Normalization method on count level for gene expression.
     norm_factor_file_path:
         File path to '.csv' file containing norm factors per gene.
+    pf_targets_file_path:
+        Optional file path to the '{cohort}_pf_targets.csv' produced by
+        `compute_cohort_norm_factors.py`, holding the corpus-wide
+        PFlog1pPF targets ('pf_depth_target', 'pf_logsum_target'). When
+        set, the 'pflog1ppf' count-norm method uses these FROZEN corpus
+        scales (s1, s2) instead of recomputing them per file -- keeping
+        the value scale consistent across shards and between train and
+        inference. When `None` (default), per-file PF targets are used.
     token_dictionary_file_path:
         File path to the '.pkl' file containing the token dictionary.
     add_neigh_cell_ids:
@@ -188,6 +196,7 @@ class CellBaseTokenizer(ABC):
                 'pflog1ppf',
                 ] | None = 'shifted_log',
             norm_factor_file_path: Path | str = norm_factor_file_path,
+            pf_targets_file_path: Path | str | None = None,
             token_dictionary_file_path: Path | str = token_dictionary_file_path,
             add_neigh_cell_ids: bool = False,
             include_special_tokens: bool = True,
@@ -207,6 +216,7 @@ class CellBaseTokenizer(ABC):
         self.count_gene_norm_method = count_gene_norm_method
         self.count_count_norm_method = count_count_norm_method
         self.norm_factor_file_path = norm_factor_file_path
+        self.pf_targets_file_path = pf_targets_file_path
         self.token_dictionary_file_path = token_dictionary_file_path
         self.add_neigh_cell_ids = add_neigh_cell_ids
         self.include_special_tokens = include_special_tokens
@@ -242,6 +252,43 @@ class CellBaseTokenizer(ABC):
             key for key in list(self.vocab) if 'ENS' in key]
         self.coding_miRNA_dict = dict(
             zip(self.coding_miRNA_ids, [True] * len(self.vocab)))
+
+    def _load_pf_targets(self) -> tuple[float | None, float | None]:
+        """Load the frozen corpus-wide PFlog1pPF targets (s1, s2).
+
+        Reads `pf_targets_file_path` (produced by
+        `compute_cohort_norm_factors.py`) once and caches the result.
+        Returns ``(target_size, logsum_target)`` to pass to
+        `normalize_by_pflog1ppf`, or ``(None, None)`` when no path is
+        configured -- in which case the normalizer falls back to its
+        per-file (per-call) PF targets.
+
+        Raises
+        ------
+        ValueError
+            If `pf_targets_file_path` is set but the file is missing the
+            required 'pf_depth_target' / 'pf_logsum_target' columns.
+        """
+        if self.pf_targets_file_path is None:
+            return None, None
+        if not hasattr(self, '_pf_targets_cache'):
+            pf_df = pd.read_csv(self.pf_targets_file_path)
+            missing = {'pf_depth_target', 'pf_logsum_target'} - set(
+                pf_df.columns)
+            if missing:
+                raise ValueError(
+                    f"PF targets file '{self.pf_targets_file_path}' is "
+                    f"missing required column(s) {sorted(missing)}; it must "
+                    "be produced by compute_cohort_norm_factors.py.")
+            self._pf_targets_cache = (
+                float(pf_df['pf_depth_target'].iloc[0]),
+                float(pf_df['pf_logsum_target'].iloc[0]))
+            logger.info(
+                'Loaded frozen PFlog1pPF corpus targets from '
+                f'{self.pf_targets_file_path}: '
+                f's1(depth)={self._pf_targets_cache[0]:.6f}, '
+                f's2(logsum)={self._pf_targets_cache[1]:.6f}.')
+        return self._pf_targets_cache
 
     def tokenize_data(self,
                       input_directory: Path | str,
@@ -652,8 +699,11 @@ class CellGraphTokenizer(CellBaseTokenizer):
             if (self.rank_cell_norm_method is not None) or (
                 self.rank_gene_norm_method is not None):
                 raise ValueError('Invalid combination of norm methods.')
+            pf_target_size, pf_logsum_target = self._load_pf_targets()
             adata.layers['X_rank'] = normalize_by_pflog1ppf(
-                adata.layers['X_rank'])
+                adata.layers['X_rank'],
+                target_size=pf_target_size,
+                logsum_target=pf_logsum_target)
         else:
             if self.rank_count_norm_method is None:
                 pass
@@ -679,8 +729,11 @@ class CellGraphTokenizer(CellBaseTokenizer):
             if (self.count_cell_norm_method is not None) or (
                 self.count_gene_norm_method is not None):
                 raise ValueError('Invalid combination of norm methods.')
+            pf_target_size, pf_logsum_target = self._load_pf_targets()
             adata.layers['X_count'] = normalize_by_pflog1ppf(
-                adata.layers['X_count'])
+                adata.layers['X_count'],
+                target_size=pf_target_size,
+                logsum_target=pf_logsum_target)
         else:
             if self.count_count_norm_method is None:
                 pass

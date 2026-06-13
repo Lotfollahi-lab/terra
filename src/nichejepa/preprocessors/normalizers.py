@@ -276,6 +276,7 @@ def normalize_by_shifted_log(x: sp.csr_matrix) -> sp.csr_matrix:
 
 def normalize_by_pflog1ppf(x: sp.csr_matrix,
                            target_size: float | None = None,
+                           logsum_target: float | None = None,
                            pseudocount: float = 1.0,
                            ) -> sp.csr_matrix:
     """
@@ -319,9 +320,21 @@ def normalize_by_pflog1ppf(x: sp.csr_matrix,
         features (i.e. not scaled or normalized).
     target_size:
         Common depth for the FIRST proportional fitting. ``None``
-        (default) uses the mean total count across cells, matching the
-        paper's PF convention; pass e.g. ``1e4`` for a CP10k-style
-        fixed size factor (only rescales globally, does not change the
+        (default) uses the mean total count across the cells in ``x``
+        (per-call), matching the paper's PF convention; pass e.g.
+        ``1e4`` for a CP10k-style fixed size factor, or the corpus-wide
+        mean depth (``pf_depth_target`` from
+        ``compute_cohort_norm_factors.py``) to freeze the first-PF scale
+        across files / between train and inference. NB: because step 2
+        is ``log1p`` (not ``log``), this target is NOT geometry-neutral
+        -- it sets where counts sit relative to the pseudocount.
+    logsum_target:
+        Common total for the SECOND proportional fitting. ``None``
+        (default) uses the mean per-cell log-sum across the cells in
+        ``x`` (per-call); pass the corpus-wide value
+        (``pf_logsum_target`` from ``compute_cohort_norm_factors.py``)
+        to freeze the second-PF scale. This target is a pure global
+        linear rescale of the output (does not change within-cell
         geometry).
     pseudocount:
         Pseudocount ``c`` added inside the log, i.e. ``log(u + c)``.
@@ -365,7 +378,8 @@ def normalize_by_pflog1ppf(x: sp.csr_matrix,
     # --- Step 3: second proportional fitting on the log-values -----
     log_sums = np.asarray(x_log.sum(axis=1)).ravel()     # (n_obs,)
     safe_log_sums = np.where(log_sums > 0, log_sums, 1.0)
-    s2 = float(log_sums.mean())
+    s2 = (float(logsum_target) if logsum_target is not None
+          else float(log_sums.mean()))
     y = x_log.multiply((s2 / safe_log_sums).reshape(-1, 1)).tocsr()
 
     return y.astype(np.float32)
