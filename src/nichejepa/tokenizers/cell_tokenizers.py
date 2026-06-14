@@ -767,17 +767,23 @@ class CellGraphTokenizer(CellBaseTokenizer):
         adata_dict['gene_expr_cell'] = []
         adata_dict['gene_tokens_neighborhood'] = []
         adata_dict['gene_expr_neighborhood'] = []
-            
+
+        # Subset to the coding/miRNA gene columns ONCE. Previously every chunk
+        # re-sliced the AnnData with a fancy column index
+        # (adata[rows, coding_miRNA_idx]), rebuilding an AnnData view and
+        # re-indexing the sparse layer twice per chunk. Row-slicing these
+        # precomputed matrices per chunk is cheap.
+        X_rank_coding = adata.layers['X_rank'][:, coding_miRNA_idx]
+        X_count_coding = adata.layers['X_count'][:, coding_miRNA_idx]
+
         if not self.rank_differs_from_count: # save memory by working with sparse arrays
             print('Ranking gene tokens based on normalized counts (sparse version).')
             for i in range(0, len(adata), self.chunk_size):
                 if self.include_zero_expr_genes:
-                    norm_counts_cell_rank = adata[
-                        i : i + self.chunk_size, coding_miRNA_idx].layers[
-                            'X_rank'].toarray()
-                    norm_counts_cell_count = adata[
-                        i : i + self.chunk_size, coding_miRNA_idx].layers[
-                            'X_count'].toarray()
+                    norm_counts_cell_rank = X_rank_coding[
+                        i : i + self.chunk_size].toarray()
+                    norm_counts_cell_count = X_count_coding[
+                        i : i + self.chunk_size].toarray()
 
                     # Rank gene tokens and append across chunks
                     adata_dict['gene_tokens_cell'] += [
@@ -792,12 +798,10 @@ class CellGraphTokenizer(CellBaseTokenizer):
                         for j in range(norm_counts_cell_count.shape[0])]
 
                 else:
-                    norm_counts_cell_rank = sp.csr_matrix(adata[
-                        i : i + self.chunk_size, coding_miRNA_idx].layers[
-                            'X_rank'])
-                    norm_counts_cell_count = sp.csr_matrix(adata[
-                        i : i + self.chunk_size, coding_miRNA_idx].layers[
-                            'X_count'])              
+                    norm_counts_cell_rank = sp.csr_matrix(
+                        X_rank_coding[i : i + self.chunk_size])
+                    norm_counts_cell_count = sp.csr_matrix(
+                        X_count_coding[i : i + self.chunk_size])
 
                     # Rank gene tokens and append across chunks
                     adata_dict['gene_tokens_cell'] += [
@@ -815,8 +819,8 @@ class CellGraphTokenizer(CellBaseTokenizer):
         else: # conversion to dense arrays which requires higher memory
             print('Ranking gene tokens based on normalized counts (dense version).')
             for i in range(0, len(adata), self.chunk_size):
-                rank_block = adata[i:i+self.chunk_size, coding_miRNA_idx].layers['X_rank']
-                count_block = adata[i:i+self.chunk_size, coding_miRNA_idx].layers['X_count']
+                rank_block = X_rank_coding[i:i+self.chunk_size]
+                count_block = X_count_coding[i:i+self.chunk_size]
 
                 if sp.issparse(rank_block):
                     rank_block = rank_block.toarray()
@@ -868,73 +872,76 @@ class CellGraphTokenizer(CellBaseTokenizer):
 
         n_cells = len(adata)
 
-        # Add read depth and number of genes
-        #adata_dict['cell_total_counts'] = [
-        #    [total_counts] for total_counts in adata.X.sum(axis=1).A1.tolist()]
-        #adata_dict['cell_n_probed_genes'] = [adata.X.shape[1]] * n_cells
-        
+        # Precompute graph structure and per-cell metadata ONCE, outside the
+        # loop. Previously getnnz(axis=1) -- which rebuilds the full per-row
+        # nnz array (O(n_cells)) -- was called twice per cell, making this
+        # loop O(n_cells^2). Likewise the spatial coords and cell-id list were
+        # re-read per neighbor.
+        connectivities = adata_neigh.obsp['spatial_connectivities']
+        distances = adata_neigh.obsp['spatial_distances']
+        conn_nnz = connectivities.getnnz(axis=1)
+        dist_nnz = distances.getnnz(axis=1)
+        coords = np.asarray(adata.obsm['spatial'])
+        cell_id_list = (adata.obs['cell_id'].values.tolist()
+                        if self.add_neigh_cell_ids else None)
+        gene_tokens_cell_neigh = adata_dict['gene_tokens_cell_neigh']
+        gene_expr_cell_neigh = adata_dict['gene_expr_cell_neigh']
+
         # Loop through all cells to add neighbor cell gene tokens based on
         # position of neighbor cell compared to index cell. Gene tokens of cells
         # that are closer to the index cell will be added first.
         for i in range(len(adata_neigh)):
             # Collect all neighbors of cell i
-            neighbors_i = adata_neigh.obsp[
-                'spatial_connectivities'][i].nonzero()[1]
-
-            # Store cell degree (number of neighbors excluding cell i)
-            #adata_dict['cell_degrees'].append(int(len(neighbors_i)))
+            neighbors_i = connectivities[i].nonzero()[1]
 
             # Take into account case where neighbor cells can have 0 distance
-            if (adata_neigh.obsp['spatial_connectivities'].getnnz(axis=1)[i] != 
-            adata_neigh.obsp['spatial_distances'].getnnz(axis=1)[i]):
-                cell_con_nz = np.nonzero(
-                    adata_neigh.obsp['spatial_connectivities'][i])[1]
-                cell_dist_nz = np.nonzero(
-                    adata_neigh.obsp['spatial_distances'][i])[1]
+            if conn_nnz[i] != dist_nnz[i]:
+                cell_con_nz = np.nonzero(connectivities[i])[1]
+                cell_dist_nz = np.nonzero(distances[i])[1]
                 zero_dist_idx = set(cell_con_nz) - set(cell_dist_nz)
                 for idx in zero_dist_idx:
-                    adata_neigh.obsp[
-                        'spatial_distances'][i, idx] = adata_neigh.obsp[
-                        'spatial_distances'][i, idx] + 10**(-9)
-            
+                    distances[i, idx] = distances[i, idx] + 10**(-9)
+
             # Get sorted indices of neighbor cells based on (lower) distance to
             # index cell
-            cell_start = adata_neigh.obsp['spatial_distances'].indptr[i]
-            cell_end = adata_neigh.obsp['spatial_distances'].indptr[i+1]
-            cell_distances = adata_neigh.obsp[
-                'spatial_distances'].data[cell_start:cell_end]
+            cell_start = distances.indptr[i]
+            cell_end = distances.indptr[i+1]
+            cell_distances = distances.data[cell_start:cell_end]
 
             sorted_indices = np.argsort(cell_distances)
             assert len(neighbors_i) == len(cell_distances), (
                 'Number of neighbors does not equal number of distances.')
+            ordered_neighbors = neighbors_i[sorted_indices]
 
-            # Loop through distance-sorted neighbor cells and add gene,
-            # segment tokens, counts, and relative coords
-            for j, k in enumerate(neighbors_i[sorted_indices]):
-                adata_dict['gene_tokens_neighborhood'][i] = np.hstack(
-                    (adata_dict['gene_tokens_neighborhood'][i],
-                     adata_dict['gene_tokens_cell_neigh'][k]))
-                adata_dict['gene_expr_neighborhood'][i] = np.hstack(
-                    (adata_dict['gene_expr_neighborhood'][i],
-                     adata_dict['gene_expr_cell_neigh'][k]))
-                adata_dict['seg_tokens_neighborhood'][i] = np.hstack(
-                    (adata_dict['seg_tokens_neighborhood'][i],
-                     [j + 2] * len(adata_dict['gene_tokens_cell_neigh'][k])))
+            # Build each distance-sorted neighborhood sequence with a SINGLE
+            # concatenation per cell. Previously np.hstack was called once per
+            # neighbor, reallocating and copying the growing array each time
+            # (O(neighbors^2) and high peak memory).
+            gene_token_parts = [adata_dict['gene_tokens_neighborhood'][i]]
+            gene_expr_parts = [adata_dict['gene_expr_neighborhood'][i]]
+            seg_token_parts = [adata_dict['seg_tokens_neighborhood'][i]]
+            for j, k in enumerate(ordered_neighbors):
+                neigh_tokens = gene_tokens_cell_neigh[k]
+                gene_token_parts.append(neigh_tokens)
+                gene_expr_parts.append(gene_expr_cell_neigh[k])
+                seg_token_parts.append([j + 2] * len(neigh_tokens))
+            adata_dict['gene_tokens_neighborhood'][i] = np.hstack(
+                gene_token_parts)
+            adata_dict['gene_expr_neighborhood'][i] = np.hstack(
+                gene_expr_parts)
+            adata_dict['seg_tokens_neighborhood'][i] = np.hstack(
+                seg_token_parts)
 
-                adata_dict['rel_x_coord'][i].extend([
-                    (adata.obsm['spatial'][k, 0] -
-                     adata.obsm['spatial'][i, 0]
-                     ).tolist()])
-                adata_dict['rel_y_coord'][i].extend([
-                    (adata.obsm['spatial'][k, 1] -
-                     adata.obsm['spatial'][i, 1]
-                    ).tolist()])
+            # Relative coordinates of each (distance-sorted) neighbor
+            adata_dict['rel_x_coord'][i].extend(
+                (coords[ordered_neighbors, 0] - coords[i, 0]).tolist())
+            adata_dict['rel_y_coord'][i].extend(
+                (coords[ordered_neighbors, 1] - coords[i, 1]).tolist())
 
-                #adata_dict['cell_total_counts'][i].append(adata.X[k].sum())
-                if self.add_neigh_cell_ids:
+            if self.add_neigh_cell_ids:
+                for k in ordered_neighbors:
                     adata_dict['cell_ids'][i].extend(
-                        [adata.obs['cell_id'].values.tolist()[k]
-                        ] * self.seq_len_cell)
+                        [cell_id_list[k]] * self.seq_len_cell)
 
         del adata_dict['gene_tokens_cell_neigh']
         del adata_dict['gene_expr_cell_neigh']
