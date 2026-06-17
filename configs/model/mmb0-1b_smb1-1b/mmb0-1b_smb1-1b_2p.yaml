@@ -23,7 +23,7 @@ data:
   stratify: False
   seq_len_cell: 64 # 256, 64, 1024
   seq_len_neighborhood: 640 # 2560, 640, 10240, 1024
-  n_segments: 11 # 11
+  n_segments: 11 # 11, 17
   sampling_strategy: null
   batch_size: 32 # 32
   num_workers: 16 
@@ -42,7 +42,7 @@ meta:
   count_encoding: 'mlp' # 'value_bins', 'mlp'
   n_value_bins: 20
   cell_pos_enc: 'segment'
-  enc_depth: 3
+  enc_depth: 6
   enc_emb_dim: 768
   pred_depth: 1
   pred_emb_dim: 768 # 384
@@ -75,14 +75,14 @@ optimization:
   warmup: 3
   epochs: 300
   ema:
-  - 0.995
+  - 0.998 # 0.998
   - 1.0
   start_lr: 2.0e-05 # 2.0e-05, 1.0e-06 
   lr: 6.0e-05 # 2.0e-05, 0.000625, 6.0e-05
   final_lr: 2.0e-05 # 2.0e-05, 1.0e-06
   weight_decay: 0.04
   final_weight_decay: 0.4
-  ipe_scale: 1.25
+  ipe_scale: 1.0
   clip_grad: 2.0
   lambda_var: 0.
   lambda_cov: 0.
