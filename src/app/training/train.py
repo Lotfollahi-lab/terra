@@ -42,7 +42,8 @@ from tqdm import tqdm
 from app.utils import (build_batch_classifier_head,
                        init_model, init_opt, load_checkpoint,
                        parse_distribution_alignment_kwargs,
-                       parse_protein_init_kwargs)
+                       parse_protein_init_kwargs,
+                       resolve_gene_panel)
 from nichejepa.models.batch_classifier import (
     grad_reverse, mean_pool_cell_embedding)
 from nichejepa.models.cycle_consistency import (
@@ -608,6 +609,18 @@ def train(args: dict,
     n_special_tokens = len(special_tokens)
     seq_len = seq_len_cell + seq_len_neighborhood + n_special_tokens
 
+    # Gene-panel-size conditioning + (training-time) gene-panel subsampling.
+    # gene_panel_pos is derived from the FINAL special-token list so it matches
+    # what the dataset/collator/model use. All no-ops unless 'gene_panel' is in
+    # special_tokens and gene_panel_subsample is set.
+    gene_panel_cond, gene_panel_pos = resolve_gene_panel(special_tokens)
+    gene_panel_subsample = args['data'].get('gene_panel_subsample', False)
+    gene_panel_subsample_min_ratio = args['data'].get(
+        'gene_panel_subsample_min_ratio', 0.25)
+    gene_panel_subsample_max_ratio = args['data'].get(
+        'gene_panel_subsample_max_ratio', 1.0)
+    panel_size_norm = args['data'].get('panel_size_norm', 1.0)
+
     # Set multiprocessing start method
     try:
         mp.set_start_method("spawn")
@@ -784,6 +797,8 @@ def train(args: dict,
         nz_spc=nz_spc,
         new_spc=new_spc,
         mlp_bias=mlp_bias,
+        gene_panel_cond=gene_panel_cond,
+        gene_panel_pos=gene_panel_pos,
         protein_init_kwargs=protein_init_kwargs,
         laplacian_k=laplacian_k,
         laplacian_sigma=laplacian_sigma,
@@ -811,7 +826,8 @@ def train(args: dict,
             sample_segments=sample_segments,
             sample_gene_masks=True,
             restrict_special_attention=restrict_special_attention,
-            special_token_pad_ratio=special_token_pad_ratio)
+            special_token_pad_ratio=special_token_pad_ratio,
+            gene_panel_pos=gene_panel_pos)
     elif cell_masking:
        mask_collator = CellMaskCollator(
             n_targets=n_targets,
@@ -840,7 +856,11 @@ def train(args: dict,
                 n_nonzero_tokens_list=nz,
                 include_cell_id=False,
                 sep_gene_tokens_neb=sep_gene_tokens_neb,
-                nz_spc=nz_spc)
+                nz_spc=nz_spc,
+                gene_panel_subsample=gene_panel_subsample,
+                gene_panel_subsample_min_ratio=gene_panel_subsample_min_ratio,
+                gene_panel_subsample_max_ratio=gene_panel_subsample_max_ratio,
+                panel_size_norm=panel_size_norm)
             train_cell_datasets.append(cell_d)
 
     else:
@@ -857,7 +877,11 @@ def train(args: dict,
             n_nonzero_tokens_list=n_nonzero_tokens,
             include_cell_id=False,
             sep_gene_tokens_neb=sep_gene_tokens_neb,
-            nz_spc=nz_spc)
+            nz_spc=nz_spc,
+            gene_panel_subsample=gene_panel_subsample,
+            gene_panel_subsample_min_ratio=gene_panel_subsample_min_ratio,
+            gene_panel_subsample_max_ratio=gene_panel_subsample_max_ratio,
+            panel_size_norm=panel_size_norm)
 
     if isinstance(train_dataset, list):
         train_loaders = []

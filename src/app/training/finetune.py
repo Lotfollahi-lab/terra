@@ -7,7 +7,7 @@ import torch
 from tqdm import tqdm
 
 from app.utils import (init_model, load_checkpoint, parse_arch_kwargs,
-                       parse_protein_init_kwargs)
+                       parse_protein_init_kwargs, resolve_gene_panel)
 from nichejepa.datasets.cell_datasets import CellBaseDataset
 from nichejepa.datasets.dataloaders import init_dataloader_and_sampler
 from nichejepa.models.modules import ClassificationModel
@@ -245,6 +245,18 @@ def finetune(args: dict,
     # behavior versus how it was trained.
     arch_kwargs = parse_arch_kwargs(args)
 
+    # Gene-panel-size conditioning + (optional) subsampling. Derived from the
+    # FINAL special-token list so the model arch matches the checkpoint and
+    # the dataset/collator agree on the gene_panel slot. No-ops unless
+    # 'gene_panel' is configured.
+    gene_panel_cond, gene_panel_pos = resolve_gene_panel(special_tokens)
+    gene_panel_subsample = args['data'].get('gene_panel_subsample', False)
+    gene_panel_subsample_min_ratio = args['data'].get(
+        'gene_panel_subsample_min_ratio', 0.25)
+    gene_panel_subsample_max_ratio = args['data'].get(
+        'gene_panel_subsample_max_ratio', 1.0)
+    panel_size_norm = args['data'].get('panel_size_norm', 1.0)
+
     # Initialize target encoder
     target_encoder, _ = init_model(
         gt_type=gt_type,
@@ -266,6 +278,8 @@ def finetune(args: dict,
         use_flash_attention=use_flash_attention,
         use_layer_norm=use_layer_norm,
         sep_gene_tokens_neb=sep_gene_tokens_neb,
+        gene_panel_cond=gene_panel_cond,
+        gene_panel_pos=gene_panel_pos,
         protein_init_kwargs=protein_init_kwargs,
         **arch_kwargs)
 
@@ -287,7 +301,11 @@ def finetune(args: dict,
         sampling_strategy=None,
         n_nonzero_tokens_list=n_nonzero_tokens,
         include_cell_id=False,
-        sep_gene_tokens_neb=sep_gene_tokens_neb)
+        sep_gene_tokens_neb=sep_gene_tokens_neb,
+        gene_panel_subsample=gene_panel_subsample,
+        gene_panel_subsample_min_ratio=gene_panel_subsample_min_ratio,
+        gene_panel_subsample_max_ratio=gene_panel_subsample_max_ratio,
+        panel_size_norm=panel_size_norm)
 
     loader, sampler = init_dataloader_and_sampler(
         cell_dataset=cell_dataset,

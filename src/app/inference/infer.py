@@ -22,7 +22,7 @@ from pyensembl import EnsemblRelease
 from scipy.sparse import issparse
 
 from app.utils import (init_model, load_checkpoint, parse_arch_kwargs,
-                       parse_protein_init_kwargs)
+                       parse_protein_init_kwargs, resolve_gene_panel)
 from nichejepa.datasets.cell_datasets import CellBaseDataset, init_cell_dataset
 from nichejepa.datasets.dataloaders import init_dataloader_and_sampler
 from nichejepa.masks.block_masking  import BlockMaskCollator
@@ -284,6 +284,10 @@ def infer(args: dict,
     load_path = (os.path.join(load_folder_path, r_file) if r_file is not None 
         else latest_path)
 
+    # Gene-panel-size conditioning (no-op unless 'gene_panel' is configured).
+    gene_panel_cond, gene_panel_pos = resolve_gene_panel(special_tokens)
+    panel_size_norm = args['data'].get('panel_size_norm', 1.0)
+
     # Initialize encoder, predictor, and target encoder
     target_encoder, _ = init_model(
         gt_type=gt_type,
@@ -310,6 +314,8 @@ def infer(args: dict,
         pos_learnable=pos_learnable,
         nz_spc=nz_spc,
         mlp_bias=mlp_bias,
+        gene_panel_cond=gene_panel_cond,
+        gene_panel_pos=gene_panel_pos,
         protein_init_kwargs=parse_protein_init_kwargs(args, token_dict),
         **parse_arch_kwargs(args))
 
@@ -331,7 +337,8 @@ def infer(args: dict,
             sample_segments=False,
             sample_gene_masks=False,
             restrict_special_attention=restrict_special_attention,
-            special_token_pad_ratio=1.0)
+            special_token_pad_ratio=1.0,
+            gene_panel_pos=gene_panel_pos)
     elif cell_masking:
        mask_collator = CellMaskCollator(
             n_targets=n_targets,
@@ -364,7 +371,8 @@ def infer(args: dict,
         # _add_special_seq. This is behaviour-preserving for the embeddings
         # because the collator below uses special_token_pad_ratio=1.0 and
         # zeroes those positions regardless.
-        pad_special_tokens=True)
+        pad_special_tokens=True,
+        panel_size_norm=panel_size_norm)
 
     loader, _ = init_dataloader_and_sampler(
         cell_dataset=cell_dataset,

@@ -2258,10 +2258,23 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
                  mlp_bias: bool = True,
                  n_value_bins: int | None = 100,
                  pos_learnable: bool = False,
+                 gene_panel_cond: bool = False,
+                 gene_panel_pos: int | None = None,
                  **base_encoder_kwargs
                  ):
         super().__init__(**base_encoder_kwargs)
         self.n_special_values = n_special_values
+        # Gene-panel-size conditioning. When enabled, the special-token slot
+        # at ``gene_panel_pos`` carries a CONTINUOUS (effective) panel-size
+        # scalar -- read from the non-maskable ``batch['panel_size']`` field --
+        # embedded by a dedicated MLP, instead of the discrete
+        # ``special_value_embed`` lookup. Panel size is an ordered numeric
+        # quantity, so a continuous embedding preserves magnitude/ordering and
+        # generalizes to unseen panel sizes. Off by default -> no new params
+        # and behaviour is unchanged.
+        self.gene_panel_cond = bool(gene_panel_cond)
+        self.gene_panel_pos = gene_panel_pos
+        self.panel_size_embed = None
         self.count_encoding = count_encoding
         self.mlp_bias = mlp_bias
         self.n_value_bins = n_value_bins
@@ -2298,7 +2311,7 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
         elif self.count_encoding == 'mlp':
             hidden_dim = int(self.embed_dim/2)
             self.value_embed = MLP(
-                in_features=1, 
+                in_features=1,
                 hidden_features=hidden_dim,
                 out_features=self.embed_dim,
                 bias=self.mlp_bias,
@@ -2308,6 +2321,36 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
                 1 + 1 + self.n_special_values + (105 if self.api_version == 'v1' else 0),
                 self.embed_dim,
                 padding_idx=0)
+
+        # Dedicated continuous embedding for the gene-panel-size scalar.
+        if self.gene_panel_cond:
+            if self.gene_panel_pos is None:
+                raise ValueError(
+                    "gene_panel_cond=True requires gene_panel_pos (the "
+                    "sequence index of the 'gene_panel' special token).")
+            self.panel_size_embed = MLP(
+                in_features=1,
+                hidden_features=int(self.embed_dim / 2),
+                out_features=self.embed_dim,
+                bias=self.mlp_bias,
+                act_layer=nn.GELU)
+
+    def _apply_panel_size_emb(self,
+                              value_emb: torch.Tensor,
+                              batch: Mapping[str, torch.Tensor],
+                              ) -> torch.Tensor:
+        """Override the gene-panel special-token slot's value embedding with a
+        continuous embedding of the (normalized) panel-size scalar.
+
+        No-op unless gene-panel conditioning is enabled. The scalar is read
+        from ``batch['panel_size']`` ([B] or [B, 1]) -- a non-maskable field,
+        so the panel-size signal survives the collator's special-token padding
+        (which zeroes the in-sequence special slots at inference)."""
+        if self.panel_size_embed is None or batch.get('panel_size') is None:
+            return value_emb
+        ps = batch['panel_size'].to(value_emb.dtype).reshape(-1, 1)  # [B, 1]
+        value_emb[:, self.gene_panel_pos, :] = self.panel_size_embed(ps)
+        return value_emb
 
     def forward(self,
                 batch: dict[torch.Tensor],
@@ -2400,6 +2443,9 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
         else:
             raise ValueError(
                 f"Unknown count_encoding: {self.count_encoding}.")
+
+        # Continuous gene-panel-size conditioning (no-op when disabled).
+        value_emb = self._apply_panel_size_emb(value_emb, batch)
 
         # Add positional, segment, and gene embeddings to value embeddings
         x = seg_emb + pos_emb + token_emb + value_emb
@@ -2538,6 +2584,9 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
         else:
             raise ValueError(
                 f"Unknown count_encoding: {self.count_encoding}.")
+
+        # Continuous gene-panel-size conditioning (no-op when disabled).
+        value_emb = self._apply_panel_size_emb(value_emb, batch)
 
         # Add segment, positional, and gene embeddings to value embeddings
         x = seg_emb + pos_emb + token_emb + value_emb # [B, L, D]

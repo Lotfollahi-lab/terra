@@ -2,8 +2,16 @@
 build-backend = "hatchling.build"
 requires = ["hatchling"]
 
+[tool.hatch.build.targets.wheel]
+# PyPI distribution name is 'terra-st', but the importable top-level packages
+# are 'nichejepa' (library) and 'app' (application layer). List them
+# explicitly: hatchling can no longer infer the package from the project name
+# once they differ. ('app' is a PEP 420 namespace package -- no top-level
+# __init__.py -- but its inference/training/utils subpackages each have one.)
+packages = ["src/nichejepa", "src/app"]
+
 [project]
-name = "nichejepa"
+name = "terra-st"
 version = "0.0.0"
 description = "Spatial transcriptomics foundation model"
 readme = "README.md"

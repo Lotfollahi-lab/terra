@@ -54,7 +54,8 @@ class BlockMaskCollator:
                  cell_segment_sampling_ratio: float = 0.09090909090909091,
                  special_token_pad_ratio: float = 0.,
                  sample_gene_masks: bool = True,
-                 restrict_special_attention: bool = False):
+                 restrict_special_attention: bool = False,
+                 gene_panel_pos: int | None = None):
         self.n_targets = n_targets
         self.n_contexts = n_contexts
         self.n_segments = n_segments
@@ -68,6 +69,11 @@ class BlockMaskCollator:
         self.restrict_special_attention = restrict_special_attention
         self.cell_segment_sampling_ratio = cell_segment_sampling_ratio
         self.special_token_pad_ratio = special_token_pad_ratio
+        # Sequence index of the 'gene_panel' special token, if any. This slot
+        # is EXEMPT from special-token padding: its panel-size conditioning
+        # must reach the model at inference (where special_token_pad_ratio=1.0
+        # zeroes the other special slots, e.g. 'batch' for batch-invariance).
+        self.gene_panel_pos = gene_panel_pos
         print("Special token pad ratio:", self.special_token_pad_ratio)
 
     def _sample_gene_mask(
@@ -223,22 +229,25 @@ class BlockMaskCollator:
         if self.n_special_tokens > 0:
             pad_special_tokens = torch.rand(
                 1).item() < self.special_token_pad_ratio
-            # Pad special tokens based on the special token pad ratio
+            # Pad special tokens based on the special token pad ratio. The
+            # gene_panel slot (if configured) is EXEMPT so its panel-size
+            # conditioning survives (see __init__).
             if pad_special_tokens:
-                if 'tokens' in collated:
-                    collated['tokens'][:, :self.n_special_tokens] = 0
-                if 'segments' in collated:
-                    collated['segments'][:, :self.n_special_tokens] = 0
-                if 'positions' in collated:
-                    collated['positions'][:, :self.n_special_tokens] = 0
-                if 'values' in collated:
-                    collated['values'][:, :self.n_special_tokens] = 0.0
-                if 'rel_x_coords' in collated:
-                    collated['rel_x_coords'][
-                        :, :self.n_special_tokens] = float('-inf')
-                if 'rel_y_coords' in collated:
-                    collated['rel_y_coords'][
-                    :, :self.n_special_tokens] = float('-inf')
+                pad_idx = [i for i in range(self.n_special_tokens)
+                           if i != self.gene_panel_pos]
+                if pad_idx:
+                    if 'tokens' in collated:
+                        collated['tokens'][:, pad_idx] = 0
+                    if 'segments' in collated:
+                        collated['segments'][:, pad_idx] = 0
+                    if 'positions' in collated:
+                        collated['positions'][:, pad_idx] = 0
+                    if 'values' in collated:
+                        collated['values'][:, pad_idx] = 0.0
+                    if 'rel_x_coords' in collated:
+                        collated['rel_x_coords'][:, pad_idx] = float('-inf')
+                    if 'rel_y_coords' in collated:
+                        collated['rel_y_coords'][:, pad_idx] = float('-inf')
         else:
             pad_special_tokens = False
 

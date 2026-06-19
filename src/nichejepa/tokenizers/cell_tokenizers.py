@@ -1060,7 +1060,15 @@ class CellGraphTokenizer(CellBaseTokenizer):
         del adata_dict['gene_expr_cell_neigh']
 
         # Add cell IDs for collecting metadata at inference time
-        adata_dict['cell_id'] = adata.obs['cell_id'].values.tolist() 
+        adata_dict['cell_id'] = adata.obs['cell_id'].values.tolist()
+
+        # Native gene-panel size for this file (number of genes in the
+        # harmonized panel). Stored unconditionally (independent of
+        # include_special_tokens) because it is the inference-consistent
+        # reference for gene-panel-size conditioning / subsampling: at
+        # training the model conditions on round(keep_ratio * panel_size),
+        # at inference on the real panel_size.
+        adata_dict['panel_size'] = [len(adata.var_names)] * n_cells
 
         #adata_dict['batch_token'] = [self.token_dict['spt_batch']] * n_cells
         #adata_dict['gene_panel_token'] = [

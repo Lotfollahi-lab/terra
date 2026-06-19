@@ -420,6 +420,21 @@ def load_checkpoint(device: str,
     return encoder, predictor, target_encoder, opt, scaler, epoch, iter_number
 
 
+def resolve_gene_panel(special_tokens: list[str] | None
+                       ) -> tuple[bool, int | None]:
+    """Return ``(gene_panel_cond, gene_panel_pos)`` for a special-token list.
+
+    The 'gene_panel' special token (if present) carries continuous panel-size
+    conditioning. ``_add_special_seq`` prepends special tokens in list order,
+    so the token at list index ``j`` ends at sequence position
+    ``len(special_tokens) - 1 - j``. Pass the SAME (final) special-token list
+    used to build the dataset / collator so the position is consistent.
+    """
+    if not special_tokens or 'gene_panel' not in special_tokens:
+        return False, None
+    return True, len(special_tokens) - 1 - special_tokens.index('gene_panel')
+
+
 def init_model(gt_type: Literal['rank', 'count', 'combined'],
                count_encoding: Literal['value_bins', 'mlp'],
                n_value_bins: int,
@@ -447,6 +462,8 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
                nz_spc: bool = False,
                new_spc: bool = False,
                mlp_bias: bool = False,
+               gene_panel_cond: bool = False,
+               gene_panel_pos: int | None = None,
                protein_init_kwargs: dict | None = None,
                laplacian_k: int = 8,
                laplacian_sigma: float = 1.0,
@@ -586,6 +603,8 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
         pos_learnable=pos_learnable,
         nz_spc=nz_spc,
         mlp_bias=mlp_bias,
+        gene_panel_cond=gene_panel_cond,
+        gene_panel_pos=gene_panel_pos,
         protein_init_kwargs=protein_init_kwargs,
         laplacian_k=laplacian_k,
         laplacian_sigma=laplacian_sigma,

@@ -22,7 +22,7 @@ from pyensembl import EnsemblRelease
 from scipy.sparse import issparse
 
 from app.utils import (init_model, load_checkpoint, parse_arch_kwargs,
-                       parse_protein_init_kwargs)
+                       parse_protein_init_kwargs, resolve_gene_panel)
 from nichejepa.datasets.cell_datasets import CellBaseDataset, init_cell_dataset
 from nichejepa.datasets.dataloaders import init_dataloader_and_sampler
 from nichejepa.masks.block_masking  import BlockMaskCollator
@@ -146,6 +146,11 @@ def embed_dataset(dataset: Dataset,
         device = torch.device('cuda:0')
         torch.cuda.set_device(device)
 
+    # Gene-panel-size conditioning (no-op unless 'gene_panel' is configured).
+    gene_panel_cond, gene_panel_pos = resolve_gene_panel(
+        model_config['meta']['special_tokens'])
+    panel_size_norm = model_config['data'].get('panel_size_norm', 1.0)
+
     # Initialize encoder, predictor, and target encoder
     target_encoder, _ = init_model(
         gt_type=model_config['meta']['gt_type'],
@@ -171,6 +176,8 @@ def embed_dataset(dataset: Dataset,
         pos_learnable=model_config['meta']['pos_learnable'],
         nz_spc=model_config['data'].get('nz_spc', False),
         mlp_bias=model_config['meta'].get('mlp_bias', True),
+        gene_panel_cond=gene_panel_cond,
+        gene_panel_pos=gene_panel_pos,
         protein_init_kwargs=parse_protein_init_kwargs(
             model_config, token_dict),
         **parse_arch_kwargs(model_config))
@@ -192,7 +199,8 @@ def embed_dataset(dataset: Dataset,
         sample_segments=False,
         sample_gene_masks=False,
         restrict_special_attention=model_config['meta']['restrict_special_attention'],
-        special_token_pad_ratio=1.0)
+        special_token_pad_ratio=1.0,
+        gene_panel_pos=gene_panel_pos)
         
     # Create torch dataset
     cell_dataset = init_cell_dataset(
@@ -208,7 +216,8 @@ def embed_dataset(dataset: Dataset,
         n_nonzero_tokens_list=[],
         include_cell_id=True,
         sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'],
-        pad_special_tokens=True,)
+        pad_special_tokens=True,
+        panel_size_norm=panel_size_norm)
 
     # Initialize dataloader
     loader, _ = init_dataloader_and_sampler(
@@ -674,6 +683,11 @@ def gene_embed_dataset(dataset: Dataset,
         device = torch.device('cuda:0')
         torch.cuda.set_device(device)
 
+    # Gene-panel-size conditioning (no-op unless 'gene_panel' is configured).
+    gene_panel_cond, gene_panel_pos = resolve_gene_panel(
+        model_config['meta']['special_tokens'])
+    panel_size_norm = model_config['data'].get('panel_size_norm', 1.0)
+
     # Initialize encoder, predictor, and target encoder
     target_encoder, _ = init_model(
         gt_type=model_config['meta']['gt_type'],
@@ -699,6 +713,8 @@ def gene_embed_dataset(dataset: Dataset,
         pos_learnable=model_config['meta']['pos_learnable'],
         nz_spc=model_config['data'].get('nz_spc', False),
         mlp_bias=model_config['meta'].get('mlp_bias', True),
+        gene_panel_cond=gene_panel_cond,
+        gene_panel_pos=gene_panel_pos,
         protein_init_kwargs=parse_protein_init_kwargs(
             model_config, token_dict),
         **parse_arch_kwargs(model_config),
@@ -721,7 +737,8 @@ def gene_embed_dataset(dataset: Dataset,
         sample_segments=False,
         sample_gene_masks=False,
         restrict_special_attention=model_config['meta']['restrict_special_attention'],
-        special_token_pad_ratio=1.0)
+        special_token_pad_ratio=1.0,
+        gene_panel_pos=gene_panel_pos)
         
     # Create torch dataset
     cell_dataset = init_cell_dataset(
@@ -737,7 +754,8 @@ def gene_embed_dataset(dataset: Dataset,
         n_nonzero_tokens_list=[],
         include_cell_id=True,
         sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'],
-        pad_special_tokens=True,)
+        pad_special_tokens=True,
+        panel_size_norm=panel_size_norm)
 
     # Initialize dataloader
     loader, _ = init_dataloader_and_sampler(

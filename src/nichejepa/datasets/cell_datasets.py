@@ -38,6 +38,10 @@ class CellBaseDataset(Dataset):
                  sep_gene_tokens_neb: bool = False,
                  nz_spc: bool = True,
                  pad_special_tokens: bool = False,
+                 gene_panel_subsample: bool = False,
+                 gene_panel_subsample_min_ratio: float = 0.25,
+                 gene_panel_subsample_max_ratio: float = 1.0,
+                 panel_size_norm: float = 1.0,
                  ):
         """
         Torch CellBaseDataset class.
@@ -120,6 +124,20 @@ class CellBaseDataset(Dataset):
         self.sep_gene_tokens_neb = sep_gene_tokens_neb
         self.nz_spc = nz_spc
         self.pad_special_tokens = pad_special_tokens
+
+        # Gene-panel subsampling (training augmentation) + panel-size
+        # conditioning. ``gene_panel_active`` is driven purely by whether the
+        # 'gene_panel' special token is configured, so the conditioning scalar
+        # (item_dict['panel_size']) is produced at BOTH training and inference;
+        # ``gene_panel_subsample`` additionally drops genes (training only).
+        self.gene_panel_active = 'gene_panel' in self.special_tokens
+        self.gene_panel_subsample = gene_panel_subsample
+        self.gene_panel_subsample_min_ratio = gene_panel_subsample_min_ratio
+        self.gene_panel_subsample_max_ratio = gene_panel_subsample_max_ratio
+        # Divisor applied to the (effective) panel size before it is embedded,
+        # to keep the MLP input ~O(1). Set to a typical full panel size for the
+        # corpus (e.g. 1000). Default 1.0 = raw count.
+        self.panel_size_norm = panel_size_norm
 
         # Auto-detect per-cell metadata columns (anything ending in
         # ``_value`` in the HF dataset features). These are exposed
@@ -278,6 +296,92 @@ class CellBaseDataset(Dataset):
             if val.numel() == 0:
                 continue
             item_dict[key] = val[0].long()
+        return item_dict
+
+    def _apply_gene_panel(self,
+                          item: dict,
+                          item_dict: dict,
+                          ) -> dict:
+        """Gene-panel subsampling (training) + panel-size conditioning.
+
+        No-op unless the 'gene_panel' special token is configured. When
+        active, attaches a continuous, normalized panel-size scalar to
+        ``item_dict['panel_size']`` (consumed by the model's panel_size_embed
+        at the gene_panel slot) and a placeholder ``item['gene_panel_value']``
+        for the in-sequence value channel (the model overrides that slot).
+
+        When ``gene_panel_subsample`` is on, additionally drops the SAME random
+        subset of genes across ALL segments (panel-consistent simulation of a
+        smaller measured panel) and sets the conditioning value to the
+        simulated effective panel size ``round(keep_ratio * native_panel)``.
+        Must run AFTER the per-segment sequence is assembled/padded and BEFORE
+        ``_add_special_seq``.
+        """
+        if not self.gene_panel_active:
+            return item_dict
+
+        # Native panel size for this cell's dataset (stored at tokenization).
+        panel_full = item.get('panel_size')
+        if panel_full is None:
+            raise KeyError(
+                "'gene_panel' is configured but the tokenized dataset has no "
+                "'panel_size' column. Re-tokenize with the updated tokenizer.")
+        if isinstance(panel_full, torch.Tensor):
+            panel_full = panel_full.reshape(-1)[0].item()
+        elif isinstance(panel_full, (list, tuple)):
+            panel_full = panel_full[0]
+        panel_full = float(panel_full)
+
+        effective = panel_full
+        if self.gene_panel_subsample:
+            lo = self.gene_panel_subsample_min_ratio
+            hi = self.gene_panel_subsample_max_ratio
+            keep_ratio = lo + (hi - lo) * float(torch.rand(1).item())
+
+            tokens = item_dict['tokens']
+            nz = tokens != 0
+            # Map neighbor-shifted tokens back to their base gene id so a
+            # dropped gene is dropped consistently in the cell AND neighbor
+            # segments (panel-consistent).
+            if self.sep_gene_tokens_neb:
+                base_ids = torch.where(
+                    tokens >= self.vocab_size, tokens - self.vocab_size, tokens)
+            else:
+                base_ids = tokens
+            unique_ids = torch.unique(base_ids[nz])
+            n_unique = int(unique_ids.numel())
+            if n_unique > 0:
+                kept_ids = unique_ids[torch.rand(n_unique) < keep_ratio]
+                drop_pos = nz & ~torch.isin(base_ids, kept_ids)
+                if drop_pos.any():
+                    item_dict['tokens'] = torch.where(
+                        drop_pos, torch.zeros_like(tokens), tokens)
+                    if 'values' in item_dict:
+                        item_dict['values'] = item_dict['values'].masked_fill(
+                            drop_pos, 0.0)
+                    if 'positions' in item_dict:
+                        item_dict['positions'] = item_dict[
+                            'positions'].masked_fill(drop_pos, 0)
+                    item_dict['segments'] = item_dict['segments'].masked_fill(
+                        drop_pos, 0)
+                    if self.cell_pos_enc in _COORD_BASED_POS_ENCS:
+                        item_dict['rel_x_coords'] = item_dict[
+                            'rel_x_coords'].masked_fill(drop_pos, float('-inf'))
+                        item_dict['rel_y_coords'] = item_dict[
+                            'rel_y_coords'].masked_fill(drop_pos, float('-inf'))
+            effective = max(1.0, float(round(keep_ratio * panel_full)))
+
+        item_dict['panel_size'] = torch.tensor(
+            effective / self.panel_size_norm, dtype=torch.float32)
+        # Ensure _add_special_seq has a gene_panel value to prepend even when
+        # the tokenized dataset has no 'gene_panel_value' column (e.g.
+        # include_special_tokens=False). Only set a placeholder when ABSENT, so
+        # we do NOT clobber the real spv_gene_panel* metadata value that
+        # _attach_metadata exposes for downstream batch-correction routing. The
+        # model overrides this slot with the continuous panel_size embedding
+        # regardless of the in-sequence value.
+        if 'gene_panel_value' not in item:
+            item['gene_panel_value'] = torch.tensor([0])
         return item_dict
 
     def _sample_seq(self,
@@ -641,7 +745,12 @@ class CellGraphDataset(CellBaseDataset):
                 item_dict['rel_y_coords'] = F.pad(
                     item_dict['rel_y_coords'],
                     (0, pad_len),
-                    value=float('-inf'))                     
+                    value=float('-inf'))
+
+        # Gene-panel subsampling + panel-size conditioning (no-op unless the
+        # 'gene_panel' special token is configured). Must run on the assembled
+        # gene-token sequence, before special tokens are prepended.
+        item_dict = self._apply_gene_panel(item=item, item_dict=item_dict)
 
         # Add special tokens
         if self.n_special_tokens > 0:
@@ -661,6 +770,16 @@ class CellGraphDataset(CellBaseDataset):
                 # n_special_tokens**2-sized prepend for >1, which
                 # misaligns tokens vs coords at inference.
                 for spc_tk in self.special_tokens:
+                    # Exempt 'gene_panel': its token must stay non-zero so the
+                    # slot is NOT masked out of attention (masks_attention is
+                    # tokens != 0), and its panel-size signal must reach the
+                    # model at inference. The panel size rides a separate
+                    # non-maskable field (item_dict['panel_size'], set in
+                    # _apply_gene_panel) consumed by the model's
+                    # panel_size_embed, so the in-sequence value stays a
+                    # placeholder.
+                    if spc_tk == 'gene_panel':
+                        continue
                     item[f'{spc_tk}_token'] = torch.tensor([0])
                     item[f'{spc_tk}_value'] = torch.tensor([0])
             item_dict = self._add_special_seq(item=item,
@@ -873,6 +992,10 @@ class CellNeighborhoodDataset(CellBaseDataset):
         if self.gt_type != 'rank':
             item_dict['values'] = torch.cat([values_cell, values_neigh], dim=0)
 
+        # Gene-panel subsampling + panel-size conditioning (no-op unless the
+        # 'gene_panel' special token is configured).
+        item_dict = self._apply_gene_panel(item=item, item_dict=item_dict)
+
         # Add special tokens
         if self.n_special_tokens > 0:
             if self.pad_special_tokens:
@@ -882,6 +1005,16 @@ class CellNeighborhoodDataset(CellBaseDataset):
                 # `[0] * n_special_tokens` here was the same off-by-N
                 # bug -- works at n_special_tokens=1, breaks for >1.
                 for spc_tk in self.special_tokens:
+                    # Exempt 'gene_panel': its token must stay non-zero so the
+                    # slot is NOT masked out of attention (masks_attention is
+                    # tokens != 0), and its panel-size signal must reach the
+                    # model at inference. The panel size rides a separate
+                    # non-maskable field (item_dict['panel_size'], set in
+                    # _apply_gene_panel) consumed by the model's
+                    # panel_size_embed, so the in-sequence value stays a
+                    # placeholder.
+                    if spc_tk == 'gene_panel':
+                        continue
                     item[f'{spc_tk}_token'] = torch.tensor([0])
                     item[f'{spc_tk}_value'] = torch.tensor([0])
             item_dict = self._add_special_seq(item=item,
