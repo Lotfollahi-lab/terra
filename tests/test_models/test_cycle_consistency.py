@@ -3,7 +3,7 @@
 import pytest
 import torch
 
-from nichejepa.models.cycle_consistency import (
+from terra.models.cycle_consistency import (
     cycle_consistency_loss,
     make_swapped_batch,
 )

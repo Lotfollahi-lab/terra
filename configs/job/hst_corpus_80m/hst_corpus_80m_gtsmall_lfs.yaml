@@ -13,15 +13,15 @@ infiniband:
   NCCL_IB_DISABLE: 0  # 1: Disable InfiniBand, 0: Enable InfiniBand
 
 environment:
-  ENV_PATH: "/nfs/users/nfs_s/sb75/.venvs/nichejepa"  # Path to the environment to be activated.
+  ENV_PATH: "/nfs/users/nfs_s/sb75/.venvs/terra"  # Path to the environment to be activated.
 
 artifact:
-  ARTIFACT_LOCATION: "/lustre/scratch126/cellgen/lotfollahi/sb75/nichejepa-reproducibility/artifacts/hst_corpus_80m"  # Path to store the artifacts.
-  EXPERIMENT_NAME: "nichejepa_pretraining"  # Name of the experiment.
+  ARTIFACT_LOCATION: "/lustre/scratch126/cellgen/lotfollahi/sb75/terra-reproducibility/artifacts/hst_corpus_80m"  # Path to store the artifacts.
+  EXPERIMENT_NAME: "terra_pretraining"  # Name of the experiment.
   RUN_NAME: "hst_corpus_80m_gtsmall_lfs_test2"  # Name of the run.
 
 runner_script:
-  RUNNER_SCRIPT: "/nfs/team361/sb75/nichejepa/src/app/runner.sh"  # Path to the runner script.
-  TRAINING_SCRIPT_PATH: "/nfs/team361/sb75/nichejepa/src/app/main_dist.py"  # Path to the training script.
+  RUNNER_SCRIPT: "/nfs/team361/sb75/terra/src/app/runner.sh"  # Path to the runner script.
+  TRAINING_SCRIPT_PATH: "/nfs/team361/sb75/terra/src/app/main_dist.py"  # Path to the training script.
   BACKEND: "nccl"  # Backend for distributed training.
-  CONFIG_FILE: "/nfs/team361/sb75/nichejepa/configs/model/hst_corpus_80m/hst_corpus_80m_gtsmall_lfs.yaml"
+  CONFIG_FILE: "/nfs/team361/sb75/terra/configs/model/hst_corpus_80m/hst_corpus_80m_gtsmall_lfs.yaml"

@@ -3,12 +3,10 @@ build-backend = "hatchling.build"
 requires = ["hatchling"]
 
 [tool.hatch.build.targets.wheel]
-# PyPI distribution name is 'terra-st', but the importable top-level packages
-# are 'nichejepa' (library) and 'app' (application layer). List them
-# explicitly: hatchling can no longer infer the package from the project name
-# once they differ. ('app' is a PEP 420 namespace package -- no top-level
-# __init__.py -- but its inference/training/utils subpackages each have one.)
-packages = ["src/nichejepa", "src/app"]
+# Import package is 'terra' (src/terra); the 'app' application layer ships too.
+# PyPI distribution name is 'terra-st' because the bare 'terra' name is already
+# taken on PyPI (the import name 'terra' is unaffected by that).
+packages = ["src/terra", "src/app"]
 
 [project]
 name = "terra-st"
@@ -26,9 +24,9 @@ maintainers = [
     {name = "Mohammad Vali Sanian", email = "mohammad.sanian@helsinki.fi"},
 
 ]
-urls.Documentation = "https://niche-jepa.readthedocs.io/"
-urls.Source = "https://github.com/Lotfollahi-lab/niche-jepa"
-urls.Home-page = "https://github.com/Lotfollahi-lab/niche-jepa"
+urls.Documentation = "https://terra.readthedocs.io/"
+urls.Source = "https://github.com/Lotfollahi-lab/terra"
+urls.Home-page = "https://github.com/Lotfollahi-lab/terra"
 dependencies = [
     "anndata",
     "squidpy",
@@ -76,7 +74,7 @@ eval = [
 ]
 
 [tool.coverage.run]
-source = ["niche-jepa"]
+source = ["terra"]
 omit = [
     "**/test_*.py",
 ]

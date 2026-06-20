@@ -3,7 +3,7 @@
 import pytest
 import torch
 
-from nichejepa.models.distribution_alignment import (
+from terra.models.distribution_alignment import (
     compute_distribution_alignment_loss,
     coral_loss,
     mmd_loss,

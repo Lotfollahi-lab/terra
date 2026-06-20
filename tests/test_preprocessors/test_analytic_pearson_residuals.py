@@ -2,7 +2,7 @@ import numpy as np
 import math
 import scipy
 
-from nichejepa.normalizers import analytic_pearson_residuals
+from terra.normalizers import analytic_pearson_residuals
 
 
 def test_analytic_pearson_residuals():

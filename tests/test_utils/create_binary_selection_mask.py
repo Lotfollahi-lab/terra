@@ -2,7 +2,7 @@ import unittest
 
 import torch
 
-from nichejepa.utils import create_binary_selection_mask
+from terra.utils import create_binary_selection_mask
 
 
 class TestCreateBinarySelectionMask(unittest.TestCase):

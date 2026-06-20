@@ -22,12 +22,12 @@ from pyensembl import EnsemblRelease
 from scipy.sparse import issparse
 
 from app.utils import init_model, load_checkpoint
-from nichejepa.datasets.cell_datasets import CellBaseDataset, init_cell_dataset
-from nichejepa.datasets.dataloaders import init_dataloader_and_sampler
-from nichejepa.masks.block_masking  import BlockMaskCollator
-from nichejepa.masks.cell_masking import CellMaskCollator
-from nichejepa.tokenizers import cell_tokenizers
-from nichejepa.utils.embedding import (create_binary_selection_mask,
+from terra.datasets.cell_datasets import CellBaseDataset, init_cell_dataset
+from terra.datasets.dataloaders import init_dataloader_and_sampler
+from terra.masks.block_masking  import BlockMaskCollator
+from terra.masks.cell_masking import CellMaskCollator
+from terra.tokenizers import cell_tokenizers
+from terra.utils.embedding import (create_binary_selection_mask,
                                        compute_mean_unmasked_emb,
                                        compute_unmasked_rank_based_weights,
                                        collect_adata_from_folder,
@@ -35,7 +35,7 @@ from nichejepa.utils.embedding import (create_binary_selection_mask,
                                        compute_count_mean_cosine_sim,
                                        compute_sum_and_nonzero_count,
                                        batch_rowwise_distances)
-from nichejepa.utils.logging import CSVLogger
+from terra.utils.logging import CSVLogger
 from typing import Dict, List
 
 

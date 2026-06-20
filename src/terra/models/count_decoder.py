@@ -68,42 +68,43 @@ class CountDecoder(nn.Module):
         nb_means = torch.exp(log_library_size) * nb_means_normalized
         return nb_means
 
+    @staticmethod
     def loss(x: torch.Tensor,
              mu: torch.Tensor,
              theta: torch.Tensor,
              eps: float=1e-8) -> torch.Tensor:
-    """
-    Compute count reconstruction loss according to a negative binomial model,
-    which is often used to model count data such as scRNA-seq.
+        """
+        Compute count reconstruction loss according to a negative binomial model,
+        which is often used to model count data such as scRNA-seq.
 
-    Adapted from
-    https://github.com/Lotfollahi-lab/nichecompass/blob/main/src/nichecompass/modules/losses.py#L169C1-L212C19;
-    20.01.2026.
+        Adapted from
+        https://github.com/Lotfollahi-lab/nichecompass/blob/main/src/nichecompass/modules/losses.py#L169C1-L212C19;
+        20.01.2026.
 
-    Parameters
-    ----------
-    x:
-        Ground truth log counts (dim: batch_size, n_genes).
-    mu:
-        Mean of the negative binomial with positive support.
-        (dim: batch_size x n_genes)
-    theta:
-        Inverse dispersion parameter with positive support.
-        (dim: n_genes)
-    eps:
-        Numerical stability constant.
+        Parameters
+        ----------
+        x:
+            Ground truth log counts (dim: batch_size, n_genes).
+        mu:
+            Mean of the negative binomial with positive support.
+            (dim: batch_size x n_genes)
+        theta:
+            Inverse dispersion parameter with positive support.
+            (dim: n_genes)
+        eps:
+            Numerical stability constant.
 
-    Returns
-    ----------
-    nb_loss:
-        Count reconstruction loss using a negative binomial model.
-    """
-    log_theta_mu_eps = torch.log(theta + mu + eps)
-    log_likelihood_nb = (
-        theta * (torch.log(theta + eps) - log_theta_mu_eps)
-        + x * (torch.log(mu + eps) - log_theta_mu_eps)
-        + torch.lgamma(x + theta)
-        - torch.lgamma(theta)
-        - torch.lgamma(x + 1))
-    nb_loss = torch.mean(-log_likelihood_nb.sum(-1))
-    return nb_loss
+        Returns
+        ----------
+        nb_loss:
+            Count reconstruction loss using a negative binomial model.
+        """
+        log_theta_mu_eps = torch.log(theta + mu + eps)
+        log_likelihood_nb = (
+            theta * (torch.log(theta + eps) - log_theta_mu_eps)
+            + x * (torch.log(mu + eps) - log_theta_mu_eps)
+            + torch.lgamma(x + theta)
+            - torch.lgamma(theta)
+            - torch.lgamma(x + 1))
+        nb_loss = torch.mean(-log_likelihood_nb.sum(-1))
+        return nb_loss

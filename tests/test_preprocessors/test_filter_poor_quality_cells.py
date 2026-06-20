@@ -1,7 +1,7 @@
 import numpy as np
 import anndata as ad
 
-from nichejepa.preprocessors import filter_poor_quality_cells
+from terra.preprocessors import filter_poor_quality_cells
 
 
 def test_filter_poor_quality_cells():

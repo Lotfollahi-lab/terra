@@ -3,7 +3,7 @@
 import pytest
 import torch
 
-from nichejepa.models.batch_labels import extract_batch_label
+from terra.models.batch_labels import extract_batch_label
 
 
 def test_metadata_path_when_key_present():

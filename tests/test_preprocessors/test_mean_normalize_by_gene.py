@@ -1,6 +1,6 @@
 import numpy as np
 
-from nichejepa.normalizers import mean_normalize_by_gene
+from terra.normalizers import mean_normalize_by_gene
 
 
 def test_mean_normalize_by_gene():

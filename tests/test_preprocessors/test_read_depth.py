@@ -1,7 +1,7 @@
 import numpy as np
 import scipy
 
-from nichejepa.normalizers import read_depth
+from terra.normalizers import read_depth
 
 
 def test_read_depth():

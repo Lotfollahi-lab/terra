@@ -13,18 +13,18 @@ infiniband:
   NCCL_IB_DISABLE: 1  # 1: Disable InfiniBand, 0: Enable InfiniBand
 
 environment:
-  ENV_PATH: "/nfs/users/nfs_s/sb75/.venvs/nichejepa"  # Path to the environment to be activated.
+  ENV_PATH: "/nfs/users/nfs_s/sb75/.venvs/terra"  # Path to the environment to be activated.
 
 artifact:
-  ARTIFACT_LOCATION: "/nfs/team361/sb75/nichejepa-reproducibility/artifacts/mmb0-1b_smb1-1b_2p"  # Path to store the artifacts.
-  WAREHOUSE_PATH: "/nfs/team361/sb75/nichejepa-reproducibility/artifacts/mmb0-1b_smb1-1b_2p"  # Path to store the artifacts.
-  OUTPUT_DIR: "/nfs/team361/sb75/nichejepa-reproducibility/artifacts/mmb0-1b_smb1-1b_2p"  # Path to store the artifacts.
-  LOG_DIR: "/nfs/team361/sb75/nichejepa-reproducibility/artifacts/mmb0-1b_smb1-1b_2p"
+  ARTIFACT_LOCATION: "/nfs/team361/sb75/terra-reproducibility/artifacts/mmb0-1b_smb1-1b_2p"  # Path to store the artifacts.
+  WAREHOUSE_PATH: "/nfs/team361/sb75/terra-reproducibility/artifacts/mmb0-1b_smb1-1b_2p"  # Path to store the artifacts.
+  OUTPUT_DIR: "/nfs/team361/sb75/terra-reproducibility/artifacts/mmb0-1b_smb1-1b_2p"  # Path to store the artifacts.
+  LOG_DIR: "/nfs/team361/sb75/terra-reproducibility/artifacts/mmb0-1b_smb1-1b_2p"
   EXPERIMENT_NAME: "terra_mmb0-1b_smb1-1b_2p"  # Name of the experiment.
   RUN_NAME: "run324_cell_neigh_tokenizer_rank_900ep"  # Name of the run.
 
 runner_script:
-  RUNNER_SCRIPT: "/nfs/team361/sb75/nichejepa/src/app/training/train_model_lsf_mpirun_sanger.sh"  # Path to the runnaazazer script.
-  TRAINING_SCRIPT_PATH: "/nfs/team361/sb75/nichejepa/src/app/training/main.py"  # Path to the training script.
+  RUNNER_SCRIPT: "/nfs/team361/sb75/terra/src/app/training/train_model_lsf_mpirun_sanger.sh"  # Path to the runnaazazer script.
+  TRAINING_SCRIPT_PATH: "/nfs/team361/sb75/terra/src/app/training/main.py"  # Path to the training script.
   BACKEND: "nccl"  # Backend for distributed training.
-  CONFIG_FILE: "/nfs/team361/sb75/nichejepa/configs/model/mmb0-1b_smb1-1b/mmb0-1b_smb1-1b_2p_neigh_3.yaml"
+  CONFIG_FILE: "/nfs/team361/sb75/terra/configs/model/mmb0-1b_smb1-1b/mmb0-1b_smb1-1b_2p_neigh_3.yaml"

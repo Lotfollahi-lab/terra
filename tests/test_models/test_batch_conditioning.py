@@ -16,16 +16,16 @@ import pytest
 import torch
 import torch.nn as nn
 
-from nichejepa.models.adaln import AdaLN
-from nichejepa.models.batch_classifier import (
+from terra.models.adaln import AdaLN
+from terra.models.batch_classifier import (
     BatchClassifierHead,
     GradReverseFn,
     GradReverseLayer,
     grad_reverse,
     mean_pool_cell_embedding,
 )
-from nichejepa.models.gene_transformers import GeneTransformerRankEncoder
-from nichejepa.models.modules import Block
+from terra.models.gene_transformers import GeneTransformerRankEncoder
+from terra.models.modules import Block
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +267,7 @@ def test_encoder_adaln_modulation_remains_zero_after_init_passes():
         adaln_kwargs={'enabled': True, 'n_batches': 5,
                       'batch_embed_dim': 8},
     )
-    from nichejepa.models.adaln import AdaLN
+    from terra.models.adaln import AdaLN
     n_adaln = 0
     for m in enc.modules():
         if isinstance(m, AdaLN):

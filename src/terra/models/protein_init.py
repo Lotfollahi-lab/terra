@@ -14,7 +14,7 @@ Inputs expected:
 
 The aligned matrix is built once at module-init time and shaped to
 (effective_vocab_size, esm_dim) so it can be looked up directly by
-NicheJEPA's token IDs without per-batch translation.
+TERRA's token IDs without per-batch translation.
 """
 
 import json
@@ -29,7 +29,7 @@ from .utils import trunc_normal_
 
 logger = logging.getLogger(__name__)
 
-# Ensembl gene-ID prefixes per species. NicheJEPA's token dictionaries
+# Ensembl gene-ID prefixes per species. TERRA's token dictionaries
 # key gene tokens by Ensembl gene ID; the precompute script writes
 # protein embeddings using the same identifier. We accept multiple
 # prefixes so a single helper works for human + mouse (most common) and
@@ -110,7 +110,7 @@ def build_aligned_protein_matrix(
     Parameters
     ----------
     token_dict:
-        NicheJEPA token-name → token-id mapping (from the pickled
+        TERRA token-name → token-id mapping (from the pickled
         ``token_dictionary_*.pkl``).
     protein_matrix:
         Tensor of shape (N_proteins, esm_dim).

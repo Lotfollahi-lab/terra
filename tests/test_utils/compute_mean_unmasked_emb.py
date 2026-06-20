@@ -2,7 +2,7 @@ import unittest
 
 import torch
 
-from nichejepa.utils import compute_mean_unmasked_emb
+from terra.utils import compute_mean_unmasked_emb
 
 
 class TestComputeMeanUnmaskedEmb(unittest.TestCase):

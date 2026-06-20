@@ -1,7 +1,7 @@
 import numpy as np
 import scipy
 
-from nichejepa.normalizers import cell_area
+from terra.normalizers import cell_area
 
 
 def test_cell_area():

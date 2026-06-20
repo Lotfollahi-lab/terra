@@ -14,12 +14,12 @@ from typing import Literal
 import torch
 #from peft import get_peft_model, LoraConfig
 
-import nichejepa.models.gene_transformers as gt
-from nichejepa.models.batch_classifier import BatchClassifierHead
-from nichejepa.models.multimask import (EncoderMultiMaskWrapper,
+import terra.models.gene_transformers as gt
+from terra.models.batch_classifier import BatchClassifierHead
+from terra.models.multimask import (EncoderMultiMaskWrapper,
                                         PredictorMultiMaskWrapper)
-from nichejepa.models.utils import trunc_normal_
-from nichejepa.utils.schedulers import (CosineWDSchedule,
+from terra.models.utils import trunc_normal_
+from terra.utils.schedulers import (CosineWDSchedule,
                                         WarmupCosineSchedule)
 
 
@@ -91,7 +91,7 @@ def parse_distribution_alignment_kwargs(args: dict) -> dict | None:
     # distribution_alignment by one or more metadata fields. If the
     # per-mechanism cfg doesn't set them, inherit from the top-level
     # ``special_token_correction`` block.
-    from nichejepa.models.batch_labels import resolve_label_spec
+    from terra.models.batch_labels import resolve_label_spec
     spec = resolve_label_spec(cfg, shared={
         'keys': bc.get('keys'),
         'n_classes': bc.get('n_classes'),
@@ -135,7 +135,7 @@ def parse_arch_kwargs(args: dict) -> dict:
     if adaln and not adaln.get('enabled', False):
         adaln = None
     elif adaln is not None:
-        from nichejepa.models.batch_labels import resolve_label_spec
+        from terra.models.batch_labels import resolve_label_spec
         adaln = dict(adaln)
         # Resolve the multi-key spec for round-trip. Falls back to
         # shared top-level keys/n_classes/offsets if the per-
@@ -198,7 +198,7 @@ def parse_arch_kwargs(args: dict) -> dict:
         # top-level keys/n_classes/offsets. This way a MoE config
         # that inherits from ``special_token_correction.keys``
         # round-trips correctly at inference time too.
-        from nichejepa.models.batch_labels import resolve_label_spec
+        from terra.models.batch_labels import resolve_label_spec
         spec = resolve_label_spec(moe, shared={
             'keys': bc.get('keys'),
             'n_classes': bc.get('n_classes'),
@@ -667,7 +667,7 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
     # hypernetwork with trunc_normal_(0.02). Restore the zero-init so
     # the AdaLN-at-step-0 == LayerNorm invariant survives this second
     # reinit pass. No-op when AdaLN is disabled.
-    from nichejepa.models.adaln import zero_init_adaln_modulations
+    from terra.models.adaln import zero_init_adaln_modulations
     zero_init_adaln_modulations(encoder)
     zero_init_adaln_modulations(predictor)
 
@@ -713,7 +713,7 @@ def build_batch_classifier_head(
     if not (adv_classifier_kwargs
             and adv_classifier_kwargs.get('enabled', False)):
         return None
-    from nichejepa.models.batch_labels import resolve_label_spec
+    from terra.models.batch_labels import resolve_label_spec
     spec = resolve_label_spec(adv_classifier_kwargs)
     if not spec['n_classes']:
         # Legacy single-key without an explicit ``keys`` field.
