@@ -12,17 +12,21 @@ from pathlib import Path
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE / "extensions"))
+# Make the in-repo packages importable for autodoc (src layout) even if the
+# package is only installed --no-deps on the docs builder.
+sys.path.insert(0, str(HERE.parent / "src"))
 
 
 # -- Project information -----------------------------------------------------
 
 # NOTE: If you installed your project in editable mode, this might be stale.
 #       If this is the case, reinstall it to refresh the metadata
-info = metadata("cookiecutter-scverse-instance")
-project_name = info["Name"]
-author = info["Author"]
+info = metadata("terra-st")
+project_name = info.get("Name", "terra-st")
+project = "TERRA"
+author = info.get("Author", "Sebastian Birk")
 copyright = f"{datetime.now():%Y}, {author}."
-version = info["Version"]
+version = info.get("Version", "0.0.0")
 urls = dict(pu.split(", ") for pu in info.get_all("Project-URL"))
 repository_url = urls["Source"]
 
@@ -36,8 +40,8 @@ needs_sphinx = "4.0"
 
 html_context = {
     "display_github": True,  # Integrate GitHub
-    "github_user": "scverse",  # Username
-    "github_repo": project_name,  # Repo name
+    "github_user": "Lotfollahi-lab",  # Username
+    "github_repo": "terra",  # Repo name
     "github_version": "main",  # Version
     "conf_py_path": "/docs/",  # Path in the checkout to the docs root
 }
@@ -59,6 +63,43 @@ extensions = [
     "IPython.sphinxext.ipython_console_highlighting",
     "sphinxext.opengraph",
     *[p.stem for p in (HERE / "extensions").glob("*.py")],
+]
+
+# Heavy / GPU-only / unavailable-on-RTD runtime dependencies. autodoc imports
+# the package to introspect signatures and docstrings; these are mocked so the
+# docs build needs neither a GPU nor the full scientific stack. NOTE: torch is
+# intentionally NOT mocked -- it is installed (CPU build) via
+# docs/requirements.txt, because public functions are decorated with
+# @torch.inference_mode()/@torch.no_grad() and classes subclass nn.Module, so a
+# mocked torch would erase their signatures.
+autodoc_mock_imports = [
+    "anndata",
+    "scanpy",
+    "squidpy",
+    "scipy",
+    "sklearn",
+    "skmisc",
+    "matplotlib",
+    "tqdm",
+    "requests",
+    "datasets",
+    "transformers",
+    "peft",
+    "scib_metrics",
+    "scvi",
+    "pyensembl",
+    "cellphonedb",
+    "omnipath",
+    "wandb",
+    "leidenalg",
+    "rapids_singlecell",
+    "cuml",
+    "cudf",
+    "cugraph",
+    "cuvs",
+    "flash_attn",
+    "einops",
+    "timm",
 ]
 
 autosummary_generate = True
@@ -111,7 +152,7 @@ html_theme = "sphinx_book_theme"
 html_static_path = ["_static"]
 html_css_files = ["css/custom.css"]
 
-html_title = project_name
+html_title = "TERRA"
 
 html_theme_options = {
     "repository_url": repository_url,

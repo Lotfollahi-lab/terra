@@ -1,38 +1,25 @@
 # API
 
-## Preprocessing
+The main user-facing API lives in `app.inference`. The typical workflow is to
+harmonize an `AnnData`, tokenize it against a trained model, and embed it:
 
-```{eval-rst}
-.. module:: cookiecutter_scverse_instance.pp
-.. currentmodule:: cookiecutter_scverse_instance
-
-.. autosummary::
-    :toctree: generated
-
-    pp.basic_preproc
+```python
+from app.inference import harmonize_tokenize_embed_pipeline
 ```
 
-## Tools
+## Inference
 
 ```{eval-rst}
-.. module:: cookiecutter_scverse_instance.tl
-.. currentmodule:: cookiecutter_scverse_instance
+.. currentmodule:: app.inference
 
 .. autosummary::
     :toctree: generated
 
-    tl.basic_tool
-```
-
-## Plotting
-
-```{eval-rst}
-.. module:: cookiecutter_scverse_instance.pl
-.. currentmodule:: cookiecutter_scverse_instance
-
-.. autosummary::
-    :toctree: generated
-
-    pl.basic_plot
-    pl.BasicClass
+    harmonize_tokenize_embed_pipeline
+    harmonize_adata
+    tokenize_adata
+    embed_dataset
+    infer
+    get_gene_embed
+    get_average_gene_embed
 ```

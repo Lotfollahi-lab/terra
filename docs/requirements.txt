@@ -1,0 +1,22 @@
+# ReadTheDocs documentation build requirements.
+#
+# Only the Sphinx toolchain + a CPU build of torch are installed here. The rest
+# of terra's heavy / GPU-only runtime dependencies are mocked in conf.py
+# (autodoc_mock_imports), so the docs build needs neither a GPU nor the full
+# scientific stack. torch is installed (not mocked) because public API
+# functions are decorated with @torch.inference_mode()/@torch.no_grad() and
+# classes subclass nn.Module -- a mocked torch would erase their signatures.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+
+sphinx>=4
+sphinx-book-theme>=1.0.0
+myst-nb
+sphinxcontrib-bibtex>=1.0.0
+sphinx-autodoc-typehints
+sphinxext-opengraph
+sphinx-copybutton
+ipython
+ipykernel
+pandas
+docutils>=0.8,!=0.18.*,!=0.19.*

@@ -2,10 +2,49 @@
 
 ## Installation
 
-To install the project and its dependencies, run:
+TERRA is published on PyPI as `terra-st` (the bare `terra` name was already
+taken; the import name is still `terra`):
+
+```shell
+pip install terra-st
+```
+
+For a development install from a clone of this repository:
 
 ```shell
 pip install -e .
+```
+
+### PyTorch / GPU note
+
+TERRA depends on [PyTorch](https://pytorch.org). A plain `pip install terra-st`
+pulls the **default** PyTorch wheel from PyPI, which on Linux is a CUDA build —
+and that build must match your machine's NVIDIA driver. If the bundled CUDA is
+newer than your driver, CUDA fails to initialize at runtime with an error like:
+
+```text
+RuntimeError: The NVIDIA driver on your system is too old (found version 12040).
+```
+
+PyPI cannot host the CUDA-specific PyTorch wheels (they live on
+`download.pytorch.org`), so the CUDA build is an **install-time** choice. Install
+the PyTorch build for your hardware **first**, then install TERRA:
+
+```shell
+# GPU — pick the CUDA version that matches your driver (see below):
+pip install torch --index-url https://download.pytorch.org/whl/cu124
+# ...or CPU only:
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+pip install terra-st
+```
+
+Find your driver's maximum supported CUDA version in the top-right of
+`nvidia-smi` ("CUDA Version"); the installed `torch.version.cuda` must be **≤**
+that value. Verify the install with:
+
+```shell
+python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"
 ```
 
 ## Repository Structure

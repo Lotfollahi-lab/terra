@@ -72,6 +72,14 @@ eval = [
     "cellphonedb",
     "omnipath"
 ]
+# Publish/download TERRA model bundles on the Hugging Face Hub (terra.hub).
+hub = [
+    "huggingface_hub>=0.20",
+]
+
+[project.scripts]
+# CLI for publishing/downloading TERRA models: `terra-hub upload|download ...`
+terra-hub = "app.huggingface:main"
 
 [tool.coverage.run]
 source = ["terra"]
