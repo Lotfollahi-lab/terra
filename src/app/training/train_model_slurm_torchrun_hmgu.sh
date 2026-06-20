@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=nichejepa_train
+#SBATCH --job-name=terra_train
 #SBATCH --partition=gpu_p
 #SBATCH --qos=gpu_long
 #SBATCH --nodes=1
@@ -9,8 +9,8 @@
 #SBATCH --mem=480G
 #SBATCH --constraint=h100_80gb
 #SBATCH --time=48:00:00
-#SBATCH --output=/home/aih/sebastian.birk/workspace/projects/nichejepa-reproducibility/logs/hst_corpus_70m/slurm_logs/%x_%j.out
-#SBATCH --error=/home/aih/sebastian.birk/workspace/projects/nichejepa-reproducibility/logs/hst_corpus_70m/slurm_logs/%x_%j.err
+#SBATCH --output=/home/aih/sebastian.birk/workspace/projects/terra-reproducibility/logs/hst_corpus_70m/slurm_logs/%x_%j.out
+#SBATCH --error=/home/aih/sebastian.birk/workspace/projects/terra-reproducibility/logs/hst_corpus_70m/slurm_logs/%x_%j.err
 
 # Set experiment identifiers (optional: used in your script)
 export EXPERIMENT_NAME="hst_corpus_70m"
@@ -26,7 +26,7 @@ nvidia-smi
 # Load Python environment
 export PATH="/home/aih/sebastian.birk/miniconda3/bin:$PATH"
 eval "$(conda shell.bash hook)"
-conda activate nichejepa
+conda activate terra
 echo "Using Python: $(which python)"
 echo "Using Torchrun: $(which torchrun)"
 
@@ -35,6 +35,6 @@ srun torchrun \
   --rdzv_id=$SLURM_JOB_ID \
   --rdzv_backend=c10d \
   --rdzv_endpoint="$RDZV_HOST:$RDZV_PORT" \
-  /home/aih/sebastian.birk/workspace/projects/nichejepa/src/app/training/main.py \
+  /home/aih/sebastian.birk/workspace/projects/terra/src/app/training/main.py \
   --backend nccl \
-  --fname /home/aih/sebastian.birk/workspace/projects/nichejepa/configs/model/hst_corpus_70m.yaml
+  --fname /home/aih/sebastian.birk/workspace/projects/terra/configs/model/hst_corpus_70m.yaml

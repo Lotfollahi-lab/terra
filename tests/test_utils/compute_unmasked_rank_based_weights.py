@@ -2,7 +2,7 @@ import unittest
 
 import torch
 
-from nichejepa.utils import compute_unmasked_rank_based_weights
+from terra.utils import compute_unmasked_rank_based_weights
 
 
 class TestComputeRankBasedWeights(unittest.TestCase):

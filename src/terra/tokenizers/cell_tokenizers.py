@@ -22,7 +22,7 @@ Optional cell attributes:
 Usage
 ----------
 .. code-block :: python
-    >>> from nichejepa import CellGraphTokenizer
+    >>> from terra import CellGraphTokenizer
     >>> tk = CellGraphTokenizer(nproc=4)
     >>> tk.tokenize_data(
     >>>     'input_directory', 'output_directory', 'output_file_prefix')
@@ -30,7 +30,7 @@ Usage
 or
 
 .. code-block :: python
-    >>> from nichejepa import CellNeighborhoodTokenizer
+    >>> from terra import CellNeighborhoodTokenizer
     >>> tk = CellNeighborhoodTokenizer(nproc=4)
     >>> tk.tokenize_data(
     >>>     'input_directory', 'output_directory', 'output_file_prefix')
@@ -43,7 +43,7 @@ input file type is specified by the argument `file_format` in the
 `tokenize_data()` function. Genes should be labeled with Ensembl IDs
 (adata.var['ensembl_id']), which provide a unique identifer for
 conversion to tokens. Gene names can be converted to Ensembl IDs via the
-helper function `nichejepa.datasets.utils.get_ensembl_ids()` or via the
+helper function `terra.datasets.utils.get_ensembl_ids()` or via the
 pyensembl Python package. No cell metadata is required, but the cell ID
 needs to be stored in the index. Additionally, if the original '.h5ad'
 file contains a cell attribute called adata.obs['filter_pass'], this can

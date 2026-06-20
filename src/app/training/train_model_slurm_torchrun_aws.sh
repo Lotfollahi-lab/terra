@@ -9,7 +9,7 @@
 #SBATCH --time=480:00:00                                       # sets the max wall time (runtime) for the job (HH:MM:SS)
 #SBATCH --output=logs/aws/%j.out                               # stdout file (%j is replaced with the job ID)
 #SBATCH --error=logs/aws/%j.err                                # stder file (for logging errors)
-#SBATCH --chdir=/home/ubuntu/sb75/nichejepa-reproducibility    # set working directory
+#SBATCH --chdir=/home/ubuntu/sb75/terra-reproducibility    # set working directory
 
 
 ###############################################################################
@@ -34,7 +34,7 @@ export NCCL_DEBUG=INFO
 export TMPDIR=/fsx-shared/tmp
 
 # activate environment
-source ../nichejepa_env/bin/activate
+source ../terra_env/bin/activate
 
 # Set master address and port
 export MASTER_ADDR=$(scontrol show hostname $SLURM_NODELIST | head -n 1)
@@ -64,6 +64,6 @@ srun torchrun \
     --node_rank $SLURM_NODEID \
     --rdzv_endpoint $MASTER_ADDR:$MASTER_PORT \
     --rdzv_backend c10d \
-    /home/ubuntu/sb75/nichejepa/src/app/training/main.py \
+    /home/ubuntu/sb75/terra/src/app/training/main.py \
     --backend nccl \
-    --fname /home/ubuntu/sb75/nichejepa/configs/model/hst_corpus_110m/hst_corpus_110m.yaml
+    --fname /home/ubuntu/sb75/terra/configs/model/hst_corpus_110m/hst_corpus_110m.yaml

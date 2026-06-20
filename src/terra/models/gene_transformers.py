@@ -288,7 +288,7 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                 if int(_adaln_os.environ.get('RANK', '0')) == 0:
                     import logging as _adaln_logging
                     _adaln_logging.getLogger(
-                        "nichejepa.models.gene_transformers"
+                        "terra.models.gene_transformers"
                     ).warning(
                         "[AdaLN] using LEGACY single-key path "
                         "(reads values[:, 0]). At inference with "
@@ -712,7 +712,7 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         if do_range_check:
             import logging as _logging
             _logging.getLogger(
-                "nichejepa.models.gene_transformers"
+                "terra.models.gene_transformers"
             ).info(
                 "AdaLN multi-key diagnostic on first batch: "
                 "keys=%s, n_classes=%s, offsets=%s. cond_dim=%d. "
@@ -1399,7 +1399,7 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
                 if int(_adaln_os.environ.get('RANK', '0')) == 0:
                     import logging as _adaln_logging
                     _adaln_logging.getLogger(
-                        "nichejepa.models.gene_transformers"
+                        "terra.models.gene_transformers"
                     ).warning(
                         "[AdaLN] using LEGACY single-key path "
                         "(reads values[:, 0]). At inference with "

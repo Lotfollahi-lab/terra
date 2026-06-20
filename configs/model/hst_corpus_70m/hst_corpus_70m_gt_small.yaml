@@ -1,12 +1,12 @@
 data:
   dataset_name: 'hst_corpus_70m'
   raw_data_folder_path: '/lustre/scratch126/cellgen/team361/DATASETS/silver/hst_corpus_70m'
-  token_dict_folder_path: '/home/aih/sebastian.birk/workspace/projects/nichejepa-reproducibility/data/tokenizer_data/token_dictionary_homo_sapiens.pkl'
-  tokenized_data_folder_path: '/home/aih/sebastian.birk/workspace/projects/nichejepa-reproducibility/data/st_data/gold/cell-graph-tokenizer/hst_corpus_70m/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10.dataset'
-  #precomputed_split: '/home/aih/sebastian.birk/workspace/projects/nichejepa-reproducibility/data/tokenizer_data/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_split_train.pkl'
-  #precomputed_n_nonzero_tokens: '/home/aih/sebastian.birk/workspace/projects/nichejepa-reproducibility/data/tokenizer_data/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10_n_nonzero_tokens_train.pkl'
-  precomputed_epoch_splits: '/home/aih/sebastian.birk/workspace/projects/nichejepa-reproducibility/data/tokenizer_data/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_split_30.pkl'
-  precomputed_epoch_n_nonzero_tokens: '/home/aih/sebastian.birk/workspace/projects/nichejepa-reproducibility/data/tokenizer_data/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_n_nonzero_tokens_30.pkl'
+  token_dict_folder_path: '/home/aih/sebastian.birk/workspace/projects/terra-reproducibility/data/tokenizer_data/token_dictionary_homo_sapiens.pkl'
+  tokenized_data_folder_path: '/home/aih/sebastian.birk/workspace/projects/terra-reproducibility/data/st_data/gold/cell-graph-tokenizer/hst_corpus_70m/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10.dataset'
+  #precomputed_split: '/home/aih/sebastian.birk/workspace/projects/terra-reproducibility/data/tokenizer_data/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_split_train.pkl'
+  #precomputed_n_nonzero_tokens: '/home/aih/sebastian.birk/workspace/projects/terra-reproducibility/data/tokenizer_data/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10_n_nonzero_tokens_train.pkl'
+  precomputed_epoch_splits: '/home/aih/sebastian.birk/workspace/projects/terra-reproducibility/data/tokenizer_data/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_split_30.pkl'
+  precomputed_epoch_n_nonzero_tokens: '/home/aih/sebastian.birk/workspace/projects/terra-reproducibility/data/tokenizer_data/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_n_nonzero_tokens_30.pkl'
   #precomputed_epoch_splits: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_split_20.pkl'
   #precomputed_epoch_n_nonzero_tokens: '/lustre/scratch126/cellgen/team361/DATASETS/tokenizer/hst_corpus_70m_32_None_None_None_None_None_shifted_log_knn_10_precomputed_epoch_n_nonzero_tokens_20.pkl'
   tokenizer_type: 'cell_graph'
@@ -62,10 +62,10 @@ optimization:
 state:
   log_freq: 20
   checkpoint_freq: 1
-  write_tag: nichejepa
+  write_tag: terra
   read_timestamp: ''
   folder_path: null
   load_checkpoint: False # true, false
-  read_checkpoint: null # null, 'nichejepa-ep5.pth.tar'
+  read_checkpoint: null # null, 'terra-ep5.pth.tar'
   checkpoint_freq_iter: 5000
 

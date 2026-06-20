@@ -13,18 +13,18 @@ infiniband:
   NCCL_IB_DISABLE: 0  # 1: Disable InfiniBand, 0: Enable InfiniBand
 
 environment:
-  ENV_PATH: "/nfs/users/nfs_s/sb75/.venvs/nichejepa"  # Path to the environment to be activated.
+  ENV_PATH: "/nfs/users/nfs_s/sb75/.venvs/terra"  # Path to the environment to be activated.
 
 artifact:
-  ARTIFACT_LOCATION: "/nfs/team361/sb75/nichejepa-reproducibility/artifacts/hst_corpus_110m"  # Path to store the artifacts.
-  WAREHOUSE_PATH: "/nfs/team361/sb75/nichejepa-reproducibility/artifacts/hst_corpus_110m"  # Path to store the artifacts.
-  OUTPUT_DIR: "/nfs/team361/sb75/nichejepa-reproducibility/artifacts/hst_corpus_110m"  # Path to store the artifacts.
-  LOG_DIR: "/nfs/team361/sb75/nichejepa-reproducibility/artifacts/hst_corpus_110m"
-  EXPERIMENT_NAME: "nichejepa_pretraining"  # Name of the experiment.
+  ARTIFACT_LOCATION: "/nfs/team361/sb75/terra-reproducibility/artifacts/hst_corpus_110m"  # Path to store the artifacts.
+  WAREHOUSE_PATH: "/nfs/team361/sb75/terra-reproducibility/artifacts/hst_corpus_110m"  # Path to store the artifacts.
+  OUTPUT_DIR: "/nfs/team361/sb75/terra-reproducibility/artifacts/hst_corpus_110m"  # Path to store the artifacts.
+  LOG_DIR: "/nfs/team361/sb75/terra-reproducibility/artifacts/hst_corpus_110m"
+  EXPERIMENT_NAME: "terra_pretraining"  # Name of the experiment.
   RUN_NAME: "hst_corpus_110m_5k_run_14"  # Name of the run.
 
 runner_script:
-  RUNNER_SCRIPT: "/nfs/team361/sb75/nichejepa/src/app/training/train_model_lsf_mpirun_sanger.sh"  # Path to the runner script.
-  TRAINING_SCRIPT_PATH: "/nfs/team361/sb75/nichejepa/src/app/training/main.py"  # Path to the training script.
+  RUNNER_SCRIPT: "/nfs/team361/sb75/terra/src/app/training/train_model_lsf_mpirun_sanger.sh"  # Path to the runner script.
+  TRAINING_SCRIPT_PATH: "/nfs/team361/sb75/terra/src/app/training/main.py"  # Path to the training script.
   BACKEND: "nccl"  # Backend for distributed training.
-  CONFIG_FILE: "/nfs/team361/sb75/nichejepa/configs/model/hst_corpus_110m/hst_corpus_110m_5k.yaml"
+  CONFIG_FILE: "/nfs/team361/sb75/terra/configs/model/hst_corpus_110m/hst_corpus_110m_5k.yaml"

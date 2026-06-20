@@ -2,7 +2,7 @@ import unittest
 
 import torch
 
-from nichejepa.utils import retrieve_gene_emb
+from terra.utils import retrieve_gene_emb
 
 
 class TestRetrieveGeneEmb(unittest.TestCase):

@@ -11,7 +11,7 @@ data:
   raw_data_folder_path: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/silver/mst_corpus_10m'
   token_dict_folder_path: '/nfs/team361/sb75/DATASETS/tokenizer/token_dictionary_mus_musculus.pkl'
   tokenized_data_folder_path: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/gold/cell-graph-tokenizer/mst_corpus_10m/mst_corpus_10m_32_None_None_None_None_None_pflog1ppf_knn_16_1088.dataset' # '/lustre/scratch126/cellgen/lotfollahi/DATASETS/gold/cell-graph-tokenizer/mmb0-1b_smb1-1b_1p/mmb0-1b_smb1-1b_1p_32_None_None_None_None_None_shifted_log_knn_10_2816.dataset', '/lustre/scratch126/cellgen/lotfollahi/DATASETS/gold/cell-graph-tokenizer/mmb0-1b_smb1-1b_1p/mmb0-1b_smb1-1b_1p_32_None_None_None_None_None_shifted_log_knn_10_704.dataset', '/lustre/scratch126/cellgen/lotfollahi/DATASETS/gold/cell-graph-tokenizer/mmb0-1b_smb1-1b_1p/mmb0-1b_smb1-1b_1p_32_None_None_None_None_None_shifted_log_knn_10_11264.dataset'
-  pf_targets_file_path: /nfs/team361/sb75/nichejepa-reproducibility/artifacts/data/mst_corpus_10m_pf_targets.csv
+  pf_targets_file_path: /nfs/team361/sb75/terra-reproducibility/artifacts/data/mst_corpus_10m_pf_targets.csv
   precomputed_split: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/tokenizer/mst_corpus_10m_32_None_None_None_None_None_None_knn_10_704_precomputed_split_train.pkl'
   precomputed_n_nonzero_tokens: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/tokenizer/mst_corpus_10m_32_None_None_None_None_None_None_knn_10_704_n_nonzero_tokens_train.pkl'
   test_batch_ids: null
@@ -89,9 +89,9 @@ optimization:
 state:
   log_freq: 20
   checkpoint_freq: 1
-  write_tag: nichejepa
+  write_tag: terra
   read_timestamp: ''
   folder_path: null
   load_checkpoint: False # true, false
-  read_checkpoint: null # null, 'nichejepa-ep5.pth.tar'
+  read_checkpoint: null # null, 'terra-ep5.pth.tar'
   checkpoint_freq_iter: 50000

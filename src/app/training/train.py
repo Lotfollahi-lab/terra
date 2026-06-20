@@ -43,20 +43,20 @@ from app.utils import (build_batch_classifier_head,
                        init_model, init_opt, load_checkpoint,
                        parse_distribution_alignment_kwargs,
                        parse_protein_init_kwargs)
-from nichejepa.models.batch_classifier import (
+from terra.models.batch_classifier import (
     grad_reverse, mean_pool_cell_embedding)
-from nichejepa.models.cycle_consistency import (
+from terra.models.cycle_consistency import (
     cycle_consistency_loss, make_swapped_batch)
-from nichejepa.models.distribution_alignment import (
+from terra.models.distribution_alignment import (
     compute_distribution_alignment_loss)
-from nichejepa.datasets.cell_datasets import init_cell_dataset
-from nichejepa.datasets.dataloaders import init_dataloader_and_sampler
-from nichejepa.masks.block_masking  import BlockMaskCollator
-from nichejepa.masks.cell_masking import CellMaskCollator
-from nichejepa.masks.utils import apply_masks
-from nichejepa.models.utils import repeat_interleave_batch
-from nichejepa.utils.distributed import init_distributed
-from nichejepa.utils.logging import (AverageMeter,
+from terra.datasets.cell_datasets import init_cell_dataset
+from terra.datasets.dataloaders import init_dataloader_and_sampler
+from terra.masks.block_masking  import BlockMaskCollator
+from terra.masks.cell_masking import CellMaskCollator
+from terra.masks.utils import apply_masks
+from terra.models.utils import repeat_interleave_batch
+from terra.utils.distributed import init_distributed
+from terra.utils.logging import (AverageMeter,
                                      CSVLogger,
                                      grad_logger)
 
@@ -268,7 +268,7 @@ def train(args: dict,
     # routing once and have AdaLN + adv_classifier +
     # distribution_alignment + cycle_consistency + special_token_moe
     # all use the same set of metadata fields.
-    from nichejepa.models.batch_labels import (
+    from terra.models.batch_labels import (
         extract_batch_label as _xb,
         extract_batch_labels as _xbs,
         resolve_label_spec as _rspec,
@@ -585,7 +585,7 @@ def train(args: dict,
         token_dict = pickle.load(file)
     vocab_size = len(token_dict)
     # Inject the loaded token_dict into protein_init_kwargs so the
-    # encoder can align ESM rows to NicheJEPA token IDs.
+    # encoder can align ESM rows to TERRA token IDs.
     if protein_init_kwargs is not None:
         protein_init_kwargs['token_dict'] = token_dict
     #n_special_values = sum(

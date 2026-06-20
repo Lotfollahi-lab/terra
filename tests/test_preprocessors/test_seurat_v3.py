@@ -3,7 +3,7 @@ import math
 from random import gauss
 import scipy
 
-from nichejepa.normalizers import seurat_v3
+from terra.normalizers import seurat_v3
 
 
 def test_seurat_v3():

@@ -1,6 +1,6 @@
 import numpy as np
 
-from nichejepa.normalizers import non_zero_median
+from terra.normalizers import non_zero_median
 
 
 def test_non_zero_median():

@@ -7,7 +7,7 @@ import math
 import pytest
 import torch
 
-from nichejepa.models.gene_transformers import GeneTransformerBaseEncoder
+from terra.models.gene_transformers import GeneTransformerBaseEncoder
 
 
 # ---------------------------------------------------------------------------
@@ -17,7 +17,7 @@ from nichejepa.models.gene_transformers import GeneTransformerBaseEncoder
 # ---------------------------------------------------------------------------
 
 def _make_rank_encoder(cell_pos_enc: str, num_heads: int = 4, embed_dim: int = 32):
-    from nichejepa.models.gene_transformers import GeneTransformerRankEncoder
+    from terra.models.gene_transformers import GeneTransformerRankEncoder
     return GeneTransformerRankEncoder(
         vocab_size=16,
         seq_len=12,
@@ -363,7 +363,7 @@ def test_laplacian_pe_changes_with_geometry():
 def test_laplacian_k_caps_at_n_segments_minus_one():
     """laplacian_k > n_segments - 1 must be silently capped so the
     eigendecomposition stays well-defined."""
-    from nichejepa.models.gene_transformers import GeneTransformerRankEncoder
+    from terra.models.gene_transformers import GeneTransformerRankEncoder
     enc = GeneTransformerRankEncoder(
         vocab_size=16, seq_len=12, n_special_tokens=2, n_segments=2,
         cell_pos_enc="laplacian", embed_dim=32, depth=1, num_heads=4,
@@ -375,7 +375,7 @@ def test_laplacian_k_caps_at_n_segments_minus_one():
 
 
 def test_laplacian_k_zero_raises():
-    from nichejepa.models.gene_transformers import GeneTransformerRankEncoder
+    from terra.models.gene_transformers import GeneTransformerRankEncoder
     with pytest.raises(ValueError, match="laplacian_k"):
         GeneTransformerRankEncoder(
             vocab_size=16, seq_len=12, n_special_tokens=2, n_segments=1,
@@ -469,7 +469,7 @@ def test_rope_seg_emb_is_zero():
 def test_rope_initializes_module_and_passes_to_blocks():
     """The encoder must own a single RoPE2D instance shared across
     all blocks (so all attention layers rotate q/k consistently)."""
-    from nichejepa.models.rope2d import RoPE2D
+    from terra.models.rope2d import RoPE2D
     enc = _make_rank_encoder("rope", embed_dim=32, num_heads=4)
     assert isinstance(enc.rope, RoPE2D)
     # head_dim = 32 / 4 = 8; freqs has shape (head_dim // 4,) = (2,)
@@ -494,7 +494,7 @@ def test_rope_head_dim_divisibility_enforced():
     num_heads=4, head_dim=7 which isn't even integer; with embed_dim=32
     and num_heads=2, head_dim=16 (ok). Pick a bad combo that yields
     head_dim=6 (32/some_heads) and confirm we raise."""
-    from nichejepa.models.gene_transformers import GeneTransformerRankEncoder
+    from terra.models.gene_transformers import GeneTransformerRankEncoder
     # embed_dim=24, num_heads=4 -> head_dim=6 -> 6 % 4 != 0 -> raise.
     with pytest.raises(ValueError, match="divisible by 4"):
         GeneTransformerRankEncoder(
@@ -529,7 +529,7 @@ def test_rope_within_cell_tokens_unaffected():
     so identical rotations cancel in q @ k^T. Within-cell attention
     should be exactly what it would be without RoPE for a constant
     coord block."""
-    from nichejepa.models.rope2d import RoPE2D
+    from terra.models.rope2d import RoPE2D
     rope = RoPE2D(head_dim=8, rotation_augment=False)
     rope.eval()
     # All tokens at the same coord.
@@ -550,7 +550,7 @@ def test_rope_translation_invariance():
     """Translating all coords by a constant shouldn't change the
     output of q @ k^T, because RoPE's effect on logits depends only
     on relative position (key property of rotary embeddings)."""
-    from nichejepa.models.rope2d import RoPE2D
+    from terra.models.rope2d import RoPE2D
     rope = RoPE2D(head_dim=8, rotation_augment=False)
     rope.eval()
     coords_a = torch.randn(1, 5, 2)
@@ -569,8 +569,8 @@ def test_rope_neginf_coords_get_sanitized_in_attention():
     """The Attention module replaces non-finite coords with (0, 0)
     before RoPE so special tokens / padding don't blow up the
     rotation."""
-    from nichejepa.models.modules import Attention
-    from nichejepa.models.rope2d import RoPE2D
+    from terra.models.modules import Attention
+    from terra.models.rope2d import RoPE2D
     rope = RoPE2D(head_dim=8, rotation_augment=False)
     attn = Attention(dim=16, num_heads=2, use_flash_attention=False, rope=rope)
     attn.eval()

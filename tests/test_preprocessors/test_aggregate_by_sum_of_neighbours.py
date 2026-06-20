@@ -1,7 +1,7 @@
 import numpy as np
 import scipy
 
-from nichejepa.aggregators import aggregate_by_sum_of_neighbours
+from terra.aggregators import aggregate_by_sum_of_neighbours
 
 
 def test_aggregate_by_sum_of_neighbours():

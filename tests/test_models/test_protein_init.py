@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from nichejepa.models.protein_init import (
+from terra.models.protein_init import (
     ProteinInitTokenEmbedding,
     _warm_start_init_tensor,
     build_aligned_protein_matrix,
@@ -21,7 +21,7 @@ import torch.nn as nn
 
 
 def _make_synthetic_token_dict():
-    """Mimic the shape of NicheJEPA's token_dictionary_homo_sapiens.pkl:
+    """Mimic the shape of TERRA's token_dictionary_homo_sapiens.pkl:
     a handful of special tokens at the low IDs, then ENSG-prefixed gene
     tokens. Token 0 is <pad>."""
     return {
@@ -100,7 +100,7 @@ def test_build_aligned_protein_matrix_basic():
 
 
 def _make_synthetic_mouse_token_dict():
-    """Mimic the shape of NicheJEPA's token_dictionary_mus_musculus.pkl:
+    """Mimic the shape of TERRA's token_dictionary_mus_musculus.pkl:
     special tokens at low IDs, then ENSMUSG-prefixed gene tokens."""
     return {
         "<pad>":              0,
@@ -377,7 +377,7 @@ def test_encoder_with_protein_init_swaps_token_embed(tmp_path: Path):
     """Sanity-check the integration: building a real encoder with
     protein_init_kwargs replaces `self.token_embed` with the routed
     module without breaking the existing forward signature."""
-    from nichejepa.models.gene_transformers import GeneTransformerRankEncoder
+    from terra.models.gene_transformers import GeneTransformerRankEncoder
 
     token_dict = _make_synthetic_token_dict()
     matrix = _make_synthetic_protein_matrix(esm_dim=16)

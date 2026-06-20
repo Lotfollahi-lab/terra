@@ -6,8 +6,8 @@ import logging
 #import torch.multiprocessing as mp
 import torch.distributed as dist
 from app.training import train
-from nichejepa.datasets.utils import prepare_dataset
-from nichejepa.utils.config import create_params_from_YAML_wandb_config
+from terra.datasets.utils import prepare_dataset
+from terra.utils.config import create_params_from_YAML_wandb_config
 import wandb
 import sys
 # Add the root directory to sys.path
@@ -116,12 +116,12 @@ def main():
     if WORLD_RANK==0:
         wandb.init(
             settings=wandb.Settings(init_timeout=120),
-            project='nichejepa-pretraining',
+            project='terra-pretraining',
             id=run_id,
             resume="allow",
             group="multi_node_training",
             mode='online')
-        artifact_folder_path = '../nichejepa-reproducibility/artifacts'
+        artifact_folder_path = '../terra-reproducibility/artifacts'
         current_timestamp = (
             datetime.now().strftime("%d%m%Y_%H%M%S") +
             f"_{datetime.now().microsecond // 1000:03d}")

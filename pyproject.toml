@@ -2,8 +2,14 @@
 build-backend = "hatchling.build"
 requires = ["hatchling"]
 
+[tool.hatch.build.targets.wheel]
+# Import package is 'terra' (src/terra); the 'app' application layer ships too.
+# PyPI distribution name is 'terra-st' because the bare 'terra' name is already
+# taken on PyPI (the import name 'terra' is unaffected by that).
+packages = ["src/terra", "src/app"]
+
 [project]
-name = "nichejepa"
+name = "terra-st"
 version = "0.0.0"
 description = "Spatial transcriptomics foundation model"
 readme = "README.md"
@@ -18,9 +24,9 @@ maintainers = [
     {name = "Mohammad Vali Sanian", email = "mohammad.sanian@helsinki.fi"},
 
 ]
-urls.Documentation = "https://niche-jepa.readthedocs.io/"
-urls.Source = "https://github.com/Lotfollahi-lab/niche-jepa"
-urls.Home-page = "https://github.com/Lotfollahi-lab/niche-jepa"
+urls.Documentation = "https://terra.readthedocs.io/"
+urls.Source = "https://github.com/Lotfollahi-lab/terra"
+urls.Home-page = "https://github.com/Lotfollahi-lab/terra"
 dependencies = [
     "anndata",
     "squidpy",
@@ -68,7 +74,7 @@ eval = [
 ]
 
 [tool.coverage.run]
-source = ["niche-jepa"]
+source = ["terra"]
 omit = [
     "**/test_*.py",
 ]

@@ -11,7 +11,7 @@ data:
   raw_data_folder_path: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/silver/hst_corpus_110m'
   token_dict_folder_path: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/tokenizer/token_dictionary_homo_sapiens.pkl'
   tokenized_data_folder_path: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/gold/cell-graph-tokenizer/hst_corpus_110m/hst_corpus_110m_32_None_None_None_None_None_pflog1ppf_knn_16_4352.dataset'
-  pf_targets_file_path: '/nfs/team361/sb75/nichejepa-reproducibility/artifacts/data/hst_corpus_110m_pf_targets.csv'
+  pf_targets_file_path: '/nfs/team361/sb75/terra-reproducibility/artifacts/data/hst_corpus_110m_pf_targets.csv'
   precomputed_split: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/tokenizer/hst_corpus_110m_32_None_None_None_None_None_pflog1ppf_knn_16_4352_precomputed_split_train.pkl'
   precomputed_n_nonzero_tokens: '/lustre/scratch126/cellgen/lotfollahi/DATASETS/tokenizer/hst_corpus_110m_32_None_None_None_None_None_pflog1ppf_knn_16_4352_n_nonzero_tokens_train.pkl'
   test_batch_ids: ['49_batch0']
@@ -89,11 +89,11 @@ optimization:
 state:
   log_freq: 20
   checkpoint_freq: 1
-  write_tag: nichejepa
+  write_tag: terra
   read_timestamp: '' # not needed
-  folder_path: null # '/nfs/team361/sb75/nichejepa-reproducibility/artifacts/hst_corpus_110m/11012026_190057_836' # null
+  folder_path: null # '/nfs/team361/sb75/terra-reproducibility/artifacts/hst_corpus_110m/11012026_190057_836' # null
   load_checkpoint: False # True, False
-  read_checkpoint: null # null, 'nichejepa-ep5.pth.tar'
+  read_checkpoint: null # null, 'terra-ep5.pth.tar'
   checkpoint_freq_iter: 5000
 protein_init:
   enabled: False

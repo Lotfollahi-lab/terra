@@ -94,11 +94,11 @@ optimization:
 state:
   log_freq: 20
   checkpoint_freq: 5
-  write_tag: nichejepa
+  write_tag: terra
   read_timestamp: ''
   folder_path: null
   load_checkpoint: False # true, false
-  read_checkpoint: null # null, 'nichejepa-ep5.pth.tar'
+  read_checkpoint: null # null, 'terra-ep5.pth.tar'
   checkpoint_freq_iter: 50000
 protein_init:
   enabled: False

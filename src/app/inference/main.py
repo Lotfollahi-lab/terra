@@ -7,14 +7,14 @@ from datetime import datetime
 import anndata as ad
 import torch
 
-from src.nichejepa.datasets.prepare_dataset import prepare_dataset
-from src.nichejepa.infer import infer
-from src.nichejepa.utils.config import create_params_from_YAML_wandb_config
-from src.nichejepa.utils.distributed import init_distributed
+from src.terra.datasets.prepare_dataset import prepare_dataset
+from src.terra.infer import infer
+from src.terra.utils.config import create_params_from_YAML_wandb_config
+from src.terra.utils.distributed import init_distributed
 
 
 def parse_arguments():
-    parser = argparse.ArgumentParser(description='Run NicheJEPA inference.')
+    parser = argparse.ArgumentParser(description='Run TERRA inference.')
     parser.add_argument('--fname', type=str, default='configs.yaml',
                         help='Name of the config file to load.')
     return parser.parse_args()
@@ -36,7 +36,7 @@ if __name__ == '__main__':
         args.fname,
         logger)
 
-    artifact_folder_path = '../nichejepa-reproducibility/artifacts'
+    artifact_folder_path = '../terra-reproducibility/artifacts'
 
     folder_path = os.path.join(artifact_folder_path,
                                params['data']['data_set_name'],

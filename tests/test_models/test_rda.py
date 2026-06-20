@@ -3,7 +3,7 @@
 import pytest
 import torch
 
-from nichejepa.models.rda import (
+from terra.models.rda import (
     DepthConditioning,
     build_depth_embedding,
     compute_per_cell_depth,

@@ -60,9 +60,9 @@ optimization:
 state:
   log_freq: 20
   checkpoint_freq: 1
-  write_tag: nichejepa
-  folder_path: '/lustre/scratch126/cellgen/team361/sb75/nichejepa-reproducibility/artifacts/hst_corpus_70m/30042025_091117_441'
+  write_tag: terra
+  folder_path: '/lustre/scratch126/cellgen/team361/sb75/terra-reproducibility/artifacts/hst_corpus_70m/30042025_091117_441'
   load_checkpoint: True # true, false
-  read_checkpoint: 'nichejepa-ep9.pth.tar' # null, 'nichejepa-ep5.pth.tar'
+  read_checkpoint: 'terra-ep9.pth.tar' # null, 'terra-ep5.pth.tar'
   checkpoint_freq_iter: 5000
 

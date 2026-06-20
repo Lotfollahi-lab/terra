@@ -3,7 +3,7 @@
 import pytest
 import torch
 
-from nichejepa.models.special_token_moe import (
+from terra.models.special_token_moe import (
     SpecialTokenMoE,
     _as_list,
     extract_special_token_indices,

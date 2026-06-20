@@ -8,9 +8,9 @@ from tqdm import tqdm
 
 from app.utils import (init_model, load_checkpoint, parse_arch_kwargs,
                        parse_protein_init_kwargs)
-from nichejepa.datasets.cell_datasets import CellBaseDataset
-from nichejepa.datasets.dataloaders import init_dataloader_and_sampler
-from nichejepa.models.modules import ClassificationModel
+from terra.datasets.cell_datasets import CellBaseDataset
+from terra.datasets.dataloaders import init_dataloader_and_sampler
+from terra.models.modules import ClassificationModel
 
 
 _GLOBAL_SEED = 0
