@@ -2,10 +2,10 @@
 LoRA / selective-unfreeze finetuning for TERRA classification.
 
 Standalone usage (reads data paths from config):
-    python src/app/finetune.py --fname reproducibility/config/finetuning/config.yaml
+    python src/app/training/finetune.py --fname reproducibility/config/finetuning/config.yaml
 
 Programmatic usage from a cross-validation loop:
-    from app.finetune import finetune
+    from app.training.finetune import finetune
 
     # Inner fold — early stopping on val, returns val accuracy for LR selection:
     predictions, targets, accuracy = finetune(
@@ -34,11 +34,24 @@ from tqdm import tqdm
 from pathlib import Path
 from typing import Tuple, List
 
+import numpy as np
+import scanpy as sc
+from anndata import AnnData
+
+import torch
+import torch.nn as nn
+import torch.multiprocessing as mp
+
+from datasets import Dataset, load_from_disk
+
 from app.utils import (init_model, load_checkpoint, parse_arch_kwargs,
                        parse_protein_init_kwargs)
-from terra.datasets.cell_datasets import CellBaseDataset
+from app.utils.helper import apply_peft
+from terra.datasets.cell_datasets import CellBaseDataset, init_cell_dataset
 from terra.datasets.dataloaders import init_dataloader_and_sampler
 from terra.models.modules import ClassificationModel
+from terra.utils.distributed import init_distributed
+from terra.utils.embedding import create_binary_selection_mask
 
 
 os.environ["NCCL_ASYNC_ERROR_HANDLING"] = "1" # Better error propagation
@@ -56,7 +69,7 @@ def parse_arguments():
     Parse config file name from command-line arguments and return hyperparameters in a nested dictionary.
     """
     parser = argparse.ArgumentParser(
-        description='Run NicheJEPA finetuning.')
+        description='Run TERRA finetuning.')
     parser.add_argument(
         '--fname',
         type=str,
