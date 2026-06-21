@@ -1,5 +1,27 @@
 """
-Usage: python source-code/src/app/finetune.py --fname reproducibility/config/finetuning/xhs1000_niche_finetune-nemo.yaml
+LoRA / selective-unfreeze finetuning for TERRA classification.
+
+Standalone usage (reads data paths from config):
+    python src/app/finetune.py --fname reproducibility/config/finetuning/config.yaml
+
+Programmatic usage from a cross-validation loop:
+    from app.finetune import finetune
+
+    # Inner fold — early stopping on val, returns val accuracy for LR selection:
+    predictions, targets, accuracy = finetune(
+        args=args,
+        train_adata=train_adata, train_dataset=train_dataset,
+        val_adata=val_adata, val_dataset=val_dataset,
+    )
+
+    # Outer fold — early stopping on val, final eval on held-out test:
+    predictions, targets, accuracy = finetune(
+        args=args,
+        train_adata=train_adata, train_dataset=train_dataset,
+        val_adata=val_adata, val_dataset=val_dataset,
+        test_adata=test_adata, test_dataset=test_dataset,
+        save_folder_path=output_dir,
+    )
 """
 import os
 import sys
@@ -10,6 +32,7 @@ import yaml
 from datetime import datetime
 from tqdm import tqdm
 from pathlib import Path
+from typing import Tuple, List
 
 from app.utils import (init_model, load_checkpoint, parse_arch_kwargs,
                        parse_protein_init_kwargs)
@@ -34,17 +57,21 @@ def parse_arguments():
     """
     parser = argparse.ArgumentParser(
         description='Run NicheJEPA finetuning.')
-    parser.add_argument('--fname', type=str, default='configs.yaml',
-                        help='Name of the config file to load.')
-    
+    parser.add_argument(
+        '--fname',
+        type=str,
+        default='configs.yaml',
+        help='Name of the config file to load.'
+    )
+
     parser_args = parser.parse_args()
-    
+
     # Get the config file name from command line argument
     args_fname = parser_args.fname
 
     # Read parameters from config file
     with open(args_fname, "r") as f:
-        args = yaml.safe_load(f)    
+        args = yaml.safe_load(f)
 
     return args
 
@@ -63,80 +90,186 @@ def validate(
         top_k
     ):
     """
-    Run validation and return loss and accuracy.
-    
+    Run one validation pass and return loss and accuracy scalars.
+
+    Called at the end of each training epoch to drive early stopping: the
+    returned loss is compared against the best seen so far, and the patience
+    counter is incremented or reset accordingly. Because it is called inside
+    the training loop, it restores model.train() before returning so that the
+    next epoch begins in the correct mode.
+
+    Returns scalars only — not per-sample predictions. Use test() after
+    training is complete if you need per-sample outputs for a classification
+    report.
+
     Parameters
     ----------
     model:
-        The model to validate.
+        The model being trained.
     val_loader:
-        Validation dataloader.
+        Dataloader for the validation split.
     val_label_lookup:
-        Label lookup dictionary for validation data.
+        Pandas Series indexed by cell_id mapping to integer class labels.
     criterion:
-        Loss function.
+        Loss function (CrossEntropyLoss).
     device:
-        Device to run validation on.
+        Device tensors are moved to.
     n_special_tokens:
-        Number of special tokens.
+        Number of leading special tokens to skip when building the selection mask.
     model_config:
-        Model configuration dictionary.
+        Model configuration dict loaded from the pretrained checkpoint.
     selection_type:
-        Selection type for cell mask creation.
+        'agg_cell' or 'agg_graph' — determines which tokens are pooled.
     agg_excluded_tokens:
-        Excluded tokens for aggregation.
+        Token ids to exclude from aggregation (or None).
     top_k:
-        Top k for selection.
-    
+        If set, restrict aggregation to the top-k expressed genes.
+
     Returns
     -------
     val_loss:
-        Average validation loss.
+        Mean cross-entropy loss over the validation set.
     val_accuracy:
-        Validation accuracy.
+        Fraction of correctly classified cells.
     """
     model.eval()
     val_loss = 0.0
     val_correct = 0
     val_total = 0
-    
+
     for udata, _, _, masks_attention in val_loader:
         for key in udata.keys():
             if key != 'cell_id':
                 udata[key] = udata[key].to(device, non_blocking=True)
         masks_attention = masks_attention.to(device, non_blocking=True)
-        
+
         ns_tokens = udata['tokens'][:, n_special_tokens:]
-        cell_mask = create_binary_selection_mask(
-            ns_tokens,
-            selection_type=selection_type,
-            excluded_tokens=agg_excluded_tokens,
-            seq_len_cell=model_config['data']['seq_len_cell'],
-            top_k=top_k,
-        )
-        
+        # Create cell mask or neighborhood mask for aggregation depending on the selection type (agg_cell or agg_graph)
+        if selection_type == 'agg_cell':
+            selection_mask = create_binary_selection_mask(
+                ns_tokens,
+                selection_type=selection_type,
+                excluded_tokens=agg_excluded_tokens,
+                seq_len_cell=model_config['data']['seq_len_cell'],
+                top_k=top_k,
+            )
+        elif selection_type == 'agg_graph':
+            selection_mask = create_binary_selection_mask(
+                ns_tokens,
+                selection_type=selection_type,
+                excluded_tokens=agg_excluded_tokens,
+                seq_len_cell=model_config['data']['seq_len_cell'],
+                top_k=top_k,
+                n_segments=model_config['data']['n_segments']
+            )
+        else:
+            raise ValueError(f"Selection type {selection_type} not supported.")
+
         logits = model(
             udata=udata,
             masks_attention=masks_attention,
-            cell_mask=cell_mask,
+            selection_mask=selection_mask,
         )
-        
+
         labels = torch.tensor(
             val_label_lookup[udata['cell_id']].values,
             dtype=torch.long,
             device=device
         )
-        
+
         loss = criterion(logits, labels)
         val_loss += loss.item()
-        
+
         preds = torch.argmax(logits, dim=1)
         val_correct += (preds == labels).sum().item()
         val_total += labels.size(0)
-    
+
     model.train()
-    
+
     return val_loss / len(val_loader), val_correct / val_total
+
+
+@torch.no_grad()
+def test(
+        model,
+        loader,
+        label_lookup,
+        device,
+        n_special_tokens,
+        model_config,
+        selection_type,
+        agg_excluded_tokens,
+        top_k
+    ) -> Tuple[List[int], List[int], float]:
+    """
+    Run a final evaluation pass and return per-sample predictions.
+
+    Called once after training is complete on the held-out evaluation set
+    (val for inner folds, test for outer folds). Unlike validate(), this
+    returns per-sample predictions and targets so that the caller can write
+    a full classification report (per-class precision/recall/F1). It does
+    not compute loss and does not restore training mode.
+
+    Returns
+    -------
+    predictions:
+        List of predicted class indices, one per cell.
+    targets:
+        List of ground truth class indices, one per cell.
+    accuracy:
+        Fraction of correctly classified cells.
+    """
+    model.eval()
+    all_preds = []
+    all_targets = []
+
+    for udata, _, _, masks_attention in loader:
+        for key in udata.keys():
+            if key != 'cell_id':
+                udata[key] = udata[key].to(device, non_blocking=True)
+        masks_attention = masks_attention.to(device, non_blocking=True)
+
+        ns_tokens = udata['tokens'][:, n_special_tokens:]
+        # Create cell mask or neighborhood mask for aggregation depending on the selection type (agg_cell or agg_graph)
+        if selection_type == 'agg_cell':
+            selection_mask = create_binary_selection_mask(
+                ns_tokens,
+                selection_type=selection_type,
+                excluded_tokens=agg_excluded_tokens,
+                seq_len_cell=model_config['data']['seq_len_cell'],
+                top_k=top_k,
+            )
+        elif selection_type == 'agg_graph':
+            selection_mask = create_binary_selection_mask(
+                ns_tokens,
+                selection_type=selection_type,
+                excluded_tokens=agg_excluded_tokens,
+                seq_len_cell=model_config['data']['seq_len_cell'],
+                top_k=top_k,
+                n_segments=model_config['data']['n_segments']
+            )
+        else:
+            raise ValueError(f"Selection type {selection_type} not supported.")
+
+        logits = model(
+            udata=udata,
+            masks_attention=masks_attention,
+            selection_mask=selection_mask,
+        )
+
+        labels = torch.tensor(
+            label_lookup[udata['cell_id']].values,
+            dtype=torch.long,
+            device=device
+        )
+
+        preds = torch.argmax(logits, dim=1)
+        all_preds.extend(preds.cpu().numpy().tolist())
+        all_targets.extend(labels.cpu().numpy().tolist())
+
+    accuracy = sum(p == t for p, t in zip(all_preds, all_targets)) / len(all_targets)
+
+    return all_preds, all_targets, accuracy
 
 
 def finetune(
@@ -145,43 +278,93 @@ def finetune(
         train_dataset: Dataset,
         val_adata: AnnData | None = None,
         val_dataset: Dataset | None = None,
+        test_adata: AnnData | None = None,
+        test_dataset: Dataset | None = None,
         save_folder_path: str | None = None,
-        LOCAL_RANK: int | None = None,
-        WORLD_RANK: int | None = None,
-    ):
+        resume_checkpoint_path: str | None = None,
+    ) -> Tuple[List[int], List[int], float]:
     """
-    Train model.
+    Finetune a pretrained TERRA encoder for niche/cell transfer.
+
+    Loads the encoder from a saved checkpoint, applies LoRA adapters or
+    selective weight unfreezing (controlled by args['finetune']['use_peft']),
+    attaches a linear or MLP classification head, and trains end-to-end.
+
+    Designed to be called from a cross-validation loop. The caller controls
+    which data splits are provided:
+
+    Inner fold (LR search):
+        Pass val_adata/val_dataset only. Early stopping is applied on val loss;
+        final evaluation is on val. The returned accuracy is used by the caller
+        to select the best learning rate across inner folds.
+
+    Outer fold (final training):
+        Pass test_adata/test_dataset, and optionally val_adata/val_dataset for early stopping. If val is provided, training stops early when val loss stops improving; 
+        the best model state is restored before evaluating on test. If val is not provided, training runs to num_epochs. The returned
+        predictions and accuracy are the per-fold test results.
+
+    At least one of (val, test) must be provided.
 
     Parameters
-    -----------
+    ----------
     args:
-        Dictionary containing the hyperparams from the config file.
+        Config dict. Relevant sub-dicts: args['model'], args['data'],
+        args['finetune'].
     train_adata:
-        AnnData object containing labels for the finetune training dataset.
+        AnnData with obs columns 'cell_id' and the integer label column.
     train_dataset:
-        Finetune training dataset.
+        Pre-tokenized HuggingFace Dataset for training.
     val_adata:
-        AnnData object containing labels for the validation dataset (optional).
+        AnnData for the validation split (optional).
     val_dataset:
-        Validation dataset (optional).
+        Pre-tokenized HuggingFace Dataset for validation (optional).
+    test_adata:
+        AnnData for the held-out test split (optional).
+    test_dataset:
+        Pre-tokenized HuggingFace Dataset for the test split (optional).
     save_folder_path:
-        Path for saving model artifacts.
-    LOCAL_RANK:
-        Local rank of the process.
-    WORLD_RANK:
-        World rank of the process.
+        Directory under which a timestamped run folder is created for
+        checkpoints and params.yaml. If None, no artifacts are saved.
+    resume_checkpoint_path:
+        Path to a checkpoint file to resume from. The checkpoint must contain
+        'model', 'optimizer', and 'epoch' keys.
+
+    Returns
+    -------
+    predictions:
+        Per-cell predicted class indices on the evaluation set.
+    targets:
+        Per-cell ground truth class indices on the evaluation set.
+    accuracy:
+        Fraction of correctly classified cells on the evaluation set.
     """
+    # -------------------------------------------------------------------- #
+    # VALIDATE INPUTS
+    # -------------------------------------------------------------------- #
+    has_val = val_adata is not None and val_dataset is not None
+    has_test = test_adata is not None and test_dataset is not None
+
+    if not has_val and not has_test:
+        raise ValueError("At least one of (val, test) must be provided.")
+
+    # Determine evaluation set
+    if has_test:
+        eval_adata, eval_dataset = test_adata, test_dataset
+        eval_set_name = "Test"
+    else:
+        eval_adata, eval_dataset = val_adata, val_dataset
+        eval_set_name = "Validation"
+
     # -------------------------------------------------------------------- #
     # BACKEND SETUP
     # -------------------------------------------------------------------- #
-    # Set random seeds
     logger.info("Configuring backend...")
     np.random.seed(_GLOBAL_SEED)
     torch.manual_seed(_GLOBAL_SEED)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(_GLOBAL_SEED)
-    torch.backends.cudnn.deterministic = False # set to True for reproducibility
-    torch.backends.cudnn.benchmark = True # set to False for reproducibility
+    torch.backends.cudnn.deterministic = False
+    torch.backends.cudnn.benchmark = True
 
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
@@ -190,9 +373,7 @@ def finetune(
     # Set device
     if not torch.cuda.is_available():
         device = torch.device('cpu')
-    elif LOCAL_RANK is not None:
-        device = torch.device(f"cuda:{LOCAL_RANK}")
-    elif LOCAL_RANK is None:
+    else:
         device = torch.device('cuda:0')
         torch.cuda.set_device(device)
 
@@ -200,28 +381,24 @@ def finetune(
     # LOAD MODEL CONFIG
     # -------------------------------------------------------------------- #
     logger.info("Loading model config...")
-    # Construct paths to model config, token dictionary, and model checkpoint
     pretrained_checkpoint_path = Path(args['model']['pretrained_checkpoint_path'])
     model_config_file_path = pretrained_checkpoint_path / 'model_config.yaml'
     token_dictionary_file_path = pretrained_checkpoint_path / 'token_dictionary.pkl'
     model_checkpoint_path = pretrained_checkpoint_path / 'model_checkpoint.pt'
 
-    # Load model config
     with open(model_config_file_path, 'r') as file:
         model_config = yaml.safe_load(file)
 
     # -------------------------------------------------------------------- #
-    # LOAD TOKEN DICTIONARY AND GET TOKEN DICTIONARY-SPECIFIC PARAMS
+    # LOAD TOKEN DICTIONARY
     # -------------------------------------------------------------------- #
     logger.info("Loading token dictionary...")
-    # Get token sequence length and number of special tokens
     n_special_tokens = len(model_config['meta']['special_tokens'])
     seq_len = (
         model_config['data']['seq_len_cell'] +
         model_config['data']['seq_len_neighborhood'] +
         n_special_tokens)
 
-    # Load token dict and get token dict-specfic params
     with open(token_dictionary_file_path, 'rb') as file:
         token_dict = pickle.load(file)
     vocab_size = len(token_dict)
@@ -245,7 +422,6 @@ def finetune(
         sample_segments = False
     targets_list = args['mask']['targets_list']
 
-    # Initialize dataloader
     train_loader, _ = init_dataloader_and_sampler(
         cell_dataset=train_cell_dataset,
         batch_size=args['data']['batch_size'],
@@ -256,17 +432,16 @@ def finetune(
         pin_memory=args['data']['pin_memory'],
         num_workers=args['data']['num_workers'],
         drop_last=False,
-        persistent_workers=False)
+        persistent_workers=False
+    )
 
     # -------------------------------------------------------------------- #
-    # PREPARE VALIDATION DATASET AND DATALOADER
+    # PREPARE VALIDATION DATALOADER (if provided)
     # -------------------------------------------------------------------- #
     val_loader = None
     val_label_lookup = None
-    if val_dataset is not None and val_adata is not None:
-        logger.info("Preparing validation dataset and dataloader...")
-        
-        # Create validation cell dataset
+    if has_val:
+        logger.info("Preparing validation dataloader...")
         val_cell_dataset = init_cell_dataset(
             dataset=val_dataset,
             vocab_size=vocab_size,
@@ -279,9 +454,9 @@ def finetune(
             sampling_strategy=None,
             n_nonzero_tokens_list=None,
             include_cell_id=True,
-            sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'])
-        
-        # Initialize validation dataloader
+            sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb']
+        )
+
         val_loader, _ = init_dataloader_and_sampler(
             cell_dataset=val_cell_dataset,
             batch_size=args['data']['batch_size'],
@@ -292,50 +467,63 @@ def finetune(
             pin_memory=args['data']['pin_memory'],
             num_workers=args['data']['num_workers'],
             drop_last=False,
-            persistent_workers=False)
-        
-        logger.info(f"Validation dataset size: {len(val_dataset)} samples")
-    else:
-        logger.info("No validation dataset provided. Skipping validation.")
+            persistent_workers=False
+        )
+
+        # Create validation label lookup
+        label_name = args['data']['label_name']
+        val_label_lookup = val_adata.obs.set_index('cell_id')[label_name]
+
+    # -------------------------------------------------------------------- #
+    # PREPARE EVAL DATALOADER
+    # -------------------------------------------------------------------- #
+    logger.info(f"Preparing {eval_set_name.lower()} dataloader...")
+    eval_cell_dataset = init_cell_dataset(
+        dataset=eval_dataset,
+        vocab_size=vocab_size,
+        seq_len_cell=model_config['data']['seq_len_cell'],
+        seq_len_neighborhood=model_config['data']['seq_len_neighborhood'],
+        tokenizer_type=model_config['data']['tokenizer_type'],
+        gt_type=model_config['meta']['gt_type'],
+        cell_pos_enc=model_config['meta']['cell_pos_enc'],
+        special_tokens=model_config['meta']['special_tokens'],
+        sampling_strategy=None,
+        n_nonzero_tokens_list=None,
+        include_cell_id=True,
+        sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb']
+    )
+
+    eval_loader, _ = init_dataloader_and_sampler(
+        cell_dataset=eval_cell_dataset,
+        batch_size=args['data']['batch_size'],
+        distributed=False,
+        world_size=1,
+        rank=0,
+        collate_fn=mask_collator,
+        pin_memory=args['data']['pin_memory'],
+        num_workers=args['data']['num_workers'],
+        drop_last=False,
+        persistent_workers=False
+    )
 
     # -------------------------------------------------------------------- #
     # PREPARE LABELS
     # -------------------------------------------------------------------- #
     logger.info("Preparing labels...")
     label_name = args['data']['label_name']
-    
-    # Assert required columns exist in train_adata.obs
-    assert 'cell_id' in train_adata.obs.columns, f"'cell_id' not found in train_adata.obs.columns. Available columns: {train_adata.obs.columns.tolist()}"
-    assert label_name in train_adata.obs.columns, f"'{label_name}' not found in train_adata.obs.columns. Available columns: {train_adata.obs.columns.tolist()}"
-    
-    # Assert that label_name contains integer values (required for CrossEntropyLoss)
-    label_dtype = train_adata.obs[label_name].dtype
-    assert pd.api.types.is_integer_dtype(label_dtype), (
-        f"Labels in '{label_name}' must be integers, but got dtype: {label_dtype}. "
-        f"Please encode string labels to integer class indices."
-    )
-    
-    # Create label lookup dictionary indexed by cell_id (do once before training loop)
+
+    assert 'cell_id' in train_adata.obs.columns
+    assert label_name in train_adata.obs.columns
+
     label_lookup = train_adata.obs.set_index('cell_id')[label_name]
-    logger.info(f"Label lookup: {label_lookup}")
+    eval_label_lookup = eval_adata.obs.set_index('cell_id')[label_name]
 
-    # Create validation label lookup if validation data is provided
-    if val_adata is not None:
-        assert 'cell_id' in val_adata.obs.columns, f"'cell_id' not found in val_adata.obs.columns."
-        assert label_name in val_adata.obs.columns, f"'{label_name}' not found in val_adata.obs.columns."
-        val_label_dtype = val_adata.obs[label_name].dtype
-        assert pd.api.types.is_integer_dtype(val_label_dtype), (
-            f"Validation labels in '{label_name}' must be integers, but got dtype: {val_label_dtype}."
-        )
-        val_label_lookup = val_adata.obs.set_index('cell_id')[label_name]
-        logger.info(f"Validation label lookup created with {len(val_label_lookup)} entries")
-
-    # set number of classes
+    # Set number of classes
     try:
         num_classes = train_adata.uns[f'{label_name}_num_classes']
     except KeyError:
         num_classes = train_adata.obs[label_name].nunique()
-        logger.warning(f"Number of classes not found in train_adata.uns. Using train_adata.obs[{label_name}].nunique() instead.")
+        logger.warning(f"Number of classes not found in train_adata.uns. Using nunique() instead.")
     logger.info(f"Number of classes: {num_classes}")
 
     # Load token dict and get token dict-specfic params
@@ -425,7 +613,6 @@ def finetune(
     # else:
     #     return_layer_emb_fn = target_encoder.backbone.return_layer_emb
 
-    # Load model checkpoint
     _, _, target_encoder, _, _, _, _ = load_checkpoint(
             device=device,
             r_path=model_checkpoint_path,
@@ -434,17 +621,14 @@ def finetune(
             target_encoder=target_encoder,
             opt=None,
             scaler=None,
-            is_training=False)
-    
-    # TODO: Incorporate DistributedDataParallel here if we want to finetune the model in a distributed manner.
-    
+            is_training=False
+        )
+
     # -------------------------------------------------------------------- #
-    # BUILD MODEL
+    # BUILD MODEL WITH PEFT
     # -------------------------------------------------------------------- #
-    # get finetune hyperparameters
     use_peft = args['finetune']['use_peft']
 
-    # apply PEFT-adapter if specified
     if use_peft:
         peft_method = args['finetune']['peft_method']
         peft_rank = args['finetune']['peft_rank']
@@ -456,7 +640,7 @@ def finetune(
             peft_target_modules = args['finetune']['peft_target_modules']
         except KeyError:
             peft_target_modules = None
-        
+
         peft_target_encoder = apply_peft(
             target_encoder=target_encoder,
             peft_method=peft_method,
@@ -468,20 +652,29 @@ def finetune(
             peft_task_type=peft_task_type
         )
     else:
-        # freeze parameters of target encoder
-        for p in target_encoder.parameters():
-            p.requires_grad = False
-        logger.info(f"Target encoder parameters are frozen.")
+        # Freeze all parameters except those in target modules
+        logger.info("Freezing all parameters except those in target modules...")
+        for name, param in target_encoder.named_parameters():
+            if any(target in name for target in args['finetune']['peft_target_modules']):
+                param.requires_grad = True
+                logger.info(f"Trainable: {name}")
+            else:
+                param.requires_grad = False
+
+        trainable_params = sum(p.numel() for p in target_encoder.parameters() if p.requires_grad)
+        frozen_params = sum(p.numel() for p in target_encoder.parameters() if not p.requires_grad)
+        logger.info(f"Target encoder: {trainable_params:,} trainable params, {frozen_params:,} frozen params")
 
     use_mlp = args['finetune']['use_mlp']
     hidden_dim = args['finetune']['hidden_dim']
     lr = args['finetune']['lr']
     num_epochs = args['finetune']['num_epochs']
+    patience = args['finetune'].get('patience', 10)
+    save_every_k = args['finetune'].get('save_every_k_epochs', -1)
     selection_type = args['finetune']['selection_type']
     agg_excluded_tokens = args['finetune']['excluded_tokens']
     top_k = args['finetune']['top_k']
-    
-    # apply a linear layer or MLP to the output of the PEFT target encoder if PEFT is applied, otherwise apply to the output of the target encoder
+
     model = ClassificationModel(
         base_model=peft_target_encoder if use_peft else target_encoder,
         num_classes=num_classes,
@@ -489,120 +682,98 @@ def finetune(
         hidden_dim=hidden_dim
     )
     model.to(device)
-    
-    total_params = 0
-    trainable_params = 0
-    lora_params = 0
-    non_lora_params = 0
-    lora_modules = []
-    non_lora_modules = []
-
-    for name, p in model.named_parameters():
-        num = p.numel()
-        total_params += num
-        if p.requires_grad and "lora_" in name.lower():
-            trainable_params += num
-            lora_params += num
-            lora_modules.append(name)
-        elif p.requires_grad and "lora_" not in name.lower():
-            trainable_params += num
-            non_lora_params += num
-            non_lora_modules.append(name)
-            logger.info(f"Parameter {name} is trainable but not a LoRA parameter.")
-        elif not p.requires_grad and "lora_" in name.lower():
-            logger.info(f"Parameter {name} is not trainable but is a LoRA parameter.")
-    
-    logger.info(f"LoRA modules: {lora_modules}")
-    logger.info(f"Non-LoRA modules: {non_lora_modules}")
-    logger.info(f"Total params: {total_params:,} | Trainable params: {trainable_params:,} ({trainable_params/total_params*100:.2f}%)")
-    logger.info(f"LoRA params: {lora_params:,} | Non-LoRA params: {non_lora_params:,} ({non_lora_params/total_params*100:.2f}%)")
 
     # -------------------------------------------------------------------- #
     # PREPARE TRAINING INGREDIENTS
     # -------------------------------------------------------------------- #
-    # Loss function
     criterion = nn.CrossEntropyLoss()
-    
-    # Optimizer (only optimize PEFT parameters)
     optimizer = torch.optim.Adam(
-        filter(
-            lambda p: p.requires_grad, model.parameters()),
-            lr=lr
-        )
-    
+        filter(lambda p: p.requires_grad, model.parameters()),
+        lr=lr
+    )
+
+    # Early stopping tracking
+    best_val_loss = float('inf')
+    best_model_state = None
+    patience_counter = 0
+    start_epoch = 0
+
     # -------------------------------------------------------------------- #
-    # SAVE CHECKPOINT FUNCTION
+    # RESUME FROM CHECKPOINT (if provided)
     # -------------------------------------------------------------------- #
-    model_name = "Linear-Probing" if not use_mlp else "MLP-Probing"
-    model_name = f"LoRA + {model_name}" if use_peft else model_name
-    logger.info(f"Model name: {model_name}")
-    
-    # Save checkpoint function
+    if resume_checkpoint_path is not None:
+        resume_path = Path(resume_checkpoint_path)
+        if resume_path.exists():
+            logger.info(f"Resuming from checkpoint: {resume_path}")
+            checkpoint = torch.load(resume_path, map_location=device)
+
+            # Load model state
+            model.load_state_dict(checkpoint['model'])
+            logger.info("Loaded model state from checkpoint")
+
+            # Load optimizer state
+            if 'optimizer' in checkpoint:
+                optimizer.load_state_dict(checkpoint['optimizer'])
+                logger.info("Loaded optimizer state from checkpoint")
+
+            # Set start epoch (resume from next epoch)
+            if 'epoch' in checkpoint:
+                start_epoch = checkpoint['epoch'] + 1
+                logger.info(f"Resuming from epoch {start_epoch}")
+
+            # Restore best validation loss if available
+            if 'val_loss' in checkpoint and checkpoint['val_loss'] is not None:
+                best_val_loss = checkpoint['val_loss']
+                logger.info(f"Restored best val loss: {best_val_loss:.4f}")
+        else:
+            logger.warning(f"Checkpoint not found at {resume_path}. Starting from scratch.")
+
+    # -------------------------------------------------------------------- #
+    # CHECKPOINT SAVING FUNCTION
+    # -------------------------------------------------------------------- #
     def save_checkpoint(
+            filename,
             epoch,
             train_loss,
             train_accuracy,
             val_loss=None,
-            val_accuracy=None,
+            val_accuracy=None
         ):
-        """
-        Save checkpoint.
-        Parameters
-        ----------
-        epoch:
-            Epoch number.
-        train_loss:
-            Training loss for the epoch.
-        train_accuracy:
-            Training accuracy for the epoch.
-        val_loss:
-            Validation loss for the epoch (optional).
-        val_accuracy:
-            Validation accuracy for the epoch (optional).
-        """
+        if finetune_dir is None:
+            return
         save_dict = {
-                        'model': model.state_dict(),
-                        'opt': optimizer.state_dict(),
-                        'epoch': epoch,
-                        'zero_epoch_tracking': True,
-                        'train_loss': train_loss,
-                        'train_accuracy': train_accuracy,
-                        'val_loss': val_loss,
-                        'val_accuracy': val_accuracy,
-                        'batch_size': args['data']['batch_size'],
-                        'world_size': 1,
-                        'lr': lr,
-                        'model_name': model_name,
-                    }
-        ft_model_name = finetune_dir / f'ft_{epoch}.pt'
-        logger.info(f"Saving checkpoint to {ft_model_name}...")
-        torch.save(
-            save_dict,
-            ft_model_name
-        )
+            'model': model.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'epoch': epoch,
+            'train_loss': train_loss,
+            'train_accuracy': train_accuracy,
+            'val_loss': val_loss,
+            'val_accuracy': val_accuracy,
+            'lr': lr,
+        }
+        checkpoint_path = finetune_dir / f'{filename}.pt'
+        torch.save(save_dict, checkpoint_path)
+        logger.info(f"Saved checkpoint to {checkpoint_path}")
 
     # -------------------------------------------------------------------- #
     # TRAINING LOOP
     # -------------------------------------------------------------------- #
-    # Track best validation metrics
-    best_val_loss = float('inf')
-    best_val_accuracy = 0.0
-    
-    for epoch in range(num_epochs):
-        logger.info(f"Epoch {epoch}")
-        model.train()  # Ensure training mode
+    train_loss, train_accuracy = 0.0, 0.0
+    val_loss, val_accuracy = None, None
+
+    for epoch in range(start_epoch, num_epochs):
+        model.train()
         train_running_loss = 0.0
         train_correct_preds = 0
         train_total_preds = 0
 
-        for itr, (udata, _, _, masks_attention) in tqdm(enumerate(train_loader)):
+        for itr, (udata, _, _, masks_attention) in tqdm(enumerate(train_loader), desc=f"Epoch {epoch+1}"):
             for key in udata.keys():
                 if key != 'cell_id':
                     udata[key] = udata[key].to(device, non_blocking=True)
             masks_attention = masks_attention.to(device, non_blocking=True)
-            
-            ns_tokens = udata['tokens'][:, n_special_tokens:]
 
+            ns_tokens = udata['tokens'][:, n_special_tokens:]
             # Create cell mask or neighborhood mask for aggregation depending on the selection type (agg_cell or agg_graph)
             if selection_type == 'agg_cell':
                 selection_mask = create_binary_selection_mask(
@@ -623,53 +794,36 @@ def finetune(
                 )
             else:
                 raise ValueError(f"Selection type {selection_type} not supported.")
-            
-            optimizer.zero_grad()
 
-            # Forward pass
+            optimizer.zero_grad()
             logits = model(
                 udata=udata,
                 masks_attention=masks_attention,
                 selection_mask=selection_mask,
             )
 
-            # Get labels for this batch by matching cell IDs
-            # udata['cell_id'] is a list of cell IDs
             labels = torch.tensor(
                 label_lookup[udata['cell_id']].values,
                 dtype=torch.long,
                 device=device
             )
 
-            # Compute the loss
-            train_loss_batch = criterion(
-                input=logits,
-                target=labels
-            )
-
-            # Backward pass and optimization
+            train_loss_batch = criterion(input=logits, target=labels)
             train_loss_batch.backward()
             optimizer.step()
 
-            # Track statistics
             train_running_loss += train_loss_batch.item()
-            
-            # Track accuracy
+
             with torch.no_grad():
                 preds = torch.argmax(logits, dim=1)
                 train_correct_preds += (preds == labels).sum().item()
                 train_total_preds += labels.size(0)
-                
-            # if itr > 5:
-                # break
 
         train_loss = train_running_loss / len(train_loader)
         train_accuracy = train_correct_preds / train_total_preds
-        
-        # Validation
-        val_loss = None
-        val_accuracy = None
-        if val_loader is not None:
+
+        # Early stopping on validation (if provided)
+        if has_val:
             val_loss, val_accuracy = validate(
                 model=model,
                 val_loader=val_loader,
@@ -682,55 +836,86 @@ def finetune(
                 agg_excluded_tokens=agg_excluded_tokens,
                 top_k=top_k
             )
-            
-            # Track best validation metrics
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-            if val_accuracy > best_val_accuracy:
-                best_val_accuracy = val_accuracy
-        
-        # Logging
-        if val_loss is not None:
+
             logger.info(
                 f"Epoch [{epoch+1}/{num_epochs}], "
                 f"Train Loss: {train_loss:.4f}, Train Acc: {train_accuracy:.4f}, "
                 f"Val Loss: {val_loss:.4f}, Val Acc: {val_accuracy:.4f}"
             )
+
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+                patience_counter = 0
+                save_checkpoint('checkpoint_best', epoch, train_loss, train_accuracy, val_loss, val_accuracy)
+            else:
+                patience_counter += 1
+                if patience_counter >= patience:
+                    logger.info(f"Early stopping at epoch {epoch+1}")
+                    break
+
+            if save_every_k > 0 and (epoch + 1) % save_every_k == 0:
+                save_checkpoint(f'checkpoint_epoch_{epoch+1}', epoch, train_loss, train_accuracy, val_loss, val_accuracy)
         else:
             logger.info(
                 f"Epoch [{epoch+1}/{num_epochs}], "
                 f"Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.4f}"
             )
 
-        save_checkpoint(epoch, train_loss, train_accuracy, val_loss, val_accuracy)
-    
-    if val_loader is not None:
-        logger.info(f"Best validation loss: {best_val_loss:.4f}, Best validation accuracy: {best_val_accuracy:.4f}")
-    logger.info(f"Finetuning completed.")
+            if save_every_k > 0 and (epoch + 1) % save_every_k == 0:
+                save_checkpoint(f'checkpoint_epoch_{epoch+1}', epoch, train_loss, train_accuracy)
+
+    save_checkpoint(
+        'checkpoint_last',
+        epoch,
+        train_loss,
+        train_accuracy,
+        val_loss,
+        val_accuracy
+    )
+
+    # Load best model if we did early stopping
+    if has_val and best_model_state is not None:
+        model.load_state_dict(best_model_state)
+        model.to(device)
+
+    # -------------------------------------------------------------------- #
+    # FINAL EVALUATION
+    # -------------------------------------------------------------------- #
+    logger.info(f"Evaluating on {eval_set_name} set...")
+    predictions, targets, accuracy = test(
+        model=model,
+        loader=eval_loader,
+        label_lookup=eval_label_lookup,
+        device=device,
+        n_special_tokens=n_special_tokens,
+        model_config=model_config,
+        selection_type=selection_type,
+        agg_excluded_tokens=agg_excluded_tokens,
+        top_k=top_k
+    )
+
+    logger.info(f"{eval_set_name} Accuracy: {accuracy:.4f}")
+
+    return predictions, targets, accuracy
 
 
 if __name__ == '__main__':
-    
-    # load args dictionary from config file
+
     args = parse_arguments()
-    
-    # load finetune dataset (tokenized)
-    train_dataset = load_from_disk(args['data']['finetune_dataset'])
-    cols = [c for c in train_dataset.column_names]
+
+    cols = None
+
+    train_dataset = load_from_disk(args['data']['train_dataset'])
+    cols = train_dataset.column_names
     train_dataset.set_format(
         type="torch",
         columns=cols,
         output_all_columns=True
     )
-    logger.info(f"Finetune training dataset sample: {train_dataset[0]}")
+    train_adata = sc.read_h5ad(args['data']['train_adata'])
 
-    # load finetune adata (labels)
-    train_adata = sc.read_h5ad(args['data']['finetune_adata'])
-    logger.info(f"Finetune training adata: {train_adata}")
-
-    # Load validation data (optional)
-    val_dataset = None
-    val_adata = None
+    val_dataset, val_adata = None, None
     if 'val_dataset' in args['data'] and 'val_adata' in args['data']:
         val_dataset = load_from_disk(args['data']['val_dataset'])
         val_dataset.set_format(
@@ -739,16 +924,29 @@ if __name__ == '__main__':
             output_all_columns=True
         )
         val_adata = sc.read_h5ad(args['data']['val_adata'])
-        logger.info(f"Validation dataset loaded: {len(val_dataset)} samples")
-        logger.info(f"Validation adata: {val_adata}")
-    else:
-        logger.info("No validation dataset specified in config. Training without validation.")
 
-    # finetune model
+    test_dataset, test_adata = None, None
+    if 'test_dataset' in args['data'] and 'test_adata' in args['data']:
+        test_dataset = load_from_disk(args['data']['test_dataset'])
+        test_dataset.set_format(
+            type="torch",
+            columns=cols,
+            output_all_columns=True
+        )
+        test_adata = sc.read_h5ad(args['data']['test_adata'])
+
+    save_folder_path = (
+        args['model'].get('save_folder_path') or
+        args['model'].get('finetune_checkpoint_path')
+    )
+
     finetune(
         args=args,
-        train_dataset=train_dataset,
         train_adata=train_adata,
-        val_dataset=val_dataset,
+        train_dataset=train_dataset,
         val_adata=val_adata,
+        val_dataset=val_dataset,
+        test_adata=test_adata,
+        test_dataset=test_dataset,
+        save_folder_path=save_folder_path,
     )
