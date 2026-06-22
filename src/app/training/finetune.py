@@ -2,10 +2,10 @@
 LoRA / selective-unfreeze finetuning for TERRA classification.
 
 Standalone usage (reads data paths from config):
-    python src/app/training/finetune.py --fname reproducibility/config/finetuning/config.yaml
+    python src/app/finetune.py --fname reproducibility/config/finetuning/config.yaml
 
 Programmatic usage from a cross-validation loop:
-    from app.training.finetune import finetune
+    from app.finetune import finetune
 
     # Inner fold — early stopping on val, returns val accuracy for LR selection:
     predictions, targets, accuracy = finetune(
@@ -35,22 +35,25 @@ from pathlib import Path
 from typing import Tuple, List
 
 import numpy as np
+import pandas as pd
 import scanpy as sc
 from anndata import AnnData
 
 import torch
 import torch.nn as nn
 import torch.multiprocessing as mp
+from torch.nn.parallel import DistributedDataParallel
 
 from datasets import Dataset, load_from_disk
 
-from app.utils import (init_model, load_checkpoint, parse_arch_kwargs,
-                       parse_protein_init_kwargs)
+from app.utils import init_model, load_checkpoint
 from app.utils.helper import apply_peft
-from terra.datasets.cell_datasets import CellBaseDataset, init_cell_dataset
+from terra.datasets.cell_datasets import init_cell_dataset
 from terra.datasets.dataloaders import init_dataloader_and_sampler
-from terra.models.modules import ClassificationModel
+from terra.masks.block_masking  import BlockMaskCollator
+from terra.masks.cell_masking import CellMaskCollator
 from terra.utils.distributed import init_distributed
+from terra.models.modules import ClassificationModel
 from terra.utils.embedding import create_binary_selection_mask
 
 
@@ -69,7 +72,7 @@ def parse_arguments():
     Parse config file name from command-line arguments and return hyperparameters in a nested dictionary.
     """
     parser = argparse.ArgumentParser(
-        description='Run TERRA finetuning.')
+        description='Run NicheJEPA finetuning.')
     parser.add_argument(
         '--fname',
         type=str,
@@ -150,7 +153,8 @@ def validate(
     val_correct = 0
     val_total = 0
 
-    for udata, _, _, masks_attention in val_loader:
+    # for udata, _, _, masks_attention, _ in val_loader:
+    for itr, (udata, _, _, masks_attention, _) in tqdm(enumerate(val_loader), desc=f"Validation"):
         for key in udata.keys():
             if key != 'cell_id':
                 udata[key] = udata[key].to(device, non_blocking=True)
@@ -196,6 +200,9 @@ def validate(
         preds = torch.argmax(logits, dim=1)
         val_correct += (preds == labels).sum().item()
         val_total += labels.size(0)
+        
+        # if itr > 5:
+        #     break  # For debugging, remove this line for full validation
 
     model.train()
 
@@ -236,7 +243,8 @@ def test(
     all_preds = []
     all_targets = []
 
-    for udata, _, _, masks_attention in loader:
+    # for udata, _, _, masks_attention, _ in loader:
+    for itr, (udata, _, _, masks_attention, _) in tqdm(enumerate(loader), desc=f"Test"):
         for key in udata.keys():
             if key != 'cell_id':
                 udata[key] = udata[key].to(device, non_blocking=True)
@@ -279,6 +287,9 @@ def test(
         preds = torch.argmax(logits, dim=1)
         all_preds.extend(preds.cpu().numpy().tolist())
         all_targets.extend(labels.cpu().numpy().tolist())
+        
+        # if itr > 5:
+            # break  # For debugging, remove this line for full evaluation
 
     accuracy = sum(p == t for p, t in zip(all_preds, all_targets)) / len(all_targets)
 
@@ -417,23 +428,39 @@ def finetune(
     vocab_size = len(token_dict)
     n_special_values = sum(1 for key in token_dict if "spv" in key)
 
-    # Mirror train.py: if the original training run used protein
-    # initialization for the token embedding, the encoder must be
-    # rebuilt with the same structure or state_dict loading will fail.
-    protein_init_kwargs = parse_protein_init_kwargs(args)
+    # -------------------------------------------------------------------- #
+    # PREPARE MASK COLLATOR
+    # -------------------------------------------------------------------- #
+    mask_collator = BlockMaskCollator(
+        n_targets=model_config['mask']['n_targets'],
+        n_contexts=model_config['mask']['n_contexts'],
+        n_segments=model_config['data']['n_segments'],
+        seq_len_cell=model_config['data']['seq_len_cell'],
+        seq_len_neighborhood=model_config['data']['seq_len_neighborhood'],
+        n_special_tokens=n_special_tokens,
+        per_block_mask_ratio=model_config['mask']['per_block_mask_ratio'],
+        sample_segments=False,
+        sample_gene_masks=False
+    )
 
-    n_contexts = args['mask']['n_contexts']
-    n_targets = args['mask']['n_targets']
-    block_masking = args['mask']['block_masking']
-    cell_masking = args['mask']['cell_masking']
-    context_mask_size = args['mask']['context_mask_size']
-    target_mask_size = args['mask']['target_mask_size']
-    per_block_mask_ratio = args['mask']['per_block_mask_ratio']
-    if 'sample_segments' in args['mask'].keys():
-        sample_segments = args['mask']['sample_segments']
-    else:
-        sample_segments = False
-    targets_list = args['mask']['targets_list']
+    # -------------------------------------------------------------------- #
+    # PREPARE TRAIN DATALOADER
+    # -------------------------------------------------------------------- #
+    logger.info("Preparing training dataloader...")
+    train_cell_dataset = init_cell_dataset(
+        dataset=train_dataset,
+        vocab_size=vocab_size,
+        seq_len_cell=model_config['data']['seq_len_cell'],
+        seq_len_neighborhood=model_config['data']['seq_len_neighborhood'],
+        tokenizer_type=model_config['data']['tokenizer_type'],
+        gt_type=model_config['meta']['gt_type'],
+        cell_pos_enc=model_config['meta']['cell_pos_enc'],
+        special_tokens=model_config['meta']['special_tokens'],
+        sampling_strategy=None,
+        n_nonzero_tokens_list=None,
+        include_cell_id=True,
+        sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb']
+    )
 
     train_loader, _ = init_dataloader_and_sampler(
         cell_dataset=train_cell_dataset,
@@ -445,7 +472,8 @@ def finetune(
         pin_memory=args['data']['pin_memory'],
         num_workers=args['data']['num_workers'],
         drop_last=False,
-        persistent_workers=False
+        persistent_workers=False,
+        mega_batch_mult_max=args['data'].get('mega_batch_mult_max', 1)
     )
 
     # -------------------------------------------------------------------- #
@@ -480,7 +508,8 @@ def finetune(
             pin_memory=args['data']['pin_memory'],
             num_workers=args['data']['num_workers'],
             drop_last=False,
-            persistent_workers=False
+            persistent_workers=False,
+            mega_batch_mult_max=args['data'].get('mega_batch_mult_max', 1)
         )
 
         # Create validation label lookup
@@ -516,7 +545,8 @@ def finetune(
         pin_memory=args['data']['pin_memory'],
         num_workers=args['data']['num_workers'],
         drop_last=False,
-        persistent_workers=False
+        persistent_workers=False,
+        mega_batch_mult_max=args['data'].get('mega_batch_mult_max', 1)
     )
 
     # -------------------------------------------------------------------- #
@@ -539,65 +569,24 @@ def finetune(
         logger.warning(f"Number of classes not found in train_adata.uns. Using nunique() instead.")
     logger.info(f"Number of classes: {num_classes}")
 
-    # Load token dict and get token dict-specfic params
-    with open(token_dict_folder_path, 'rb') as file:
-        token_dict = pickle.load(file)
-    vocab_size = len(token_dict)
-    if protein_init_kwargs is not None:
-        protein_init_kwargs['token_dict'] = token_dict
-    n_special_values = sum(
-        1 for key in token_dict if "spv" in key) # this only works now because of the dummy special values
-    max_special_tokens = sum(
-        1 for key in token_dict if "cls" in key) + sum(
-        1 for key in token_dict if "spt" in key)
+    # -------------------------------------------------------------------- #
+    # PREPARE SAVE PATH (optional)
+    # -------------------------------------------------------------------- #
+    finetune_dir = None
+    if save_folder_path:
+        finetune_checkpoint_path = Path(save_folder_path)
+        current_timestamp = (
+                    datetime.now().strftime("%d%m%Y_%H%M%S") +
+                    f"_{datetime.now().microsecond // 1000:03d}")
+        finetune_dir = finetune_checkpoint_path / current_timestamp
+        finetune_dir.mkdir(parents=True, exist_ok=True)
 
-    # Define tokenizer-specific params
-    if tokenizer_type == 'cell_neighborhood':
-        if add_cls:
-            special_tokens = ['cls_0', 'cls_1'] + special_tokens            
-    elif tokenizer_type == 'cell_graph':
-        if add_cls:
-            special_tokens = [
-                f'cls_{i}' for i in range(n_segments)] + special_tokens
+        with open(finetune_dir / 'params.yaml', 'w') as f:
+            yaml.dump(args, f)
 
-    # Get token sequence length and number of special tokens
-    n_special_tokens = len(special_tokens)
-    seq_len = seq_len_cell + seq_len_neighborhood + n_special_tokens
-
-    # Set multiprocessing start method
-    try:
-        mp.set_start_method("spawn")
-    except Exception:
-        logger.info(f'Multiprocessing not started.')
-
-    # Initialize torch distributed backend
-    world_size, rank = init_distributed()
-    logger.info(f'Initialized (rank/world-size) {rank}/{world_size}.')
-    if rank > 0:
-        logger.setLevel(logging.ERROR)
-
-    # Create folder to store artifacts
-    if not save_folder_path:
-        finetune_checkpoint_path = Path(args['model']['finetune_checkpoint_path'])
-    else:
-        finetune_checkpoint_path = save_folder_path
-    current_timestamp = (
-                datetime.now().strftime("%d%m%Y_%H%M%S") +
-                f"_{datetime.now().microsecond // 1000:03d}")
-    finetune_dir = finetune_checkpoint_path / current_timestamp
-    finetune_dir.mkdir(parents=True, exist_ok=True)
-    
-    with open(finetune_dir / 'params.yaml', 'w') as f:
-        yaml.dump(args, f)
-
-    # Pull architecture hyperparameters that must round-trip from
-    # the saved config (laplacian / rope / adaln). Without this the
-    # checkpoint load below would silently use the init_model defaults
-    # for these knobs, producing the wrong architecture or runtime
-    # behavior versus how it was trained.
-    arch_kwargs = parse_arch_kwargs(args)
-
-    # Initialize target encoder
+    # -------------------------------------------------------------------- #
+    # LOAD TARGET ENCODER
+    # -------------------------------------------------------------------- #
     target_encoder, _ = init_model(
         gt_type=model_config['meta']['gt_type'],
         count_encoding=model_config['meta']['count_encoding'],
@@ -609,22 +598,18 @@ def finetune(
         n_special_tokens=n_special_tokens,
         n_segments=model_config['data']['n_segments'],
         n_special_values=n_special_values,
-        enc_emb_dim=enc_emb_dim,
-        enc_depth=enc_depth,
-        pred_emb_dim=pred_emb_dim,
-        pred_depth=pred_depth,
-        num_heads=num_heads,
-        mlp_ratio=mlp_ratio,
-        use_flash_attention=use_flash_attention,
-        use_layer_norm=use_layer_norm,
-        sep_gene_tokens_neb=sep_gene_tokens_neb,
-        protein_init_kwargs=protein_init_kwargs,
-        **arch_kwargs)
-
-    # if api_version != 'v3':
-    #     return_layer_emb_fn = target_encoder.return_layer_emb
-    # else:
-    #     return_layer_emb_fn = target_encoder.backbone.return_layer_emb
+        enc_emb_dim=model_config['meta']['enc_emb_dim'],
+        enc_depth=model_config['meta']['enc_depth'],
+        pred_emb_dim=model_config['meta']['pred_emb_dim'],
+        pred_depth=model_config['meta']['pred_depth'],
+        num_heads=model_config['meta']['num_heads'],
+        mlp_ratio=model_config['meta']['mlp_ratio'],
+        use_flash_attention=model_config['meta']['use_flash_attention'],
+        api_version=model_config['meta']['api_version'],
+        sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'],
+        predict_gene=model_config['meta']['predict_gene'],
+        pos_learnable=model_config['meta']['pos_learnable']
+    )
 
     _, _, target_encoder, _, _, _, _ = load_checkpoint(
             device=device,
@@ -780,7 +765,7 @@ def finetune(
         train_correct_preds = 0
         train_total_preds = 0
 
-        for itr, (udata, _, _, masks_attention) in tqdm(enumerate(train_loader), desc=f"Epoch {epoch+1}"):
+        for itr, (udata, _, _, masks_attention, _) in tqdm(enumerate(train_loader), desc=f"Epoch {epoch+1}"):
             for key in udata.keys():
                 if key != 'cell_id':
                     udata[key] = udata[key].to(device, non_blocking=True)
@@ -831,6 +816,9 @@ def finetune(
                 preds = torch.argmax(logits, dim=1)
                 train_correct_preds += (preds == labels).sum().item()
                 train_total_preds += labels.size(0)
+            
+            # if itr > 5:
+                # break  # For debugging, remove this line for full training
 
         train_loss = train_running_loss / len(train_loader)
         train_accuracy = train_correct_preds / train_total_preds

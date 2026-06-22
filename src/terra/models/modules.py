@@ -377,14 +377,14 @@ class ClassificationModel(nn.Module):
         # Aggregate gene embeddings into cell/neighborhood embeddings
         # h.shape = (<batch_size>, <embedding_dim>)
         h = compute_mean_unmasked_emb(h, selection_mask)
+
+        # Normalize over logits dimension
+        h = F.layer_norm(h, (h.size(-1),))
         
-        # Project gene embeddings into logits
+        # Project cell/neighborhood embeddings into logits
         # logits.shape = (<batch_size>, <num_classes>)        
         logits = self.classification_head(h)
         
-        # Normalize over logits dimension
-        logits = F.layer_norm(logits, (logits.size(-1),))
-
         return logits
 
 
