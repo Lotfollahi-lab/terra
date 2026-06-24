@@ -3,14 +3,14 @@ build-backend = "hatchling.build"
 requires = ["hatchling"]
 
 [tool.hatch.build.targets.wheel]
-# Import package is 'terra' (src/terra); the 'app' application layer ships too.
-# PyPI distribution name is 'terra-st' because the bare 'terra' name is already
-# taken on PyPI (the import name 'terra' is unaffected by that).
-packages = ["src/terra", "src/app"]
+# Import package is 'terra' (src/terra). PyPI distribution name is 'terra-st'
+# because the bare 'terra' name is already taken on PyPI (the import name
+# 'terra' is unaffected by that).
+packages = ["src/terra"]
 
 [project]
 name = "terra-st"
-version = "0.0.0"
+version = "0.1.0"
 description = "Spatial transcriptomics foundation model"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -28,21 +28,27 @@ urls.Documentation = "https://terra.readthedocs.io/"
 urls.Source = "https://github.com/Lotfollahi-lab/terra"
 urls.Home-page = "https://github.com/Lotfollahi-lab/terra"
 dependencies = [
-    "anndata",
-    "squidpy",
-    "scib-metrics",
-    "scikit-misc",
-    "transformers",
-    "torch",
-    "datasets",
+    # Lower bounds are modern versions known to work with TERRA. The exact,
+    # fully-pinned reproducible environment TERRA is developed/tested against
+    # lives in `uv.lock` (use `uv sync` to reproduce it precisely).
+    "anndata>=0.10",
+    "squidpy>=1.4",
+    "scib-metrics>=0.5",
+    "scikit-misc>=0.3",
+    "transformers>=4.44",
+    # torch is given a deliberately broad floor: the CUDA build must match the
+    # user's NVIDIA driver and is installed separately (see the README), so we
+    # must not force an upgrade to a specific CUDA wheel here.
+    "torch>=2.1",
+    "datasets>=2.18",
     # for debug logging (referenced from the issue template)
-    "session-info",
-    "wandb",
-    "peft",
-    "jupyterlab",
-    "ipykernel",
-    "pyensembl",
-    "leidenalg",
+    "session-info>=1.0",
+    "wandb>=0.16",
+    "peft>=0.10",
+    "jupyterlab>=4",
+    "ipykernel>=6",
+    "pyensembl>=2.2",
+    "leidenalg>=0.9",
 ]
 
 [project.optional-dependencies]
@@ -58,6 +64,7 @@ doc = [
     "sphinxcontrib-bibtex>=1.0.0",
     "sphinx-autodoc-typehints",
     "sphinxext-opengraph",
+    "sphinx-design",
     # For notebooks
     "ipykernel",
     "ipython",
@@ -79,7 +86,7 @@ hub = [
 
 [project.scripts]
 # CLI for publishing/downloading TERRA models: `terra-hub upload|download ...`
-terra-hub = "app.huggingface:main"
+terra-hub = "terra.hub:main"
 
 [tool.coverage.run]
 source = ["terra"]
