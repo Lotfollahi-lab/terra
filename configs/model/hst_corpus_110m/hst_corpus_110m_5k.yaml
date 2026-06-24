@@ -1,6 +1,5 @@
 data:
   dataset_name: 'hst_corpus_110m'
-  model_input_size: 2816 # 2816, 704, 11264
   n_neighs: 10
   rank_cell_norm_method: null
   rank_gene_norm_method: null
@@ -20,8 +19,11 @@ data:
   sample_subset: False
   split: 0
   stratify: False
-  seq_len_cell: 256 # 64, 128, 256
-  seq_len_neighborhood: 2560 # 384/640, 1536/2816
+  model_input_size: 704
+  seq_len_cell: 64 # 64, 128, 256
+  seq_len_neighborhood: 640 # 384/640, 1536/2816
+  truncate_neighbors: true
+  tokenized_seq_len_cell: 256 # the dataset's actual genes/cell (stride)
   n_segments: 11 # 7, 11; number of unique segment tokens (gene segments)
   sampling_strategy: null # null, 'rand_sampling', 'norm_count_rank_sampling', 'rand_sampling_rep', 'norm_count_rank_sampling_rep'
   batch_size: 32 # 224, 256, 128, 288
@@ -41,11 +43,11 @@ meta:
   count_encoding: 'mlp' # 'value_bins', 'mlp'
   n_value_bins: 20
   cell_pos_enc: 'segment' # 'segment', 'coord'
-  enc_depth: 12
-  enc_emb_dim: 384 # 384, 768
-  pred_depth: 12 # 12
-  pred_emb_dim: 192 # 384, 192, 384
-  num_heads: 6 # 12, 6
+  enc_depth: 6
+  enc_emb_dim: 768 # 384, 768
+  pred_depth: 1 # 12
+  pred_emb_dim: 768 # 384, 192, 384
+  num_heads: 8 # 12, 6
   mlp_ratio: 4
   special_tokens: ['batch'] # ['batch'], ['assay', 'batch'],['assay', 'gene_panel', 'batch'], ['tissue', 'assay', 'gene_panel', 'batch']
   pos_learnable: False
@@ -74,14 +76,14 @@ optimization:
   warmup: 1 # 1
   epochs: 5 # 5
   ema:
-  - 0.995 # 0.998, 0.9995
+  - 0.998 # 0.998, 0.9995
   - 1.0
   start_lr: 2.0e-05 # 1.0e-06, 2.0e-05
   lr: 6.0e-05 # 6.0e-05, 0.000625
   final_lr: 2.0e-05 # 1.0e-06
   weight_decay: 0.04 # 0.04
   final_weight_decay: 0.4 # 0.4
-  ipe_scale: 1.25
+  ipe_scale: 1.0
   clip_grad: 2.0
   lambda_var: 0.
   lambda_cov: 0.

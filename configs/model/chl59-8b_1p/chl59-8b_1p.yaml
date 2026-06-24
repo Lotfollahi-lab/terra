@@ -12,8 +12,11 @@ data:
   sample_subset: False
   split: 0
   stratify: False
+  model_input_size: 2816
   seq_len_cell: 256 # 64, 128, 256
   seq_len_neighborhood: 2560 # 384/640, 1536/2816
+  truncate_neighbors: true
+  tokenized_seq_len_cell: 256 # the dataset's actual genes/cell (stride)
   n_segments: 11 # 7, 11; number of unique segment tokens (gene segments)
   sampling_strategy: null # null, 'rand_sampling', 'norm_count_rank_sampling', 'rand_sampling_rep', 'norm_count_rank_sampling_rep'
   batch_size: 32 # 224, 256, 128, 288
@@ -33,7 +36,7 @@ meta:
   count_encoding: 'mlp' # 'value_bins', 'mlp'
   n_value_bins: 20
   cell_pos_enc: 'segment' # 'segment', 'coord'
-  enc_depth: 3
+  enc_depth: 6
   enc_emb_dim: 768 # 384, 768
   pred_depth: 1 # 12
   pred_emb_dim: 768 # 384, 192, 384
@@ -65,14 +68,14 @@ optimization:
   warmup: 3 # 1
   epochs: 100 # 5
   ema:
-  - 0.995
+  - 0.998
   - 1.0
   start_lr: 2.0e-05 # 2.0e-05, 1.0e-06 
   lr: 6.0e-05 # 2.0e-05, 0.000625, 6.0e-05
   final_lr: 2.0e-05 # 2.0e-05, 1.0e-06
   weight_decay: 0.04 # 0.04
   final_weight_decay: 0.4 # 0.4
-  ipe_scale: 1.25
+  ipe_scale: 1.0
   clip_grad: 2.0
   lambda_var: 0.
   lambda_cov: 0.

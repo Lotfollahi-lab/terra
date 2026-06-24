@@ -6,14 +6,14 @@ job_requirement:
   QUEUE: "training-parallel" # "gpu-lotfollahi", "gpu-lotfollahi-train"  # The job queue to be used for scheduling the job.
   NUM_NODES: 1  # Number of compute nodes required for the job.
   NUM_GPUS_NODE: 1  # Number of GPUs per node.
-  NUM_PROCESSES_NODE: 16  # Number of processes per node.
+  NUM_PROCESSES_NODE: 24  # Number of processes per node.
   MEM_NODE: 64  # Memory allocated per node (in GB).
   
 infiniband:
   NCCL_IB_DISABLE: 1  # 1: Disable InfiniBand, 0: Enable InfiniBand
 
 environment:
-  ENV_PATH: "/nfs/users/nfs_s/sb75/.venvs/terra"  # Path to the environment to be activated.
+  ENV_PATH: "/nfs/team361/sb75/.venvs/terra"  # Path to the environment to be activated.
 
 artifact:
   ARTIFACT_LOCATION: "/nfs/team361/sb75/terra-reproducibility/artifacts/chl59-8b_1p"  # Path to store the artifacts.
@@ -21,7 +21,7 @@ artifact:
   OUTPUT_DIR: "/nfs/team361/sb75/terra-reproducibility/artifacts/chl59-8b_1p"  # Path to store the artifacts.
   LOG_DIR: "/nfs/team361/sb75/terra-reproducibility/artifacts/chl59-8b_1p"
   EXPERIMENT_NAME: "terra_chl59-8b_1p"  # Name of the experiment.
-  RUN_NAME: "run4"  # Name of the run.
+  RUN_NAME: "run1_32bs"  # Name of the run.
 
 runner_script:
   RUNNER_SCRIPT: "/nfs/team361/sb75/terra/src/app/training/train_model_lsf_mpirun_sanger.sh"  # Path to the runner script.
