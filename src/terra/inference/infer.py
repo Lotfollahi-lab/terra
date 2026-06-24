@@ -76,7 +76,7 @@ def infer(args: dict,
           ) -> ad.AnnData:
     """
     Use a trained model for inference. Run forward pass on a given
-    dataset andbreturn cell, neighborhood and (optionally) gene
+    dataset and return cell, neighborhood and (optionally) gene
     embeddings (cell and neighborhood gene embeddings).
 
     Parameters

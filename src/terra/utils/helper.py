@@ -244,7 +244,7 @@ def parse_protein_init_kwargs(args: dict,
     """Resolve the optional ``protein_init`` config block into encoder kwargs.
 
     Mirrors the parsing used by ``train.py`` so other entry points
-    (``finetune.py``, every script under ``app/inference/``) can rebuild
+    (``finetune.py``, every script under ``terra/inference``) can rebuild
     a protein-init-trained encoder with one call.
 
     Returns ``None`` if the ``protein_init`` section is absent or

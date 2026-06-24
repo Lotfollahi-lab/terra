@@ -7,7 +7,6 @@ https://github.com/facebookresearch/ijepa/blob/main/src/masks/multiblock.py
 """
 
 import logging
-import time # TODO: remove
 
 import numpy as np
 import torch
@@ -313,7 +312,6 @@ class BlockMaskCollator:
             collated_target_masks = None
             collated_context_masks = None
 
-        #t1 = time.perf_counter()
         #elapsed_ms = (t1 - t0) * 1000
         #print(f"[Collate] Took {elapsed_ms:.3f} ms for batch size {B}")
         #raise ValueError

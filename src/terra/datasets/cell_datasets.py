@@ -25,6 +25,16 @@ _COORD_BASED_POS_ENCS = (
 
 
 class CellBaseDataset(Dataset):
+    """Base torch ``Dataset`` wrapping a Hugging Face tokenized cell dataset.
+
+    Holds the shared configuration (gene-transformer type, cell position
+    encoding, sequence lengths, special tokens, sampling strategy) and the
+    common helpers (segment retrieval, token sampling, special-token
+    prepending, metadata attachment) used to turn a tokenized cell and its
+    spatial neighborhood into model-ready tensors. Not used directly; the
+    concrete ``__getitem__`` layout is provided by its subclasses.
+    """
+
     def __init__(self,
                  gt_type: Literal['rank', 'counts', 'combined'],
                  cell_pos_enc: Literal['segment', 'coord'],
@@ -494,6 +504,16 @@ class CellBaseDataset(Dataset):
 
 
 class CellGraphDataset(CellBaseDataset):
+    """Cell dataset using a multi-segment spatial-graph layout.
+
+    Each item is the index cell plus its nearest-neighbor cells, where every
+    cell occupies its own segment of gene tokens (segment 1 is the index cell,
+    segments 2.. are neighbors ordered nearest-first). ``__getitem__`` returns
+    a dict of per-position tensors (tokens, values, positions, segments and,
+    for coord-based position encodings, relative x/y coordinates) plus optional
+    special tokens, cell ID and per-cell metadata.
+    """
+
     def __init__(self,
                  **base_dataset_kwargs,
                  ):
@@ -755,6 +775,16 @@ class CellGraphDataset(CellBaseDataset):
 
 
 class CellNeighborhoodDataset(CellBaseDataset):
+    """Cell dataset using a two-segment cell-plus-neighborhood layout.
+
+    Each item consists of exactly two segments produced by the
+    ``CellNeighborhoodTokenizer``: segment 1 is the index cell and segment 2 is
+    a single aggregated neighborhood. ``__getitem__`` returns a dict of
+    per-position tensors (tokens, values, positions, segments and, for
+    coord-based position encodings, relative x/y coordinates) plus optional
+    special tokens, cell ID and per-cell metadata.
+    """
+
     def __init__(self,
                  **base_dataset_kwargs
                  ):
