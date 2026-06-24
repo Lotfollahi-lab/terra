@@ -16,6 +16,7 @@ sphinxcontrib-bibtex>=1.0.0
 sphinx-autodoc-typehints
 sphinxext-opengraph
 sphinx-copybutton
+sphinx-design
 ipython
 ipykernel
 pandas

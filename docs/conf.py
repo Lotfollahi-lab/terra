@@ -53,6 +53,7 @@ html_context = {
 extensions = [
     "myst_nb",
     "sphinx_copybutton",
+    "sphinx_design",
     "sphinx.ext.autodoc",
     "sphinx.ext.intersphinx",
     "sphinx.ext.autosummary",
