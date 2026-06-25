@@ -160,7 +160,14 @@ html_title = "TERRA"
 
 html_theme_options = {
     "repository_url": repository_url,
+    "repository_branch": "main",
     "use_repository_button": True,
+    "use_download_button": True,
+    # Show a "launch on Colab" button on the tutorial notebook pages.
+    "launch_buttons": {
+        "colab_url": "https://colab.research.google.com",
+        "notebook_interface": "jupyterlab",
+    },
     "path_to_docs": "docs/",
     "navigation_with_keys": False,
 }
