@@ -56,7 +56,7 @@ dev = [
 doc = [
     "docutils>=0.8,!=0.18.*,!=0.19.*",
     "sphinx>=4",
-    "sphinx-book-theme>=1.0.0",
+    "sphinx-rtd-theme>=1.3",
     "myst-nb",
     "sphinxcontrib-bibtex>=1.0.0",
     "sphinx-autodoc-typehints",
