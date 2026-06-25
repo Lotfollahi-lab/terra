@@ -35,11 +35,6 @@ artifacts/
 # Local, site-specific cluster configuration (copy cluster_env.example.sh)
 scripts/cluster_env.sh
 
-# Per-experiment cluster job-submission configs (site-specific paths/queues).
-# A sanitized template is kept at configs/job/example.yaml.
-configs/job/*
-!configs/job/example.yaml
-
 # Per-site SLURM launch scripts (site-specific paths). A sanitized template is
 # kept at scripts/train_model_slurm_torchrun.example.sh.
 scripts/train_model_slurm_torchrun_aws.sh

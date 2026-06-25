@@ -1,5 +1,12 @@
 #!/bin/bash
 
+# Load site paths (TERRA_*) from the git-ignored cluster_env.sh so the
+# ${...} variables used in the job config resolve at submit time.
+_TERRA_SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$_TERRA_SCRIPTS_DIR/cluster_env.sh" ]; then
+    . "$_TERRA_SCRIPTS_DIR/cluster_env.sh"
+fi
+
 set -euo pipefail
 
 export ADVANCED_BASH_SCRIPT_PATH="/software/isg/advanced-bsub-script"
