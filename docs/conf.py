@@ -183,7 +183,11 @@ html_theme_options = {
 pygments_style = "default"
 
 nitpick_ignore = [
-    # If building the documentation fails because of a missing link that is outside your control,
-    # you can add an exception to this list.
-    #     ("py:class", "igraph.Graph"),
+    # External / mocked types with no resolvable cross-reference target
+    # (their packages are mocked for the docs build or use abbreviated paths).
+    ("py:class", "datasets.Dataset"),
+    ("py:class", "datasets.arrow_dataset.Dataset"),
+    ("py:class", "np.ndarray"),
+    ("py:class", "pandas.core.frame.DataFrame"),
+    ("py:class", "terra.datasets.cell_datasets.CellBaseDataset"),
 ]

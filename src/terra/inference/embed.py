@@ -394,15 +394,14 @@ def harmonize_tokenize_embed_pipeline(
     cache_directory_path:
         Path where the cache is stored during dataset creation.
     gene_perturb_df:
-        DataFrame with perturbation data, e.g.
-        ```
-        gene_perturb_df =  pd.DataFrame({
-            'ensembl_id': ['ENSG00000169194', 'ENSG00000131724'],
-            'target': ['neighborhood', 'cell'],
-            'perturbation_type': ['foldchange', 'knockout'],
-            'foldchange': [0.5, np.nan]
-        })
-        ```.
+        DataFrame with perturbation data, e.g.::
+
+            gene_perturb_df = pd.DataFrame({
+                'ensembl_id': ['ENSG00000169194', 'ENSG00000131724'],
+                'target': ['neighborhood', 'cell'],
+                'perturbation_type': ['foldchange', 'knockout'],
+                'foldchange': [0.5, np.nan],
+            })
     n_proc:
         Number of processes used for tokenization.
     processing_mode:

@@ -14,8 +14,8 @@ build:
       - pip install . --no-deps
 sphinx:
   configuration: docs/conf.py
-  # Flip to true once the autosummary API pages build warning-free.
-  fail_on_warning: false
+  # The docs build warning-free; fail the RTD build on any new warning.
+  fail_on_warning: true
 python:
   install:
     - requirements: docs/requirements.txt
