@@ -11,7 +11,9 @@ import math
 from typing import Literal
 
 import torch
-#from peft import get_peft_model, LoraConfig
+import torch.nn as nn
+from peft import LoraConfig
+from peft.tuners.lora import LoraModel
 
 import terra.models.gene_transformers as gt
 from terra.models.batch_classifier import BatchClassifierHead
@@ -24,13 +26,101 @@ from terra.utils.schedulers import (CosineWDSchedule,
 
 logger = logging.getLogger(__name__)
 
-"""
-def apply_peft(model, peft_method='lora', rank=8):
+def apply_peft(
+        target_encoder: gt.GeneTransformerBaseEncoder | EncoderMultiMaskWrapper,
+        peft_method: Literal['lora'] = 'lora',
+        peft_rank: int = 8,
+        peft_alpha: int = 16,
+        peft_dropout: float = 0.05,
+        peft_bias: Literal['none', 'all'] = 'none',
+        peft_target_modules: list[str] | None = None,
+        peft_task_type: Literal['FEATURE_EXTRACTION'] = 'FEATURE_EXTRACTION',
+    ) -> nn.Module:
+    """
+    Apply PEFT to the target encoder.
+
+    Parameters:
+    -----------
+    target_encoder:
+        The target encoder to apply PEFT to.
+    peft_method:
+        The PEFT method to use. Currently, only LoRA is supported.
+    peft_rank:
+        The rank of the PEFT adapter.
+    peft_alpha:
+        The alpha of the PEFT adapter.
+    peft_dropout:
+        The dropout of the PEFT adapter. Default is 0.05.
+    peft_bias:
+        The bias of the PEFT adapter. Default is 'none'.
+    peft_target_modules:
+        The target modules to apply PEFT to. Default is None.
+    peft_task_type:
+        The task type of the PEFT adapter. Default is 'FEATURE_EXTRACTION'.
+
+    Returns:
+    -----------
+    peft_target_encoder:
+        The PEFT target encoder.
+
+    Notes:
+    - If target_encoder object is an EncoderMultiMaskWrapper, PEFT is applied to the backbone, i.e. gt.GeneTransformerBaseEncoder,
+    and a new EncoderMultiMaskWrapper object is instantiated with the PEFT model as the backbone.
+    """
     if peft_method == 'lora':
-        peft_config = LoraConfig(r=rank)
-        model = get_peft_model(model, peft_config)
-    return model
-"""
+        if not peft_target_modules:
+            peft_target_modules = [
+                "attn.qkv",
+                "attn.proj",
+                "mlp.fc1",
+                "mlp.fc2",
+            ]
+            logger.info("No target modules provided. Using default target modules.")
+        logger.info(f"Target modules for LoRA: {peft_target_modules}")
+        peft_config = LoraConfig(
+            r=peft_rank,
+            lora_alpha=peft_alpha,
+            lora_dropout=peft_dropout,
+            bias=peft_bias,
+            task_type=None,
+            target_modules=peft_target_modules,
+        )
+    else:
+        raise ValueError(f"PEFT method {peft_method} is not supported.")
+
+    if isinstance(target_encoder, EncoderMultiMaskWrapper):
+        peft_target_encoder = LoraModel(
+            model=target_encoder,
+            peft_config=peft_config,
+            adapter_name="default"
+        )
+        logger.info(f"PEFT target encoder type: {type(peft_target_encoder)}")
+        logger.info(f"PEFT target encoder base model type: {type(peft_target_encoder.model)}")
+
+        total_params = 0
+        trainable_params = 0
+        lora_modules = []
+
+        for name, p in peft_target_encoder.named_parameters():
+            num = p.numel()
+            total_params += num
+            if p.requires_grad and "lora_" in name.lower():
+                trainable_params += num
+                lora_modules.append(name)
+            elif p.requires_grad and "lora_" not in name.lower():
+                logger.info(f"Parameter {name} is trainable.")
+                raise ValueError(f"Parameter {name} is trainable but not a LoRA parameter.")
+            elif not p.requires_grad and "lora_" in name.lower():
+                logger.info(f"Parameter {name} is not trainable.")
+                raise ValueError(f"Parameter {name} is not trainable but is a LoRA parameter.")
+
+        logger.info(f"LoRA modules: {lora_modules}")
+        logger.info(f"Total params: {total_params:,} | Trainable (LoRA) params: {trainable_params:,} ({trainable_params/total_params*100:.2f}%)")
+    else:
+        raise ValueError(f"Target encoder is of type {type(target_encoder)}. PEFT is not supported for this type of encoder.")
+
+    return peft_target_encoder
+
 
 def parse_distribution_alignment_kwargs(args: dict) -> dict | None:
     """Resolve the optional

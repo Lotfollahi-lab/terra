@@ -7,14 +7,16 @@ https://github.com/facebookresearch/ijepa/blob/main/src/models/vision_transforme
 """
 
 import logging
-from typing import Literal
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from .adaln import AdaLN
 from .rope2d import RoPE2D
+
+from terra.utils.embedding import compute_mean_unmasked_emb
 
 logger = logging.getLogger(__name__)
 
@@ -317,10 +319,13 @@ class ClassificationModel(nn.Module):
     for classification based on the output of a base model.
     """
 
-    def __init__(self,
-                 base_model: nn.Module,
-                 gt_type: Literal['rank', 'counts'],
-                 num_classes: int, use_mlp: bool = False, hidden_dim: int = 512):
+    def __init__(
+            self,
+            base_model: nn.Module,
+            num_classes: int,
+            use_mlp: bool = False,
+            hidden_dim: int = 512
+        ):
         """
         Initialize the classification head.
 
@@ -338,36 +343,50 @@ class ClassificationModel(nn.Module):
         super(ClassificationModel, self).__init__()
 
         self.base_model = base_model
-        self.gt_type = gt_type
+        self.embed_dim = self.base_model.backbone.embed_dim
 
         if use_mlp:
             # Using MLP with one hidden layer
             self.classification_head = nn.Sequential(
-                nn.Linear(base_model.output_dim, hidden_dim),
+                nn.Linear(self.embed_dim, hidden_dim),
                 nn.ReLU(),
                 nn.Linear(hidden_dim, num_classes)
             )
         else:
             # Using a simple linear layer
-            self.classification_head = nn.Linear(
-                base_model.output_dim, num_classes)
+            self.classification_head = nn.Linear(self.embed_dim, num_classes)
 
-    def forward(self, **base_model_kwargs) -> torch.Tensor:
+    def forward(
+            self,
+            udata: dict,
+            masks_attention: torch.Tensor,
+            selection_mask: torch.Tensor = None,
+        ) -> torch.Tensor:
         """
         Forward pass through the classification head.
 
         Parameters:
-        - x (Tensor): The input tensor (feature vector) from the base model.
+        - udata (dict): The input dictionary containing the batch data.
+        - masks_attention (Tensor): The attention masks.
+        - selection_mask (Tensor): The selection (cell or neighborhood) mask.
 
         Returns:
         - Tensor: The class logits.
         """
-        h, _= self.base_model(**base_model_kwargs)
+        # h.shape = (<batch_size>, <seq_len>, <embedding_dim>)
+        h, _= self.base_model(batch=udata, masks_attention=masks_attention)
 
-        # Normalize over feature dim
+        # Aggregate gene embeddings into cell/neighborhood embeddings
+        # h.shape = (<batch_size>, <embedding_dim>)
+        h = compute_mean_unmasked_emb(h, selection_mask)
+
+        # Normalize over logits dimension
         h = F.layer_norm(h, (h.size(-1),))
-        
+
+        # Project cell/neighborhood embeddings into logits
+        # logits.shape = (<batch_size>, <num_classes>)
         logits = self.classification_head(h)
+
         return logits
 
 

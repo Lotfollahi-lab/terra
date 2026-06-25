@@ -53,19 +53,42 @@ class LinearRegressor(nn.Module):
 def linear_classifier(
     features_train: np.ndarray,
     labels_train: np.ndarray,
-    features_val: np.ndarray,
-    labels_val: np.ndarray,
-    features_test: np.ndarray,
-    labels_test: np.ndarray,
+    features_val: np.ndarray | None,
+    labels_val: np.ndarray | None,
+    features_test: np.ndarray | None,
+    labels_test: np.ndarray | None,
     n_epochs: int = 400,
     batch_size: int = 128,
     lr: float = 0.001,
     patience: int = 10,
+    n_classes: int | None = None,
     results_save_path: str | None = None,
     ):
     """
-    Train a linear classifier with early stopping on validation loss.
+    Train a linear classifier with optional early stopping.
+
+    Args:
+        features_val, labels_val: If provided, used for early stopping.
+        features_test, labels_test: If provided, used for final evaluation.
+
+    Note: At least one of (val, test) must be provided.
+        - If test is None: early stopping on val, report on val.
+        - If val is None: no early stopping, report on test.
+        - If both provided: early stopping on val, report on test.
     """
+
+    # --- Validate inputs ---
+    has_val = features_val is not None and labels_val is not None
+    has_test = features_test is not None and labels_test is not None
+
+    if not has_val and not has_test:
+        raise ValueError("At least one of (val, test) must be provided.")
+
+    # Determine evaluation set (val if no test, otherwise test)
+    if has_test:
+        features_eval, labels_eval = features_test, labels_test
+    else:
+        features_eval, labels_eval = features_val, labels_val
 
     # --- Device setup ---
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -73,35 +96,39 @@ def linear_classifier(
 
     features_train = torch.tensor(features_train, dtype=torch.float32)
     labels_train = torch.tensor(labels_train, dtype=torch.long)
-    features_val = torch.tensor(features_val, dtype=torch.float32)
-    labels_val = torch.tensor(labels_val, dtype=torch.long)
-    features_test = torch.tensor(features_test, dtype=torch.float32)
-    labels_test = torch.tensor(labels_test, dtype=torch.long)
+    features_eval = torch.tensor(features_eval, dtype=torch.float32)
+    labels_eval = torch.tensor(labels_eval, dtype=torch.long)
+
+    if has_val:
+        features_val_t = torch.tensor(features_val, dtype=torch.float32)
+        labels_val_t = torch.tensor(labels_val, dtype=torch.long)
+        val_dataset = TensorDataset(features_val_t, labels_val_t)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     train_dataset = TensorDataset(features_train, labels_train)
-    val_dataset = TensorDataset(features_val, labels_val)
-    test_dataset = TensorDataset(features_test, labels_test)
+    eval_dataset = TensorDataset(features_eval, labels_eval)
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    eval_loader = DataLoader(eval_dataset, batch_size=batch_size, shuffle=False)
 
     # --- Model, Optimizer, Scheduler ---
     num_features = features_train.shape[1]
-    num_classes = len(torch.unique(labels_train)) # all classes need to be in train split
+    num_classes = n_classes if n_classes is not None else len(torch.unique(labels_train))
+    logger.info(f"Number of classes: {num_classes}")
+
     model = LinearClassifier(num_features, num_classes).to(device)
 
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.SGD(
         model.parameters(),
-        lr * batch_size / 256., # linear scaling rule
+        lr * batch_size / 256.,
         momentum=0.9,
         weight_decay=0,
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=n_epochs, eta_min=0)
 
-    # --- Early Stopping ---
+    # --- Early Stopping (only if val is provided) ---
     best_val_loss = float('inf')
     best_model_state = None
     patience_counter = 0
@@ -110,6 +137,8 @@ def linear_classifier(
     for epoch in range(n_epochs):
         model.train()
         train_loss = 0
+        train_correct = 0
+        train_total = 0
         for batch_features, batch_labels in train_loader:
             batch_features = batch_features.to(device)
             batch_labels = batch_labels.to(device)
@@ -121,58 +150,77 @@ def linear_classifier(
             optimizer.step()
             train_loss += loss.item()
 
-        # --- Validation Loop ---
-        model.eval()
-        val_loss = 0
-        with torch.no_grad():
-            for batch_features, batch_labels in val_loader:
-                batch_features = batch_features.to(device)
-                batch_labels = batch_labels.to(device)
+            # Track accuracy
+            _, predicted = torch.max(outputs, 1)
+            train_correct += (predicted == batch_labels).sum().item()
+            train_total += batch_labels.size(0)
 
-                outputs = model(batch_features)
-                loss = criterion(outputs, batch_labels)
-                val_loss += loss.item()
-
-        val_loss /= len(val_loader)
+        train_loss /= len(train_loader)
+        train_acc = train_correct / train_total
         scheduler.step()
 
-        logger.info(f"Epoch {epoch+1}: Train Loss = {train_loss:.4f}, Val Loss = {val_loss:.4f}")
+        # --- Early stopping on validation set (if provided) ---
+        if has_val:
+            model.eval()
+            val_loss = 0
+            val_correct = 0
+            val_total = 0
+            with torch.no_grad():
+                for batch_features, batch_labels in val_loader:
+                    batch_features = batch_features.to(device)
+                    batch_labels = batch_labels.to(device)
 
-        # Early stopping check
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            best_model_state = model.state_dict()
-            patience_counter = 0
+                    outputs = model(batch_features)
+                    loss = criterion(outputs, batch_labels)
+                    val_loss += loss.item()
+
+                    # Track accuracy
+                    _, predicted = torch.max(outputs, 1)
+                    val_correct += (predicted == batch_labels).sum().item()
+                    val_total += batch_labels.size(0)
+
+            val_loss /= len(val_loader)
+            val_acc = val_correct / val_total
+            logger.info(f"Epoch {epoch+1}: Train Loss = {train_loss:.4f}, Train Acc = {train_acc:.4f}, Val Loss = {val_loss:.4f}, Val Acc = {val_acc:.4f}")
+
+            # Early stopping check
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_model_state = model.state_dict()
+                patience_counter = 0
+            else:
+                patience_counter += 1
+                if patience_counter >= patience:
+                    logger.info(f"Early stopping at epoch {epoch+1}")
+                    break
         else:
-            patience_counter += 1
-            if patience_counter >= patience:
-                logger.info(f"Early stopping at epoch {epoch+1}")
-                break
+            # No validation set - just print train loss and accuracy
+            logger.info(f"Epoch {epoch+1}: Train Loss = {train_loss:.4f}, Train Acc = {train_acc:.4f}")
 
-    # --- Load best model before test ---
-    if best_model_state is not None:
+    # --- Load best model before evaluation (only if we did early stopping) ---
+    if has_val and best_model_state is not None:
         model.load_state_dict(best_model_state)
 
-    # --- Test Evaluation ---
+    # --- Evaluation on eval set (test if available, otherwise val) ---
     model.eval()
     all_logits = []
     all_preds = []
     all_targets = []
 
     with torch.no_grad():
-        for batch_features, batch_labels in test_loader:
+        for batch_features, batch_labels in eval_loader:
             batch_features = batch_features.to(device)
             batch_labels = batch_labels.to(device)
 
             outputs = model(batch_features)
-            
             _, predicted = torch.max(outputs, 1)
 
             all_logits.extend(outputs.cpu().numpy())
             all_preds.extend(predicted.cpu().numpy())
             all_targets.extend(batch_labels.cpu().numpy())
 
-    logger.info("\n--- Evaluation Report on Test Set ---")
+    eval_set_name = "Test" if has_test else "Validation"
+    logger.info(f"\n--- Evaluation Report on {eval_set_name} Set ---")
     cls_report = classification_report(
         all_targets, all_preds, digits=4)
     logger.info(cls_report)
@@ -181,7 +229,6 @@ def linear_classifier(
     if results_save_path:
         with open(results_save_path, "w") as f:
             f.write(cls_report)
-
         logger.info("\n--- Evaluation Report saved. ---")
 
     return all_preds, all_targets, all_logits, model
