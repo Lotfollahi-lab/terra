@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning][].
 -   Single-sample zero-shot inference (`harmonize_tokenize_embed_pipeline` with
     `sample_key=None`) no longer fails with `KeyError: 'batch'`; the whole
     AnnData is now treated as one batch and any existing batch column is kept.
+-   `read_xenium_10x` now aligns cell centroids correctly for older Xenium
+    panels with an integer `cell_id`, which previously produced all-NaN spatial
+    coordinates.
 
 ## [0.1.0] - 2026-06-26
 

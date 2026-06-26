@@ -58,8 +58,13 @@ def read_xenium_10x(base_url: str, out_dir: str):
     # Drop control probes / blank codewords; keep real gene-expression features.
     adata = adata[:, adata.var["feature_types"] == "Gene Expression"].copy()
 
-    cells = pd.read_parquet(
-        os.path.join(out_dir, "cells.parquet")).set_index("cell_id")
-    adata.obs = adata.obs.join(cells)
+    cells = pd.read_parquet(os.path.join(out_dir, "cells.parquet"))
+    # The matrix barcodes are strings, but ``cell_id`` in cells.parquet is an
+    # integer for older Xenium panels (and a string for newer ones). Cast both
+    # join keys to str so the centroids align across Xenium versions; otherwise
+    # the join finds no overlap and every coordinate comes back NaN.
+    cells["cell_id"] = cells["cell_id"].astype(str)
+    adata.obs_names = adata.obs_names.astype(str)
+    adata.obs = adata.obs.join(cells.set_index("cell_id"))
     adata.obsm["spatial"] = adata.obs[["x_centroid", "y_centroid"]].to_numpy()
     return adata
