@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning][].
 [keep a changelog]: https://keepachangelog.com/en/1.0.0/
 [semantic versioning]: https://semver.org/spec/v2.0.0.html
 
+## [0.1.1] - 2026-06-26
+
+### Added
+
+-   Optional `local_dir` argument to `download_pretrained` to download a model
+    bundle into a chosen folder instead of the Hugging Face cache.
+
+### Fixed
+
+-   Single-sample zero-shot inference (`harmonize_tokenize_embed_pipeline` with
+    `sample_key=None`) no longer fails with `KeyError: 'batch'`; the whole
+    AnnData is now treated as one batch and any existing batch column is kept.
+
 ## [0.1.0] - 2026-06-26
 
 First public release of **TERRA**, a JEPA-based foundation model for spatial
@@ -26,4 +39,5 @@ single-cell resolution).
 -   Finetuning of the pretrained encoder with LoRA/PEFT.
 -   Documentation, tutorials, and API reference.
 
+[0.1.1]: https://github.com/Lotfollahi-lab/terra/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Lotfollahi-lab/terra/releases/tag/v0.1.0

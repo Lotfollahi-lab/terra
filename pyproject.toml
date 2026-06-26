@@ -10,7 +10,7 @@ packages = ["src/terra"]
 
 [project]
 name = "terra-st"
-version = "0.1.0"
+version = "0.1.1"
 description = "Spatial transcriptomics foundation model"
 readme = "README.md"
 requires-python = ">=3.10"
