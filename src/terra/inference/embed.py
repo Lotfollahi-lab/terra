@@ -518,8 +518,12 @@ def harmonize_tokenize_embed_pipeline(
             min_genes_per_cell=min_genes_per_cell)
         if harmonized_adata_save_path:
             adata.obs[batch_key] = harmonized_adata_save_path.split('.')[0].split('/')[-1]
-        else:
+        elif 'batch' in adata.uns:
             adata.obs[batch_key] = adata.uns['batch']
+        elif batch_key not in adata.obs:
+            # Single sample with no batch label supplied: use a constant so the
+            # whole AnnData is treated as one batch.
+            adata.obs[batch_key] = 'sample'
         logger.info(f"Harmonized AnnData.")
         logger.info(f"Tokenizing AnnData.")
         dataset = tokenize_adata(
