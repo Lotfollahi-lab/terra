@@ -136,6 +136,58 @@ Because the gene-reference files are part of the bundle, harmonization at
 inference time reproduces the tokenization the model was trained with — no
 external file paths are required.
 
+## In-silico perturbation
+
+`perturb_dataset` edits the gene tokens of a tokenized `dataset`; re-embedding the
+result with `embed_dataset` shows how the perturbation moves cells in latent
+space. Each edit is one row of a small `perturb_df`:
+
+| Column | Meaning |
+| --- | --- |
+| `perturbed_cell_id` | the cell to edit, or `"all"` for every cell |
+| `perturbed_ensembl_id` | the gene to edit (Ensembl ID), or `"all"` for the whole panel |
+| `perturbation_target` | `"cell"` or `"neighborhood"` (see below) |
+| `perturbation_type` | `"knockout"` or `"foldchange"` (see below) |
+| `foldchange` | the multiplier for `foldchange` rows (use `np.nan` for knockout) |
+
+**Perturbation type** — *what* happens to the targeted expression:
+
+- `knockout` sets it to zero (simulates removing the gene).
+- `foldchange` multiplies it by `foldchange` (e.g. `0.5` to halve, `2.0` to double).
+
+**Perturbation target** — *where* the edit is applied. Each cell is tokenized
+together with its spatial neighbors, so a sequence has two parts:
+
+- `cell` edits the cell's own gene tokens (its intrinsic expression).
+- `neighborhood` edits the tokens contributed by the cell's spatial neighbors
+  (its microenvironment), leaving the cell itself untouched.
+
+**Scope** — `perturbed_cell_id` and `perturbed_ensembl_id` each accept a specific
+value or `"all"` (every cell / the whole panel). Multiple rows are applied
+together, so you can combine edits in a single run.
+
+```python
+import numpy as np
+import pandas as pd
+from terra import perturb_dataset, embed_dataset
+
+# Halve all genes and knock out one gene, for every cell, applied to the cell
+# itself. Add `perturbation_target="neighborhood"` rows to perturb the context.
+perturb_df = pd.DataFrame([
+    {"perturbed_cell_id": "all", "perturbed_ensembl_id": "all",
+     "perturbation_target": "cell", "perturbation_type": "foldchange", "foldchange": 0.5},
+    {"perturbed_cell_id": "all", "perturbed_ensembl_id": "ENSG00000136997",  # a gene from your panel
+     "perturbation_target": "cell", "perturbation_type": "knockout", "foldchange": np.nan},
+])
+
+perturbed = perturb_dataset(dataset, perturb_df, model_folder_path=model_dir)
+emb = embed_dataset(perturbed, model_folder_path=model_dir)
+# Compare emb["cell_emb"] / emb["neighborhood_emb"] against the unperturbed run.
+```
+
+Pass `return_only_perturbed_cells=True` to get back just the edited cells. See
+the {doc}`tutorials` (downstream analysis) for a worked before/after comparison.
+
 ## Citation
 
 If you use TERRA in your research, please cite the manuscript (in preparation). A
