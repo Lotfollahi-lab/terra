@@ -37,14 +37,14 @@ Understand the concepts, the inference pipeline, and the pretrained models.
 Detailed descriptions of TERRA's public functions and classes.
 :::
 
-:::{grid-item-card} {octicon}`tag;1.5em;sd-mr-1` Release Notes
+:::{grid-item-card} {octicon}`tag;1.5em;sd-mr-1` Changelog
 :link: changelog
 :link-type: doc
 
 Follow the latest changes and version history.
 :::
 
-:::{grid-item-card} {octicon}`git-pull-request;1.5em;sd-mr-1` Contributing
+:::{grid-item-card} {octicon}`git-pull-request;1.5em;sd-mr-1` Contributing Guide
 :link: contributing
 :link-type: doc
 

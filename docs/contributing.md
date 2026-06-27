@@ -1,4 +1,4 @@
-# Contributing guide
+# Contributing Guide
 
 Contributions to TERRA are welcome — bug reports, bug fixes, documentation, and
 new features. This guide summarizes the essentials to get started.
