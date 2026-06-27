@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning][].
 [keep a changelog]: https://keepachangelog.com/en/1.0.0/
 [semantic versioning]: https://semver.org/spec/v2.0.0.html
 
+## [0.1.2] - 2026-06-27
+
+### Fixed
+
+-   `read_xenium_10x` now aligns cell centroids correctly for older Xenium
+    panels with an integer `cell_id`, which previously produced all-NaN spatial
+    coordinates.
+-   `get_spatial_score` and `get_emd_distance` no longer raise
+    `NameError: gene_embed_dataset` — the helper they depend on is now imported.
+-   `perturb_dataset` with `perturbed_cell_id="all"` now applies `"all"`-gene
+    knockout/fold-change perturbations correctly (the all-cells fast path
+    referenced an unbound variable for whole-panel perturbations).
+
 ## [0.1.1] - 2026-06-26
 
 ### Added
@@ -20,14 +33,6 @@ and this project adheres to [Semantic Versioning][].
 -   Single-sample zero-shot inference (`harmonize_tokenize_embed_pipeline` with
     `sample_key=None`) no longer fails with `KeyError: 'batch'`; the whole
     AnnData is now treated as one batch and any existing batch column is kept.
--   `read_xenium_10x` now aligns cell centroids correctly for older Xenium
-    panels with an integer `cell_id`, which previously produced all-NaN spatial
-    coordinates.
--   `get_spatial_score` and `get_emd_distance` no longer raise
-    `NameError: gene_embed_dataset` — the helper they depend on is now imported.
--   `perturb_dataset` with `perturbed_cell_id="all"` now applies `"all"`-gene
-    knockout/fold-change perturbations correctly (the all-cells fast path
-    referenced an unbound variable for whole-panel perturbations).
 
 ## [0.1.0] - 2026-06-26
 
@@ -47,5 +52,6 @@ single-cell resolution).
 -   Finetuning of the pretrained encoder with LoRA/PEFT.
 -   Documentation, tutorials, and API reference.
 
+[0.1.2]: https://github.com/Lotfollahi-lab/terra/releases/tag/v0.1.2
 [0.1.1]: https://github.com/Lotfollahi-lab/terra/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Lotfollahi-lab/terra/releases/tag/v0.1.0
