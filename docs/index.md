@@ -1,12 +1,15 @@
 # TERRA
 
-**TERRA** is a JEPA-based foundation model for spatial transcriptomics, developed by the
-[Lotfollahi Lab](https://github.com/Lotfollahi-lab). Each cell and its spatial neighbors
-are represented as gene tokens; TERRA masks some of these tokens and learns by predicting
-them in latent space — rather than reconstructing raw counts — from the surrounding
-neighborhood. The resulting embeddings capture both a cell's own expression and its tissue
-context, and transfer to downstream tasks such as niche identification, batch-integrated
-atlasing, spatial gene-pair scoring, and in-silico perturbation.
+**TERRA** (Tissue Environment Relational Representation Architecture) is a self-supervised
+foundation model for spatial transcriptomics, developed by the
+[Lotfollahi Lab](https://github.com/Lotfollahi-lab). It serializes each cell together with
+its spatial neighbors into a sequence of gene tokens, then trains with a joint-embedding
+predictive (JEPA) objective: some tokens are masked, and the model predicts their
+representations in latent space — rather than reconstructing raw expression — to infer the
+molecular and spatial context of the neighboring cells. This yields embeddings at three
+scales — genes, cells, and neighborhoods — that transfer zero-shot to downstream tasks such
+as niche identification, batch-integrated atlasing, spatial gene-pair scoring, and in-silico
+perturbation.
 
 ::::{grid} 1 2 2 3
 :gutter: 2

@@ -8,11 +8,13 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-BSD%203--Clause-blue.svg" alt="License: BSD-3-Clause"></a>
 </p>
 
-**TERRA** is a foundation model for spatial transcriptomics. It uses a
-Joint-Embedding Predictive Architecture (JEPA): cells are tokenized together with
-their spatial neighbors, parts of the input are masked, and the model learns by
-predicting the *latent* representations of the masked cell and neighborhood
-tokens. The resulting embeddings capture both a cell's own expression and its
+**TERRA** is a self-supervised foundation model for spatial transcriptomics. It
+serializes each cell together with its spatial neighbors into a sequence of gene
+tokens, then trains with a Joint-Embedding Predictive Architecture (JEPA): some
+tokens are masked and the model predicts their representations in *latent space* —
+rather than reconstructing raw expression — to infer the molecular and spatial
+context of the neighboring cells. This yields hierarchical embeddings at the gene,
+cell, and neighborhood scales, capturing both a cell's own expression and its
 tissue microenvironment.
 
 Pretrained on **HST-Corpus-112M** (>100M cells at single-cell resolution spanning
