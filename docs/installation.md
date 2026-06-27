@@ -23,10 +23,12 @@ uv pip install torch --index-url https://download.pytorch.org/whl/cu124
 uv pip install terra-st
 ```
 
-Plain `pip install terra-st` works too. Verify the install:
+Plain `pip install terra-st` works too. Verify the install (PyTorch sees your
+GPU, and TERRA imports):
 
 ```shell
 python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"
+python -c "import terra; print(terra.__version__)"
 ```
 
 ## Development install

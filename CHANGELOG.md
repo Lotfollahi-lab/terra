@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning][].
 
 ## [0.1.4] - 2026-06-27
 
+### Added
+
+-   `terra.__version__` exposes the installed package version.
+
 ### Fixed
 
 -   Perturbing specific cells by ID now works on multi-sample data: the pipeline

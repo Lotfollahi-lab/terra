@@ -7,6 +7,14 @@ import logging as _logging
 # to seeing logs via e.g. ``logging.basicConfig(level="INFO")``.
 _logging.getLogger("terra").addHandler(_logging.NullHandler())
 
+from importlib.metadata import PackageNotFoundError as _PackageNotFoundError
+from importlib.metadata import version as _version
+
+try:
+    __version__ = _version("terra-st")
+except _PackageNotFoundError:  # pragma: no cover - running from an uninstalled source tree
+    __version__ = "0.0.0"
+
 from . import (datasets,
                masks,
                models,
