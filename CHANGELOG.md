@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning][].
 [keep a changelog]: https://keepachangelog.com/en/1.0.0/
 [semantic versioning]: https://semver.org/spec/v2.0.0.html
 
+## [0.1.3] - 2026-06-27
+
+### Changed
+
+-   `perturb_dataset(..., return_only_perturbed_cells=True)` now subsets the
+    perturbed cells with an index-based `select` instead of a full-table
+    `filter`, avoiding a costly scan and rewrite of every tokenized row.
+
 ## [0.1.2] - 2026-06-27
 
 ### Fixed
@@ -52,6 +60,7 @@ single-cell resolution).
 -   Finetuning of the pretrained encoder with LoRA/PEFT.
 -   Documentation, tutorials, and API reference.
 
+[0.1.3]: https://github.com/Lotfollahi-lab/terra/releases/tag/v0.1.3
 [0.1.2]: https://github.com/Lotfollahi-lab/terra/releases/tag/v0.1.2
 [0.1.1]: https://github.com/Lotfollahi-lab/terra/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Lotfollahi-lab/terra/releases/tag/v0.1.0

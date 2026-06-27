@@ -277,19 +277,15 @@ def perturb_dataset(dataset: Dataset,
         keep_in_memory=keep_in_memory,
         load_from_cache_file=False)
 
-    # Optionally, return only perturbed cells
+    # Optionally, return only perturbed cells. Read the per-row perturbation
+    # flags and select the matching indices -- far cheaper than filter(), which
+    # scans and rewrites every (large) token row to test one field.
     if return_only_perturbed_cells:
         pert_cols = [
             c for c in dataset.column_names if c.startswith("pert_flag_idx")]
-        dataset = dataset.filter(
-            lambda x: [
-                any(x[c][i] for c in pert_cols)
-                for i in range(len(x[pert_cols[0]]))
-            ],
-        batched=True,
-        batch_size=batch_size,
-        num_proc=nproc,
-        keep_in_memory=keep_in_memory,
-        load_from_cache_file=False)
+        flags = np.column_stack(
+            [np.asarray(dataset[c], dtype=bool) for c in pert_cols])
+        keep_idx = np.nonzero(flags.any(axis=1))[0]
+        dataset = dataset.select(keep_idx)
 
     return dataset
