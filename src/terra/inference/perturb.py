@@ -114,6 +114,10 @@ def _perturb_batch_with_idx(
                 for row in index.get(nid, []):
                     if row["perturbation_target"] == "neighborhood":
                         _apply(b, row, is_index_cell=False)
+    # Return the edited columns as lists (their original representation). datasets
+    # re-encodes torch tensors very slowly; lists keep the fast path.
+    batch["gene_tokens"] = batch["gene_tokens"].tolist()
+    batch["gene_expr"] = batch["gene_expr"].tolist()
     return batch
 
 def _perturb_batch_with_df(
@@ -222,6 +226,10 @@ def _perturb_batch_with_df(
         #if len(cell_pert_idx) == 0:
         #else:
 
+    # Return the edited columns as lists (their original representation). datasets
+    # re-encodes torch tensors very slowly; lists keep the fast path.
+    batch["gene_tokens"] = batch["gene_tokens"].tolist()
+    batch["gene_expr"] = batch["gene_expr"].tolist()
     return batch
 
 
