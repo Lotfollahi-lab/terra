@@ -171,7 +171,10 @@ def push_model_to_hub(model_folder: str | Path,
     (e.g. a pre-rename ``ensembl_dic.pkl``) don't linger. ``README.md`` and
     ``.gitattributes`` are never pruned.
 
-    Returns the repository URL.
+    Returns
+    -------
+    url : str
+        URL of the uploaded model repository.
     """
     hub = _require_hub()
     model_folder = Path(model_folder)
@@ -217,14 +220,17 @@ def download_pretrained(repo_id: str,
                         token: str | None = None) -> str:
     """Download a published TERRA model bundle.
 
-    Returns the local folder path to pass as ``model_folder_path`` to the
-    inference pipeline. ``revision`` pins a git tag/branch/commit (e.g. the
-    manuscript ``v1.0``); omit it for the latest ``main``.
+    ``revision`` pins a git tag/branch/commit (e.g. the manuscript ``v1.0``);
+    omit it for the latest ``main``. By default the bundle is stored in the
+    Hugging Face cache. Pass ``local_dir`` to download the files directly into
+    that folder (created if needed, and returned as-is); pass ``cache_dir`` to
+    use a custom Hugging Face cache root instead.
 
-    By default the bundle is stored in the Hugging Face cache. Pass
-    ``local_dir`` to download the files directly into that folder (created if
-    needed, and returned as-is); pass ``cache_dir`` to use a custom Hugging
-    Face cache root instead.
+    Returns
+    -------
+    path : str
+        Local folder path to the downloaded bundle, to pass as
+        ``model_folder_path`` to the inference pipeline.
     """
     hub = _require_hub()
     return hub.snapshot_download(

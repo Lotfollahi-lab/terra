@@ -64,7 +64,7 @@ def harmonize_adata(adata: ad.AnnData,
 
     Returns
     -----------
-    adata:
+    adata : anndata.AnnData
         A harmonized AnnData object.
     """
     logger.info('STEP 1: DATA VALIDATION...')

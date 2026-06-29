@@ -97,7 +97,7 @@ def embed_dataset(dataset: Dataset,
 
     Returns
     -----------
-    output_embed:
+    output_embed : dict
         Dictionary with the cell, cell gene, neighborhood, and neighborhood gene
         embeddings.
     """
@@ -434,7 +434,7 @@ def harmonize_tokenize_embed_pipeline(
 
     Returns
     -----------
-    adata:
+    adata : anndata.AnnData
         A harmonized AnnData object with embeddings stored in `adata.obsm`.
     """
     # Gene-reference files default to the ones shipped inside the model bundle
@@ -634,7 +634,7 @@ def gene_embed_dataset(dataset: Dataset,
 
     Returns
     -----------
-    output_embed:
+    output_embed : dict
         Dictionary with the cell, cell gene, neighborhood, and neighborhood gene
         embeddings.
     """

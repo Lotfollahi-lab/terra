@@ -81,7 +81,7 @@ def tokenize_adata(adata: ad.AnnData,
 
     Returns
     -----------
-    dataset:
+    dataset : datasets.Dataset
         The tokenized data stored in a Hugging Face dataset.
     """
     logger.info('STEP 1: LOADING CONFIG...')

@@ -124,7 +124,7 @@ def infer(args: dict,
 
     Returns
     -----------
-    adata:
+    adata : anndata.AnnData
         An AnnData object with the stored embeddings and labels.
     """
     # Set device

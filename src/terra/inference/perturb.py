@@ -356,7 +356,7 @@ def perturb_dataset(dataset: Dataset,
 
     Returns
     -----------
-    dataset:
+    dataset : datasets.Dataset
         The perturbed Hugging Face `Dataset`, filtered to the affected cells if
         `return_only_perturbed_cells` is `True`.
     """

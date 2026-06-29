@@ -33,7 +33,7 @@ def read_xenium_10x(base_url: str, out_dir: str):
 
     Returns
     -------
-    AnnData
+    adata : anndata.AnnData
         Cells x genes, with ``.obsm['spatial']`` holding the
         ``[x_centroid, y_centroid]`` coordinates.
     """
