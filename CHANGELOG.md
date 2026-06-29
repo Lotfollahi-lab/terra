@@ -8,18 +8,16 @@ and this project adheres to [Semantic Versioning][].
 [keep a changelog]: https://keepachangelog.com/en/1.0.0/
 [semantic versioning]: https://semver.org/spec/v2.0.0.html
 
-## [0.1.6] - 2026-06-28
+## [0.1.7] - 2026-06-29
 
 ### Fixed
 
--   `perturb_dataset` is substantially faster on larger datasets and no longer
-    appears to hang. The perturbation map returns the edited gene columns as
-    numpy arrays and keeps the large, unmodified neighbor-ID (`cell_ids`) column
-    out of the re-encode, re-attaching the original column afterwards. Mapping now
-    defaults to a single process (`nproc=1`); `nproc>1` used multiprocessing that
-    could deadlock once torch/CUDA had been initialized in the process. The map
-    also caps torch to one CPU thread for its duration, avoiding a
-    thread-oversubscription stall in the batch-wide tensor ops on many-core nodes.
+-   Zero-shot in-silico perturbation (`perturb_dataset`) no longer hangs and runs
+    substantially faster, especially on larger datasets and many-core machines.
+
+### Changed
+
+-   `perturb_dataset` now maps in a single process by default (`nproc=1`).
 
 ## [0.1.5] - 2026-06-28
 
@@ -118,7 +116,7 @@ single-cell resolution).
 -   Finetuning of the pretrained encoder with LoRA/PEFT.
 -   Documentation, tutorials, and API reference.
 
-[0.1.6]: https://github.com/Lotfollahi-lab/terra/releases/tag/v0.1.6
+[0.1.7]: https://github.com/Lotfollahi-lab/terra/releases/tag/v0.1.7
 [0.1.5]: https://github.com/Lotfollahi-lab/terra/releases/tag/v0.1.5
 [0.1.4]: https://github.com/Lotfollahi-lab/terra/releases/tag/v0.1.4
 [0.1.3]: https://github.com/Lotfollahi-lab/terra/releases/tag/v0.1.3
