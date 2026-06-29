@@ -57,10 +57,24 @@ def harmonize_adata(adata: ad.AnnData,
     -----------
     adata:
         An unharmonized AnnData object.
+    gene_mapping_dict_file_path:
+        Path to a pickled gene-name-to-ensembl-ID mapping dictionary. If `None`,
+        ensembl IDs are looked up from the specified Ensembl release instead.
+    gene_occurrence_count_file_path:
+        Path to a pickled dictionary of per-gene pretraining occurrence counts. If
+        provided, genes with too few occurrences are filtered out; if `None`, this
+        filtering step is skipped.
+    gene_occurrence_count_filter_value:
+        Minimum number of pretraining occurrences a gene must have to be kept.
     ensembl_release:
         Ensembl release used to retrieve ensembl IDs.
+    species:
+        Species passed to the Ensembl release lookup.
     min_genes_per_cell:
         Minimum amount of genes per cell for a cell not to be filtered.
+    min_cells_per_gene:
+        Minimum number of cells a gene must be expressed in for the gene not to be
+        filtered.
 
     Returns
     -----------

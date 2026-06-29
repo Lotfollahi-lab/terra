@@ -94,12 +94,22 @@ def embed_dataset(dataset: Dataset,
     return_token_embeddings:
         If `True`, also return per-token embeddings for each sequence position
         (cell and neighborhood tokens; special tokens are excluded).
+    ignore_spc_tokens:
+        Whether to ignore special tokens when retrieving layer embeddings.
+    agg_type:
+        How gene embeddings are aggregated into cell and neighborhood
+        embeddings (`'avg'` for an unweighted mean or `'softmax'` for a
+        count-softmax-weighted mean).
 
     Returns
     -----------
     output_embed : dict
-        Dictionary with the cell, cell gene, neighborhood, and neighborhood gene
-        embeddings.
+        Dictionary with one numpy array per embedding type. Always contains
+        ``cell_emb`` (cell embedding) and ``neighborhood_emb`` (neighborhood
+        embedding). If `include_spatial_cell_emb` is `True`, also contains
+        ``spatial_cell_emb`` (spatially contextualized cell embedding). If
+        `return_token_embeddings` is `True`, also contains ``token_emb``
+        (per-token embeddings).
     """
     logger.info('STEP 1: LOADING CONFIG...')
     model_config_file_path = Path(model_folder_path) / 'model_config.yaml'
@@ -395,6 +405,28 @@ def harmonize_tokenize_embed_pipeline(
         normalization factors.
     cache_directory_path:
         Path where the cache is stored during dataset creation.
+    gene_mapping_dict_file_path:
+        Path to a pickled gene-name-to-ensembl-ID mapping dictionary used during
+        harmonization. If `None`, defaults to the model bundle's
+        `ensembl_dictionary.pkl` when present, otherwise falls back to an Ensembl
+        release lookup.
+    gene_occurrence_count_file_path:
+        Path to a pickled dictionary of per-gene pretraining occurrence counts. If
+        `None`, defaults to the model bundle's `gene_count_dictionary.pkl` when
+        present; otherwise the occurrence filter is skipped.
+    gene_occurrence_count_filter_value:
+        Minimum number of pretraining occurrences a gene must have to be kept.
+    ensembl_release:
+        Ensembl release used to retrieve ensembl IDs when no mapping dictionary is
+        provided.
+    species:
+        Species passed to the Ensembl release lookup.
+    min_cells_per_gene:
+        Minimum number of cells a gene must be expressed in to be kept during
+        harmonization.
+    min_genes_per_cell:
+        Minimum number of genes a cell must express to be kept during
+        harmonization.
     gene_perturb_df:
         DataFrame with perturbation data, e.g.::
 
@@ -404,7 +436,7 @@ def harmonize_tokenize_embed_pipeline(
                 'perturbation_type': ['foldchange', 'knockout'],
                 'foldchange': [0.5, np.nan],
             })
-    n_proc:
+    nproc:
         Number of processes used for tokenization.
     processing_mode:
         Mode of processing used for tokenization.
@@ -430,7 +462,12 @@ def harmonize_tokenize_embed_pipeline(
         Whether to use generator for dataset creation.  
     add_neigh_cell_ids:
         Whether neighbor cell IDs should be stored in tokenized data (used for
-        perturbations).    
+        perturbations).
+    ignore_spc_tokens:
+        Whether to ignore special tokens when retrieving layer embeddings.
+    agg_type:
+        How gene embeddings are aggregated into cell and neighborhood
+        embeddings (`'avg'` or `'softmax'`).
 
     Returns
     -----------
@@ -589,10 +626,9 @@ def gene_embed_dataset(dataset: Dataset,
                        include_spatial_cell_emb: bool = True,
                        description: str='',
                        ignore_spc_tokens: bool = True,
-                       ) -> dict:
-    
+                       ) -> tuple | dict | None:
     """
-    Compute per-gene cell and neighborhood embeddings (and optional cosine-similarity / EMD statistics) over a tokenized dataset.
+    Compute per-gene embeddings or co-occurrence statistics over a tokenized dataset.
 
     Parameters
     -----------
@@ -614,6 +650,10 @@ def gene_embed_dataset(dataset: Dataset,
         Dataloader param.
     num_workers:
         Number of workers used.
+    return_gene:
+        If `True` will return per-gene cell and neighborhood embeddings (and, when
+        `include_spatial_cell_emb` is `True`, spatially contextualized cell gene
+        embeddings).
     return_gene_per_data:
         If `True` will return gene_embedding for each gene per dataset.
     compute_cosine_with_list:
@@ -631,12 +671,31 @@ def gene_embed_dataset(dataset: Dataset,
         attends to the neighborhood.
     description:
         Description for task that is currently using this function.
+    ignore_spc_tokens:
+        Whether to ignore special tokens when retrieving layer embeddings.
 
     Returns
     -----------
-    output_embed : dict
-        Dictionary with the cell, cell gene, neighborhood, and neighborhood gene
-        embeddings.
+    output : tuple | dict | None
+        The return value depends on which flag is set (checked in this order):
+
+        - If `return_gene` is `True`: a tuple of per-gene embedding dictionaries
+          keyed by gene ID. With `include_spatial_cell_emb` it is
+          ``(cell_gene_emb, neighborhood_gene_emb, spatial_cell_gene_emb)``;
+          otherwise ``(cell_gene_emb, neighborhood_gene_emb)``.
+        - If `return_gene_per_data` is `True`: a tuple of per-gene
+          ``(sum, count)`` accumulator dictionaries. With
+          `include_spatial_cell_emb` it is
+          ``(cell_gene_emb_per_data, neighborhood_gene_emb_per_data,
+          spatial_cell_gene_emb_per_data)``; otherwise the first two.
+        - If `return_cosine_sim` is `True`: a single dict mapping each entry of
+          `compute_cosine_with_list` to ``(sum_cos_sim, pair_count, cell_count)``.
+        - If `return_distance` is `True`: a 2-tuple of lists
+          ``(emd_list, emd_matrix_list)``.
+        - If `return_receptor_average` is `True`: a single dict keyed by
+          ``(cell_gene_id, neighborhood_gene_id, 'present'|'absent')`` mapping to
+          ``[sum, count]``.
+        - If none of the above flags is set: `None`.
     """
     logger.info('STEP 1: LOADING CONFIG...')
     model_config_file_path = Path(model_folder_path) / 'model_config.yaml'

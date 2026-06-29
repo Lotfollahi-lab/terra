@@ -75,9 +75,10 @@ def infer(args: dict,
           debug: bool = False,
           ) -> ad.AnnData:
     """
-    Use a trained model for inference. Run forward pass on a given
-    dataset and return cell, neighborhood and (optionally) gene
-    embeddings (cell and neighborhood gene embeddings).
+    Use a trained model for inference, returning cell, neighborhood and optionally gene embeddings.
+
+    Run a forward pass on a given dataset and return cell, neighborhood and
+    (optionally) gene embeddings (cell and neighborhood gene embeddings).
 
     Parameters
     -----------
@@ -87,6 +88,13 @@ def infer(args: dict,
         Cell dataset for which embeddings will be inferred.
     load_folder_path:
         Path where the checkpoint is stored.
+    dataset_ids:
+        List of dataset IDs used to select metadata when collecting AnnData from
+        the raw data folder. If `None`, no dataset-ID filtering is applied.
+    obs_cols:
+        List of `adata.obs` column names to retrieve from the metadata AnnDatas.
+    uns_cols:
+        List of `adata.uns` keys to retrieve from the metadata AnnDatas.
     emb_layers:
         Layers for which to retrieve the embedding.
     cell_gene_ids:
@@ -121,6 +129,11 @@ def infer(args: dict,
         and cell_cell matrix.
     include_spatial_cell_emb:
         If `True` also return spatial cell embedding.
+    ignore_spc_tokens:
+        Whether to ignore special tokens when retrieving layer embeddings.
+    debug:
+        If `True`, log additional diagnostic statistics about the embeddings and
+        masks during inference.
 
     Returns
     -----------

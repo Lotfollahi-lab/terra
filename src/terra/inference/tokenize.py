@@ -54,9 +54,8 @@ def tokenize_adata(adata: ad.AnnData,
                    include_special_tokens: bool = False,
                    ) -> Dataset:
     """
-    Harmonize and tokenize an AnnData object based on the parameters in the
-    model config and return the tokenized Hugging Face dataset and harmonized
-    AnnData object.
+    Tokenize an AnnData object based on the parameters in the model config and
+    return the tokenized Hugging Face dataset.
 
     Parameters
     -----------
@@ -66,8 +65,8 @@ def tokenize_adata(adata: ad.AnnData,
         Path to the folder containing the model config, token dictionary, and
         normalization factors.
     cache_directory_path:
-        Path where the cache is stored during dataset creation.     
-    n_proc:
+        Path where the cache is stored during dataset creation.
+    nproc:
         Number of processes used.
     processing_mode:
         Mode of processing.
@@ -78,6 +77,8 @@ def tokenize_adata(adata: ad.AnnData,
         Whether to use generator for dataset creation.
     keep_in_memory:
         Whether to keep dataset in memory.
+    include_special_tokens:
+        Whether to include special tokens in the tokenized output.
 
     Returns
     -----------
