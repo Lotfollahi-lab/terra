@@ -112,6 +112,12 @@ eval = [
     "cellphonedb",
     "omnipath"
 ]
+# In-silico perturbation scoring. terra.inference.token_distance and
+# summarize_distance use GeomLoss for the point-cloud (Sinkhorn/energy/MMD)
+# distances between unperturbed and perturbed embeddings.
+perturb = [
+    "geomloss>=0.2.6",
+]
 # Publish/download TERRA model bundles on the Hugging Face Hub (terra.hub).
 hub = [
     "huggingface_hub>=0.20",
