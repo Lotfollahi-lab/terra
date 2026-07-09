@@ -243,7 +243,8 @@ def _perturb_batch_with_df(
 
 def _affected_cell_indices(dataset: Dataset,
                            perturb_df: pd.DataFrame,
-                           seq_len_cell: int) -> np.ndarray:
+                           seq_len_cell: int,
+                           return_masks: bool = False):
     """Row indices of cells whose tokens the perturbations actually edit.
 
     Computed analytically from ``perturb_df`` (plus gene presence) instead of
@@ -262,6 +263,7 @@ def _affected_cell_indices(dataset: Dataset,
     """
     n = len(dataset)
     affected = np.zeros(n, dtype=bool)
+    masks = []  # per-row masks, only used when return_masks=True
     gene_tokens = cell_id_col = neigh_lists = None  # read lazily, once
     for _, row in perturb_df.iterrows():
         cell_target = row["perturbation_target"] == "cell"
@@ -290,7 +292,14 @@ def _affected_cell_indices(dataset: Dataset,
             targeted = targeted & (seg == int(tok)).any(axis=1)
 
         affected |= targeted
-    return np.nonzero(affected)[0]
+        if return_masks:
+            masks.append(targeted)
+    idx = np.nonzero(affected)[0]
+    if return_masks:
+        mask_matrix = (np.column_stack(masks) if masks
+                       else np.zeros((n, 0), dtype=bool))
+        return idx, mask_matrix
+    return idx
 
 
 def perturb_dataset(dataset: Dataset,
@@ -304,6 +313,7 @@ def perturb_dataset(dataset: Dataset,
                     return_only_perturbed_cells: bool = False,
                     pad_gene_tokens: bool = True,
                     adjust_positions: bool = False,
+                    return_perturbation_flags: bool = False,
                     ) -> Dataset:
     """
     Perturb a tokenized Hugging Face dataset according to a perturbation dataframe.
@@ -353,6 +363,13 @@ def perturb_dataset(dataset: Dataset,
     adjust_positions:
         If `True`, re-pack each segment so padded (zeroed) gene positions are
         moved to the end after perturbation.
+    return_perturbation_flags:
+        If `True`, attach one boolean column per `perturb_df` row,
+        `pert_flag_idx_{i}`, which is `True` for cells that perturbation row `i`
+        actually edits (its target gene is present in the targeted scope). The
+        columns are attached after mapping (a zero-copy column concat), not
+        inside `.map`, so the map output schema is unchanged. Defaults to
+        `False`, in which case no extra columns are added.
 
     Returns
     -----------
@@ -412,8 +429,18 @@ def perturb_dataset(dataset: Dataset,
     # the original dataset (knockout zeroes the gene tokens, so presence must be
     # read pre-perturbation). Row order is preserved by map, so these indices
     # stay valid for the perturbed dataset.
-    keep_idx = (_affected_cell_indices(dataset, perturb_df, seq_len_cell)
-                if return_only_perturbed_cells else None)
+    perturbation_masks = None
+    if return_only_perturbed_cells or return_perturbation_flags:
+        _affected = _affected_cell_indices(
+            dataset, perturb_df, seq_len_cell,
+            return_masks=return_perturbation_flags)
+        if return_perturbation_flags:
+            affected_idx, perturbation_masks = _affected
+        else:
+            affected_idx = _affected
+        keep_idx = affected_idx if return_only_perturbed_cells else None
+    else:
+        keep_idx = None
 
     # The neighbor-ID column (`cell_ids`) is large and never modified; re-encoding
     # it through .map is what makes the map stall. Keep it out of the map and
@@ -452,10 +479,28 @@ def perturb_dataset(dataset: Dataset,
         torch.set_num_threads(n_threads)
     if has_cell_ids:
         dataset = concatenate_datasets([dataset, cell_ids_col], axis=1)
+
+    # Optionally attach per-perturbation boolean flag columns (one per perturb_df
+    # row). Attached here as a zero-copy column concat -- never inside .map, which
+    # would force datasets to re-encode every column.
+    flag_cols = []
+    if return_perturbation_flags:
+        flag_cols = [f"pert_flag_idx_{i}"
+                     for i in range(perturbation_masks.shape[1])]
+        flags_ds = Dataset.from_dict(
+            {name: perturbation_masks[:, i].tolist()
+             for i, name in enumerate(flag_cols)})
+        dataset = concatenate_datasets([dataset, flags_ds], axis=1)
+
     if saved_format.get("type") is not None:
+        fmt_columns = saved_format["columns"]
+        # If the saved format lists explicit columns, keep the new flag columns
+        # in that format too (so their element access matches the other columns).
+        if flag_cols and fmt_columns is not None:
+            fmt_columns = list(fmt_columns) + flag_cols
         dataset.set_format(
             type=saved_format["type"],
-            columns=saved_format["columns"],
+            columns=fmt_columns,
             output_all_columns=saved_format["output_all_columns"],
             **saved_format.get("format_kwargs", {}))
 
