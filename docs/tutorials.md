@@ -29,6 +29,22 @@ Gene-level embeddings, spatial gene-pair scoring, spatial structure (Earth Mover
 subsetting, and in-silico perturbation.
 :::
 
+:::{grid-item-card} {octicon}`beaker;1.5em;sd-mr-1` In-silico Perturbation
+:link: notebooks/perturbation_tutorial
+:link-type: doc
+
+Knock out genes in silico across a section and quantify the effect on each niche
+with a Wasserstein (W2) distance between unperturbed and perturbed embeddings.
+:::
+
+:::{grid-item-card} {octicon}`location;1.5em;sd-mr-1` Spatial Mapping of Perturbation Effects
+:link: notebooks/spatial_mapping_tutorial
+:link-type: doc
+
+Compute a per-cell perturbation score with `infer_token_distance` and project it
+back onto the tissue to localise where a knockout has its effect.
+:::
+
 ::::
 
 ```{toctree}
@@ -38,4 +54,6 @@ subsetting, and in-silico perturbation.
 notebooks/zero_shot_quickstart
 notebooks/zero_shot_quickstart_multisample
 notebooks/downstream_analysis
+notebooks/perturbation_tutorial
+notebooks/spatial_mapping_tutorial
 ```
