@@ -29,6 +29,26 @@ from terra import download_pretrained, harmonize_tokenize_embed_pipeline
     get_spatial_score
 ```
 
+## In-silico perturbation scoring
+
+Quantify a perturbation's effect on the embeddings — per cell, or summarized
+across cell populations (niches / cell types). These live in `terra.inference`
+and require the optional `perturb` extra (`pip install "terra-st[perturb]"`).
+
+```{eval-rst}
+.. currentmodule:: terra.inference
+
+.. autosummary::
+    :toctree: generated
+
+    infer_token_distance
+    summarize_w1_by_label
+    summarize_w2_by_label
+    summarize_energy_by_label
+    summarize_mmd_by_label
+    summarize_cosine_sim_by_label
+```
+
 ## Hugging Face Hub
 
 ```{eval-rst}

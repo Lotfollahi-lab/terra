@@ -8,6 +8,33 @@ and this project adheres to [Semantic Versioning][].
 [keep a changelog]: https://keepachangelog.com/en/1.0.0/
 [semantic versioning]: https://semver.org/spec/v2.0.0.html
 
+## [0.1.7] - 2026-07-10
+
+### Added
+
+-   In-silico perturbation scoring in `terra.inference`: `infer_token_distance`
+    computes per-cell Sinkhorn/energy/MMD distances between the unperturbed and
+    perturbed token-embedding clouds, and `summarize_{w1,w2,energy,mmd,cosine_sim}_by_label`
+    summarize a perturbation's effect across cell populations (niches or cell
+    types). Requires the new optional `perturb` extra (GeomLoss).
+-   `perturb_dataset(..., return_perturbation_flags=True)` attaches one boolean
+    column per perturbation row marking the cells each edit affects; off by
+    default, with no schema or performance change when unused.
+-   Tutorials for in-silico perturbation scoring and for spatial mapping of
+    perturbation effects.
+
+### Changed
+
+-   Constrain `datasets<5`; the 5.x column-handling change breaks
+    `perturb_dataset`'s flag columns.
+
+### Documentation
+
+-   API reference: `Returns` sections render as a consistent bullet list, the
+    duplicate return type is removed, and docstrings are corrected (parameter
+    coverage, accurate return descriptions, `nproc`, summaries).
+-   Downstream-analysis tutorial and prose polish.
+
 ## [0.1.6] - 2026-06-29
 
 ### Fixed
@@ -116,10 +143,11 @@ single-cell resolution).
 -   Finetuning of the pretrained encoder with LoRA/PEFT.
 -   Documentation, tutorials, and API reference.
 
-[0.1.6]: https://github.com/Lotfollahi-lab/terra/releases/tag/v0.1.6
-[0.1.5]: https://github.com/Lotfollahi-lab/terra/releases/tag/v0.1.5
-[0.1.4]: https://github.com/Lotfollahi-lab/terra/releases/tag/v0.1.4
-[0.1.3]: https://github.com/Lotfollahi-lab/terra/releases/tag/v0.1.3
-[0.1.2]: https://github.com/Lotfollahi-lab/terra/releases/tag/v0.1.2
-[0.1.1]: https://github.com/Lotfollahi-lab/terra/releases/tag/v0.1.1
-[0.1.0]: https://github.com/Lotfollahi-lab/terra/releases/tag/v0.1.0
+[0.1.7]: https://github.com/Lotfollahi-lab/terra/releases/tag/0.1.7
+[0.1.6]: https://github.com/Lotfollahi-lab/terra/releases/tag/0.1.6
+[0.1.5]: https://github.com/Lotfollahi-lab/terra/releases/tag/0.1.5
+[0.1.4]: https://github.com/Lotfollahi-lab/terra/releases/tag/0.1.4
+[0.1.3]: https://github.com/Lotfollahi-lab/terra/releases/tag/0.1.3
+[0.1.2]: https://github.com/Lotfollahi-lab/terra/releases/tag/0.1.2
+[0.1.1]: https://github.com/Lotfollahi-lab/terra/releases/tag/0.1.1
+[0.1.0]: https://github.com/Lotfollahi-lab/terra/releases/tag/0.1.0

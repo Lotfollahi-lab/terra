@@ -30,8 +30,9 @@ def _returns_bullets(lines: Iterable[str]) -> list[str]:
         if not stripped:
             continue
         indented = line[:1].isspace()
-        if not indented and (m := re.fullmatch(r"(?P<name>\w+)\s*:\s*(?P<type>.+)", stripped)):
-            entries.append([m["name"], _render_type(m["type"]), []])
+        if not indented and (m := re.fullmatch(r"(?P<name>\w+)\s*:\s*(?P<type>.*)", stripped)):
+            type_ = m["type"].strip()
+            entries.append([m["name"], _render_type(type_) if type_ else None, []])
         elif not indented and re.fullmatch(r"\w+", stripped):
             entries.append([stripped, None, []])
         elif entries:

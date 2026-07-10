@@ -88,8 +88,40 @@ def summarize_cosine_sim_by_label(
 
     Parameters
     ----------
+    adata:
+        AnnData holding the per-cell embeddings in ``.obsm`` and the label
+        column in ``.obs``.
+    label_key:
+        Column in ``adata.obs`` giving the group label of each cell.
+    labels:
+        Labels to summarize. Defaults to all unique values of
+        ``adata.obs[label_key]``, sorted.
+    pairs:
+        List of ``(A_key, B_key, out_col)`` tuples naming the unperturbed
+        ``.obsm`` key, the perturbed ``.obsm`` key, and the output column.
+        Defaults to the ``cell_emb`` / ``spatial_cell_emb`` /
+        ``neighborhood_emb`` embeddings paired with their
+        ``*_perturb_case1`` counterparts and ``*_cos_sim`` output columns.
+    agg:
+        Aggregation applied to the per-cell cosine similarities within each
+        label group. One of ``'min'``, ``'mean'``, ``'median'``, or a callable.
+    sort_by:
+        Column to sort the result by. If ``None`` the rows keep ``labels``
+        order.
+    ascending:
+        Sort direction when ``sort_by`` is set.
+    eps:
+        Small constant guarding against division by zero when normalizing rows.
     ignore_zeros:
         If True, aggregate only over nonzero cosine similarities.
+
+    Returns
+    -------
+    df : pandas.DataFrame
+        One row per label with columns ``label``, ``n_cells`` (number of cells
+        in the group), and one column per ``pairs`` entry (named by its
+        ``out_col``) holding the aggregated cosine similarity (``NaN`` when the
+        group has no values). Sorted by ``sort_by`` when provided.
     """
     if pairs is None:
         pairs = [
@@ -148,15 +180,56 @@ def summarize_w1_by_label(
     For each label group and each ``(A_key, B_key, out_col)`` pair, the sets of
     L2-normalized per-cell embeddings under the unperturbed (``A_key``) and
     perturbed (``B_key``) conditions are compared as two empirical
-    distributions. Returns a DataFrame ``["label", "n_cells", out_col...]``,
-    optionally sorted.
+    distributions.
 
     Parameters
     ----------
+    adata:
+        AnnData holding the per-cell embeddings in ``.obsm`` and the label
+        column in ``.obs``.
+    label_key:
+        Column in ``adata.obs`` giving the group label of each cell.
+    labels:
+        Labels to summarize. Defaults to all unique values of
+        ``adata.obs[label_key]``, sorted.
+    pairs:
+        List of ``(A_key, B_key, out_col)`` tuples naming the unperturbed
+        ``.obsm`` key, the perturbed ``.obsm`` key, and the output column.
+        Defaults to the ``cell_emb`` / ``spatial_cell_emb`` /
+        ``neighborhood_emb`` embeddings paired with their
+        ``*_perturb_case1`` counterparts and ``*_w1`` output columns.
+    agg:
+        Aggregation applied to the distance values within each label group. One
+        of ``'min'``, ``'mean'``, ``'median'``, or a callable. Each pair yields
+        a single distance per group.
+    sort_by:
+        Column to sort the result by. If ``None`` the rows keep ``labels``
+        order.
+    ascending:
+        Sort direction when ``sort_by`` is set.
+    eps:
+        Small constant guarding against division by zero when L2-normalizing
+        rows.
+    ignore_zeros:
+        If True, drop zero distances before aggregating.
+    blur:
+        GeomLoss blur parameter.
+    backend:
+        GeomLoss backend.
+    device:
+        Optional device string used for the GeomLoss computation.
     threshold:
         If set and a group has more than ``threshold`` cells, both clouds are
         randomly subsampled to ``threshold`` rows (same indices) before the
         distance is computed.
+
+    Returns
+    -------
+    df : pandas.DataFrame
+        One row per label with columns ``label``, ``n_cells`` (number of cells
+        in the group), and one column per ``pairs`` entry (named by its
+        ``out_col``) holding the aggregated point-cloud distance. Sorted by
+        ``sort_by`` when provided.
     """
     if pairs is None:
         pairs = [
@@ -189,8 +262,17 @@ def summarize_w2_by_label(
     """
     W2 (Sinkhorn, ``p=2``) between point-cloud distributions per label.
 
-    L2-normalizes rows before computing. See :func:`summarize_w1_by_label` for
-    the shared parameter semantics.
+    L2-normalizes rows before computing. The signature matches
+    :func:`summarize_w1_by_label`; see it for the shared parameter semantics.
+    The only difference is that distances use Sinkhorn with ``p=2`` and that
+    ``pairs`` defaults to ``*_w2`` output columns.
+
+    Returns
+    -------
+    df : pandas.DataFrame
+        One row per label with columns ``label``, ``n_cells``, and one column
+        per ``pairs`` entry (named by its ``out_col``) holding the aggregated
+        W2 distance. Sorted by ``sort_by`` when provided.
     """
     if pairs is None:
         pairs = [
@@ -222,7 +304,19 @@ def summarize_energy_by_label(
 ):
     """
     Energy distance (GeomLoss ``'energy'``) between point-cloud distributions
-    per label. L2-normalizes rows before computing.
+    per label.
+
+    L2-normalizes rows before computing. The signature matches
+    :func:`summarize_w1_by_label`; see it for the shared parameter semantics.
+    The distance is GeomLoss ``'energy'`` (no ``p`` exponent), ``blur`` defaults
+    to ``0.5``, and ``pairs`` defaults to ``*_energy`` output columns.
+
+    Returns
+    -------
+    df : pandas.DataFrame
+        One row per label with columns ``label``, ``n_cells``, and one column
+        per ``pairs`` entry (named by its ``out_col``) holding the aggregated
+        energy distance. Sorted by ``sort_by`` when provided.
     """
     if pairs is None:
         pairs = [
@@ -254,7 +348,19 @@ def summarize_mmd_by_label(
 ):
     """
     Gaussian MMD-like loss (GeomLoss ``'gaussian'``) between point-cloud
-    distributions per label. L2-normalizes rows before computing.
+    distributions per label.
+
+    L2-normalizes rows before computing. The signature matches
+    :func:`summarize_w1_by_label`; see it for the shared parameter semantics.
+    The distance is GeomLoss ``'gaussian'`` (no ``p`` exponent), ``blur``
+    defaults to ``0.5``, and ``pairs`` defaults to ``*_mmd`` output columns.
+
+    Returns
+    -------
+    df : pandas.DataFrame
+        One row per label with columns ``label``, ``n_cells``, and one column
+        per ``pairs`` entry (named by its ``out_col``) holding the aggregated
+        Gaussian MMD-like distance. Sorted by ``sort_by`` when provided.
     """
     if pairs is None:
         pairs = [

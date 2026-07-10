@@ -22,7 +22,7 @@ from terra.masks.block_masking import BlockMaskCollator
 
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 
 
 def _geomloss_distance_pointcloud(
@@ -229,8 +229,23 @@ def infer_token_distance(
 
     Returns
     -----------
-    output_score:
-        Dictionary containing per-cell token-cloud distances and metadata.
+    output_score : dict
+        Dictionary with one entry per token-cloud distance plus run metadata:
+
+        - ``cell_score``: numpy array of shape ``(n_cells,)`` with the distance
+          between the original and perturbed cell-only embeddings restricted to
+          the cell's own tokens. ``NaN`` for cells whose original or perturbed
+          token set is empty.
+        - ``spatial_cell_score``: numpy array of shape ``(n_cells,)`` with the
+          distance between the original and perturbed full-context (spatially
+          contextualized) embeddings restricted to the cell's own tokens.
+        - ``neighborhood_score``: numpy array of shape ``(n_cells,)`` with the
+          distance between the original and perturbed full-context embeddings
+          over all valid (non-padding) tokens.
+        - ``meta``: dictionary recording the distance settings (``loss``,
+          ``p``, ``blur``, ``backend``, ``device``) and
+          ``empty_token_set_counts``, the per-score counts of cells skipped
+          because the original, perturbed, or either token set was empty.
     """
     if len(dataset_original) != len(dataset_perturbed):
         raise ValueError(
@@ -240,9 +255,7 @@ def infer_token_distance(
     if loss == "sinkhorn" and p not in (1, 2):
         raise ValueError("For loss='sinkhorn', p must be 1 or 2.")
 
-    print('==================================================')
-    print('STEP 1: LOADING CONFIG...')
-    print('==================================================')
+    logger.info('STEP 1: LOADING CONFIG...')
     model_config_file_path = Path(model_folder_path) / 'model_config.yaml'
     token_dictionary_file_path = Path(model_folder_path) / 'token_dictionary.pkl'
     model_checkpoint_path = Path(model_folder_path) / 'model_checkpoint.pt'
@@ -266,9 +279,7 @@ def infer_token_distance(
     vocab_size = len(token_dict)
     n_special_values = model_config['data'].get('n_special_values', 0)
 
-    print('==================================================')
-    print('STEP 2: GENERATING TOKEN DISTANCES...')
-    print('==================================================')
+    logger.info('STEP 2: GENERATING TOKEN DISTANCES...')
     if not torch.cuda.is_available():
         inference_device = torch.device('cpu')
     else:
