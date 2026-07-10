@@ -64,7 +64,9 @@ dependencies = [
     # user's NVIDIA driver and is installed separately (see the README), so we
     # must not force an upgrade to a specific CUDA wheel here.
     "torch>=2.1",
-    "datasets>=2.18",
+    # Cap below 5.0: datasets 5.x changed Dataset column handling and breaks
+    # perturb_dataset's per-perturbation flag columns (tested-good is 4.x).
+    "datasets>=2.18,<5",
     # for debug logging (referenced from the issue template)
     "session-info>=1.0",
     "peft>=0.10",
