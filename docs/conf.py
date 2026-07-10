@@ -25,10 +25,9 @@ sys.path.insert(0, str(HERE.parent / "src"))
 info = metadata("terra-st")
 project_name = info.get("Name", "terra-st")
 project = "TERRA"
-# The documentation was authored by Sebastian Birk, so the docs footer/
-# copyright credits him only. The full project author list lives in
+# Docs footer / copyright authors. The full project author list lives in
 # pyproject.toml (and is unaffected by this).
-author = "Sebastian Birk"
+author = "Sebastian Birk and Mohammad Vali Sanian"
 copyright = f"{datetime.now():%Y}, {author}."
 version = info.get("Version", "0.0.0")
 urls = dict(pu.split(", ") for pu in info.get_all("Project-URL"))
