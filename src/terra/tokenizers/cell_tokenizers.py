@@ -814,7 +814,7 @@ class CellGraphTokenizer(CellBaseTokenizer):
         coding_miRNA_idx = np.where(
             [self.coding_miRNA_dict.get(
                 gene_id, False) for gene_id in adata.var['ensembl_id']])[0]
-        coding_miRNA_ids = adata.var['ensembl_id'][coding_miRNA_idx]
+        coding_miRNA_ids = adata.var['ensembl_id'].iloc[coding_miRNA_idx]
 
         coding_miRNA_tokens_cell = np.array(
             [self.token_dict[gene_id] for gene_id in coding_miRNA_ids])
@@ -1534,7 +1534,7 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
         coding_miRNA_idx = np.where(
             [self.coding_miRNA_dict.get(
                 gene_id, False) for gene_id in adata.var['ensembl_id']])[0]
-        coding_miRNA_ids = adata.var['ensembl_id'][coding_miRNA_idx]
+        coding_miRNA_ids = adata.var['ensembl_id'].iloc[coding_miRNA_idx]
 
         coding_miRNA_tokens_cell = np.array(
             [self.token_dict[gene_id] for gene_id in coding_miRNA_ids])
