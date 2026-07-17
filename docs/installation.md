@@ -68,3 +68,47 @@ the committed lockfile with [uv](https://docs.astral.sh/uv/):
 ```shell
 uv sync
 ```
+
+## RAPIDS GPU acceleration (advanced)
+
+Large downstream analyses (neighbors, Leiden, UMAP) can run on the GPU with
+NVIDIA [RAPIDS](https://rapids.ai/) via
+[`rapids-singlecell`](https://rapids-singlecell.readthedocs.io/). This is
+**optional and environment-level**: RAPIDS is CUDA-specific and installed from
+NVIDIA's package index, not as a `terra-st` extra, and TERRA never requires it
+(`cuml`, `cudf`, and `rapids-singlecell` are always optional).
+
+In a fresh environment, install the RAPIDS and PyTorch wheels — match the
+`-cu12` suffix, the RAPIDS version, and the PyTorch CUDA index to your hardware
+(see the [RAPIDS install selector](https://docs.rapids.ai/install/)):
+
+```shell
+uv pip install \
+    --index-strategy unsafe-best-match \
+    --extra-index-url https://pypi.nvidia.com \
+    --extra-index-url https://download.pytorch.org/whl/cu128 \
+    --only-binary rapids-singlecell \
+    torch rapids-singlecell \
+    "cudf-cu12==25.10.*" "cuml-cu12==25.10.*" "cugraph-cu12==25.10.*" "cuvs-cu12==25.10.*"
+```
+
+**Pin `scikit-learn` into `cuml`'s supported range.** `cuml`'s `cuml.accel`
+layer wraps scikit-learn internals, so a too-new scikit-learn makes `import
+cuml` (and therefore `rapids-singlecell`) fail with `AttributeError: type object
+'BaseEstimator' has no attribute '_get_default_requests'`. RAPIDS 25.10 works
+with scikit-learn 1.6–1.7. Enforce this with a constraints file so it holds
+while TERRA and the rest of the stack (`scanpy`, `squidpy`, …) install —
+otherwise `scanpy` pulls scikit-learn forward again and re-breaks `cuml`:
+
+```shell
+echo "scikit-learn<1.8" > rapids-constraints.txt
+uv pip install -c rapids-constraints.txt terra-st
+```
+
+For other RAPIDS versions, check which scikit-learn range they support. Then
+verify RAPIDS and TERRA both import:
+
+```shell
+python -c "import rapids_singlecell; print('rapids-singlecell ok')"
+python -c "import terra; print('terra', terra.__version__)"
+```

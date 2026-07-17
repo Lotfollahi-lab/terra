@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning][].
 [keep a changelog]: https://keepachangelog.com/en/1.0.0/
 [semantic versioning]: https://semver.org/spec/v2.0.0.html
 
+## [0.1.8] - 2026-07-17
+
+### Fixed
+
+-   Tokenization no longer fails under pandas 3.0; `CellGraphTokenizer` and
+    `CellNeighborhoodTokenizer` now index gene metadata positionally.
+
+### Documentation
+
+-   Expanded the in-silico perturbation and spatial-mapping tutorials, including
+    a Colab / fresh-environment install cell.
+-   Documented the optional `perturb` extra and RAPIDS GPU acceleration in the
+    installation guide.
+
 ## [0.1.7] - 2026-07-10
 
 ### Added
@@ -143,6 +157,7 @@ single-cell resolution).
 -   Finetuning of the pretrained encoder with LoRA/PEFT.
 -   Documentation, tutorials, and API reference.
 
+[0.1.8]: https://github.com/Lotfollahi-lab/terra/releases/tag/0.1.8
 [0.1.7]: https://github.com/Lotfollahi-lab/terra/releases/tag/0.1.7
 [0.1.6]: https://github.com/Lotfollahi-lab/terra/releases/tag/0.1.6
 [0.1.5]: https://github.com/Lotfollahi-lab/terra/releases/tag/0.1.5
