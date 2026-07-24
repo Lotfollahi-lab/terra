@@ -45,6 +45,12 @@ Compute a per-cell perturbation score with `infer_token_distance` and project it
 back onto the tissue to localise where a knockout has its effect.
 :::
 
+:::{grid-item-card} {octicon}`tools;1.5em;sd-mr-1` Supervised Finetuning
+:link: notebooks/supervised_finetuning
+:link-type: doc
+
+Adapt a pretrained model to a classification task via selective weight
+unfreezing, with LoRA available as an alternative.
 :::{grid-item-card} {octicon}`mortar-board;1.5em;sd-mr-1` Transfer Learning to Visium
 :link: notebooks/visium_transfer_learning_tutorial
 :link-type: doc
@@ -64,5 +70,6 @@ notebooks/zero_shot_quickstart_multisample
 notebooks/downstream_analysis
 notebooks/perturbation_tutorial
 notebooks/spatial_mapping_tutorial
+notebooks/supervised_finetuning
 notebooks/visium_transfer_learning_tutorial
 ```

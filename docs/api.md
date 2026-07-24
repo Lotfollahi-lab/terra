@@ -29,6 +29,30 @@ from terra import download_pretrained, harmonize_tokenize_embed_pipeline
     get_spatial_score
 ```
 
+## Supervised Finetuning
+
+Adapt a pretrained model to a classification task via selective weight
+unfreezing, with LoRA available as an alternative. See the
+{doc}`supervised finetuning tutorial <notebooks/supervised_finetuning>`.
+
+```{eval-rst}
+.. currentmodule:: terra.training.finetune
+
+.. autosummary::
+    :toctree: generated
+
+    finetune
+```
+
+```{eval-rst}
+.. currentmodule:: terra.utils.nested_stratified_group_split
+
+.. autosummary::
+    :toctree: generated
+
+    filter_dataset_by_cell_ids
+```
+
 ## In-silico perturbation scoring
 
 Quantify a perturbation's effect on the embeddings — per cell, or summarized
