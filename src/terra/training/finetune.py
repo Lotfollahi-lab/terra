@@ -23,6 +23,8 @@ Programmatic usage from a cross-validation loop:
         save_folder_path=output_dir,
     )
 """
+from __future__ import annotations
+
 import os
 import sys
 import argparse
