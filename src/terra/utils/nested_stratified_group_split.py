@@ -77,8 +77,8 @@ def filter_dataset_by_cell_ids(
     
     Uses a directory to avoid permission issues when filtering large datasets.
 
-    Parameters:
-    -----------
+    Parameters
+    ----------
     dataset : Dataset
         Hugging Face dataset with 'cell_id' column
     target_cell_ids : list

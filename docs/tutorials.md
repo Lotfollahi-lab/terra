@@ -51,6 +51,8 @@ back onto the tissue to localise where a knockout has its effect.
 
 Adapt a pretrained model to a classification task via selective weight
 unfreezing, with LoRA available as an alternative.
+:::
+
 :::{grid-item-card} {octicon}`mortar-board;1.5em;sd-mr-1` Transfer Learning to Visium
 :link: notebooks/visium_transfer_learning_tutorial
 :link-type: doc
