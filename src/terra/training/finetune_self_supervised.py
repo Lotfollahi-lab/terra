@@ -596,13 +596,14 @@ def prepare_finetuned_model(
     ) -> str:
     """Assemble an embeddable model folder from a fine-tuning checkpoint.
 
-    Copies ``model_config.yaml`` and ``token_dictionary.pkl`` from the
-    pretrained model, loads a checkpoint written by
-    :func:`finetune_self_supervised`, optionally merges its LoRA adapters into
-    the base weights, and writes a self-contained model folder
-    (``model_config.yaml``, ``token_dictionary.pkl``, ``model_checkpoint.pt``,
-    ``finetuning_metadata.yaml``) that :func:`terra.tokenize_adata` /
-    :func:`terra.embed_dataset` can consume directly.
+    Copies ``model_config.yaml``, ``token_dictionary.pkl`` and the
+    gene-reference files from the pretrained model, loads a checkpoint written
+    by :func:`finetune_self_supervised`, optionally merges its LoRA adapters
+    into the base weights, and writes a self-contained model folder
+    (``model_config.yaml``, ``token_dictionary.pkl``, the gene-reference files,
+    ``model_checkpoint.pt``, ``finetuning_metadata.yaml``) that
+    :func:`terra.tokenize_adata` / :func:`terra.embed_dataset` can consume
+    directly.
 
     Parameters
     ----------
@@ -636,6 +637,15 @@ def prepare_finetuned_model(
                  output_dir / 'model_config.yaml')
     shutil.copy2(pretrained_model_dir / 'token_dictionary.pkl',
                  output_dir / 'token_dictionary.pkl')
+    # Carry over the gene-reference files (when present) so the fine-tuned
+    # bundle is self-contained: harmonization/embedding then reproduces the
+    # training-time gene mapping, exactly as for the pretrained bundles.
+    # Without these, embedding via the model folder falls back to a generic
+    # Ensembl mapping that does not match the tokens the model was trained on.
+    for ref_file in ('ensembl_dictionary.pkl', 'gene_count_dictionary.pkl'):
+        ref_src = pretrained_model_dir / ref_file
+        if ref_src.exists():
+            shutil.copy2(ref_src, output_dir / ref_file)
 
     # Locate the checkpoint to prepare
     if checkpoint_epoch is not None:
