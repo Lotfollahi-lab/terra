@@ -83,12 +83,12 @@ def filter_dataset_by_cell_ids(
         Hugging Face dataset with 'cell_id' column
     target_cell_ids : list
         List of complete cell IDs to filter for (e.g., ['1000_batch1_0', '1000_batch1_1', '1002_batch3_5'])
-    batch_size : int, default=10000
-        Batch size for processing
-    num_proc : int, default=4
-        Number of processes for parallel processing
-    temp_dir : str, optional
-        Custom temporary directory path. If None, uses current working directory.
+    batch_size : int
+        Batch size for processing (default 10000).
+    num_proc : int
+        Number of processes for parallel processing (default 4).
+    temp_dir : str
+        Custom temporary directory path. If None, uses the current working directory.
         
     Returns
     --------
