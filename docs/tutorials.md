@@ -45,6 +45,14 @@ Compute a per-cell perturbation score with `infer_token_distance` and project it
 back onto the tissue to localise where a knockout has its effect.
 :::
 
+:::{grid-item-card} {octicon}`mortar-board;1.5em;sd-mr-1` Transfer Learning to Visium
+:link: notebooks/visium_transfer_learning_tutorial
+:link-type: doc
+
+Adapt a Xenium-pretrained TERRA model to 10x Visium with LoRA fine-tuning
+(I-JEPA), then embed new sections and recover cell types and states.
+:::
+
 ::::
 
 ```{toctree}
@@ -56,4 +64,5 @@ notebooks/zero_shot_quickstart_multisample
 notebooks/downstream_analysis
 notebooks/perturbation_tutorial
 notebooks/spatial_mapping_tutorial
+notebooks/visium_transfer_learning_tutorial
 ```
