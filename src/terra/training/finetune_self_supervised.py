@@ -431,7 +431,8 @@ def finetune_self_supervised(
         encoder.train()
         predictor.train()
 
-        for itr, (udata, masks_enc, masks_pred, masks_attention) in enumerate(tqdm(loader)):
+        for itr, (udata, masks_enc, masks_pred, masks_attention,
+                  pad_special_tokens) in enumerate(tqdm(loader)):
             for key, val in udata.items():
                 if isinstance(val, torch.Tensor):
                     udata[key] = val.to(device, non_blocking=True)

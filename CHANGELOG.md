@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning][].
 [keep a changelog]: https://keepachangelog.com/en/1.0.0/
 [semantic versioning]: https://semver.org/spec/v2.0.0.html
 
+## [0.1.10] - 2026-07-27
+
+### Fixed
+
+-   `finetune_self_supervised` no longer crashes at the start of training with
+    `ValueError: too many values to unpack`; the training loop now unpacks the
+    mask collator's 5-tuple batches, matching the rest of the training code.
+-   Declare `setuptools<81` as a dependency so a clean (e.g. `uv`) environment
+    can import the `squidpy`/`spatialdata` stack, which relies on the legacy
+    `pkg_resources` module.
+
 ## [0.1.9] - 2026-07-27
 
 ### Added
@@ -179,6 +190,7 @@ single-cell resolution).
 -   Finetuning of the pretrained encoder with LoRA/PEFT.
 -   Documentation, tutorials, and API reference.
 
+[0.1.10]: https://github.com/Lotfollahi-lab/terra/releases/tag/0.1.10
 [0.1.9]: https://github.com/Lotfollahi-lab/terra/releases/tag/0.1.9
 [0.1.8]: https://github.com/Lotfollahi-lab/terra/releases/tag/0.1.8
 [0.1.7]: https://github.com/Lotfollahi-lab/terra/releases/tag/0.1.7

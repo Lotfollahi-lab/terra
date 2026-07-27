@@ -10,7 +10,7 @@ packages = ["src/terra"]
 
 [project]
 name = "terra-st"
-version = "0.1.9"
+version = "0.1.10"
 description = "Spatial transcriptomics foundation model"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -74,6 +74,10 @@ dependencies = [
     "leidenalg>=0.9",
     # config files are parsed with PyYAML (terra.inference, terra.utils.config)
     "pyyaml>=6.0",
+    # squidpy -> spatialdata -> xarray_schema imports the legacy pkg_resources
+    # without depending on setuptools, so a minimal (e.g. uv) venv can't import
+    # the stack. setuptools provides pkg_resources; 81+ removed it, hence <81.
+    "setuptools<81",
 ]
 
 [project.optional-dependencies]
