@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning][].
 [keep a changelog]: https://keepachangelog.com/en/1.0.0/
 [semantic versioning]: https://semver.org/spec/v2.0.0.html
 
+## [0.1.9] - 2026-07-27
+
+### Added
+
+-   Self-supervised LoRA fine-tuning in `terra.training.finetune_self_supervised`:
+    `finetune_self_supervised` adapts a pretrained TERRA encoder to new data or a
+    new platform by training only LoRA adapters (self-supervised, no labels), and
+    `prepare_finetuned_model` merges the adapters into a self-contained,
+    embeddable model bundle.
+
+### Fixed
+
+-   `prepare_finetuned_model` now copies the gene-reference files into the
+    fine-tuned bundle, so embedding with a fine-tuned model reproduces the
+    training-time gene mapping instead of falling back to a generic Ensembl one.
+
+### Documentation
+
+-   New fine-tuning tutorials: supervised label transfer, self-supervised
+    fine-tuning on Xenium data, and transfer learning to Visium, with API
+    reference for `finetune` and `filter_dataset_by_cell_ids`.
+
 ## [0.1.8] - 2026-07-17
 
 ### Fixed
@@ -157,6 +179,7 @@ single-cell resolution).
 -   Finetuning of the pretrained encoder with LoRA/PEFT.
 -   Documentation, tutorials, and API reference.
 
+[0.1.9]: https://github.com/Lotfollahi-lab/terra/releases/tag/0.1.9
 [0.1.8]: https://github.com/Lotfollahi-lab/terra/releases/tag/0.1.8
 [0.1.7]: https://github.com/Lotfollahi-lab/terra/releases/tag/0.1.7
 [0.1.6]: https://github.com/Lotfollahi-lab/terra/releases/tag/0.1.6
