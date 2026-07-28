@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning][].
     can import the `squidpy`/`spatialdata` stack, which relies on the legacy
     `pkg_resources` module.
 
+### Changed
+
+-   Declare the scientific-stack packages terra imports directly (`numpy`,
+    `pandas`, `scipy`, `scanpy`, `scikit-learn`, `matplotlib`, `tqdm`,
+    `requests`; and `ipython` for the `eval` extra) instead of relying on them
+    being pulled in transitively.
+
 ## [0.1.9] - 2026-07-27
 
 ### Added

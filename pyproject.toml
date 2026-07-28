@@ -56,6 +56,18 @@ dependencies = [
     # fully-pinned reproducible environment TERRA is developed/tested against
     # lives in `uv.lock` (use `uv sync` to reproduce it precisely).
     "anndata>=0.10",
+    # Scientific stack terra imports directly (inference, preprocessors,
+    # datasets, utils, training). These are also pulled transitively by
+    # anndata/scanpy/squidpy today, but declared here so the dependency set is
+    # honest and doesn't silently break if a transitive provider drops them.
+    "numpy>=1.23",
+    "pandas>=1.5",
+    "scipy>=1.9",
+    "scanpy>=1.9",
+    "scikit-learn>=1.1",
+    "matplotlib>=3.6",
+    "tqdm>=4.64",
+    "requests>=2.28",
     "squidpy>=1.4",
     "scib-metrics>=0.5",
     "scikit-misc>=0.3",
@@ -116,7 +128,9 @@ notebook = [
 ]
 eval = [
     "cellphonedb",
-    "omnipath"
+    "omnipath",
+    # terra.evaluation.lr_interactions renders LR tables via IPython.display
+    "ipython",
 ]
 # In-silico perturbation scoring. terra.inference.token_distance and
 # summarize_distance use GeomLoss for the point-cloud (Sinkhorn/energy/MMD)
