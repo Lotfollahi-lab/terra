@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning][].
 [keep a changelog]: https://keepachangelog.com/en/1.0.0/
 [semantic versioning]: https://semver.org/spec/v2.0.0.html
 
+## [0.1.11] - 2026-07-28
+
+### Changed
+
+-   Declare the scientific-stack packages terra imports directly (`numpy`,
+    `pandas`, `scipy`, `scanpy`, `scikit-learn`, `matplotlib`, `tqdm`,
+    `requests`; and `ipython` for the `eval` extra) instead of relying on them
+    being pulled in transitively.
+
+### Documentation
+
+-   Supervised fine-tuning tutorial: default `hidden_dim` and `lr` set to 128
+    and 1e-4, with a note that they may need tuning for custom datasets.
+
 ## [0.1.10] - 2026-07-27
 
 ### Fixed
@@ -18,13 +32,6 @@ and this project adheres to [Semantic Versioning][].
 -   Declare `setuptools<81` as a dependency so a clean (e.g. `uv`) environment
     can import the `squidpy`/`spatialdata` stack, which relies on the legacy
     `pkg_resources` module.
-
-### Changed
-
--   Declare the scientific-stack packages terra imports directly (`numpy`,
-    `pandas`, `scipy`, `scanpy`, `scikit-learn`, `matplotlib`, `tqdm`,
-    `requests`; and `ipython` for the `eval` extra) instead of relying on them
-    being pulled in transitively.
 
 ## [0.1.9] - 2026-07-27
 
@@ -197,6 +204,7 @@ single-cell resolution).
 -   Finetuning of the pretrained encoder with LoRA/PEFT.
 -   Documentation, tutorials, and API reference.
 
+[0.1.11]: https://github.com/Lotfollahi-lab/terra/releases/tag/0.1.11
 [0.1.10]: https://github.com/Lotfollahi-lab/terra/releases/tag/0.1.10
 [0.1.9]: https://github.com/Lotfollahi-lab/terra/releases/tag/0.1.9
 [0.1.8]: https://github.com/Lotfollahi-lab/terra/releases/tag/0.1.8
