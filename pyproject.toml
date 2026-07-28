@@ -125,6 +125,8 @@ train = [
 notebook = [
     "jupyterlab>=4",
     "ipykernel>=6",
+    # the tutorial notebooks use gdown to download their demo datasets
+    "gdown",
 ]
 eval = [
     "cellphonedb",

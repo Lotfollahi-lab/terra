@@ -55,7 +55,7 @@ TERRA ships several optional dependency groups:
 | --- | --- | --- |
 | `perturb` | `uv pip install "terra-st[perturb]"` | In-silico perturbation scoring (`infer_token_distance`, `summarize_*_by_label`). Installs [GeomLoss](https://www.kernel-operations.io/geomloss/) for the point-cloud (Sinkhorn/energy/MMD) distances. **Required by the perturbation and spatial-mapping tutorials.** |
 | `hub` | `uv pip install "terra-st[hub]"` | Publish/download model bundles on the Hugging Face Hub (`terra-hub`). |
-| `notebook` | `uv pip install "terra-st[notebook]"` | JupyterLab + ipykernel to run the tutorial notebooks. |
+| `notebook` | `uv pip install "terra-st[notebook]"` | JupyterLab, ipykernel, and `gdown` (demo-data download) to run the tutorial notebooks. |
 | `eval` | `uv pip install "terra-st[eval]"` | Evaluation utilities (CellPhoneDB, Omnipath). |
 | `doc` | `uv pip install "terra-st[doc]"` | Build the documentation. |
 | `test` | `uv pip install "terra-st[test]"` | Run the test suite. |

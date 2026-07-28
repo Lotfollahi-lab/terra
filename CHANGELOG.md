@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning][].
 [keep a changelog]: https://keepachangelog.com/en/1.0.0/
 [semantic versioning]: https://semver.org/spec/v2.0.0.html
 
+## [Unreleased]
+
+### Changed
+
+-   The `notebook` extra now includes `gdown`. The tutorials that download demo
+    data install `terra-st[notebook]` (or `terra-st[perturb,notebook]`) instead
+    of pulling `gdown` in separately, and their setup cells no longer imply the
+    install is Colab-only.
+
 ## [0.1.11] - 2026-07-28
 
 ### Changed
