@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning][].
 [keep a changelog]: https://keepachangelog.com/en/1.0.0/
 [semantic versioning]: https://semver.org/spec/v2.0.0.html
 
-## [Unreleased]
+## [0.1.12] - 2026-07-28
 
 ### Changed
 
@@ -221,6 +221,7 @@ single-cell resolution).
 -   Finetuning of the pretrained encoder with LoRA/PEFT.
 -   Documentation, tutorials, and API reference.
 
+[0.1.12]: https://github.com/Lotfollahi-lab/terra/releases/tag/0.1.12
 [0.1.11]: https://github.com/Lotfollahi-lab/terra/releases/tag/0.1.11
 [0.1.10]: https://github.com/Lotfollahi-lab/terra/releases/tag/0.1.10
 [0.1.9]: https://github.com/Lotfollahi-lab/terra/releases/tag/0.1.9
