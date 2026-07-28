@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning][].
     of pulling `gdown` in separately, and their setup cells no longer imply the
     install is Colab-only.
 
+### Documentation
+
+-   The Visium transfer-learning tutorial now runs end-to-end on public 10x
+    Visium data — two serial Human Breast Cancer sections downloaded via
+    `scanpy.datasets.visium_sge` — instead of a private local dataset, and states
+    up front that it is a usage template that needs many more sections than the
+    two-section demo to produce good results.
+
 ## [0.1.11] - 2026-07-28
 
 ### Changed
