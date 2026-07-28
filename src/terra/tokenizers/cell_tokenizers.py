@@ -819,11 +819,14 @@ class CellGraphTokenizer(CellBaseTokenizer):
         coding_miRNA_tokens_cell = np.array(
             [self.token_dict[gene_id] for gene_id in coding_miRNA_ids])
 
-        # Add coordinate tokens of index cells
+        # Add coordinate tokens of index cells. Use a float (0.0), not int:
+        # relative coordinates are float position encodings and the dataset
+        # fills padded positions with -inf, which cannot be cast to an int
+        # tensor (e.g. when a platform stores integer pixel coordinates).
         adata_dict['rel_x_coord'] = [
-            [0] for coord in adata.obsm['spatial'][:, 0].tolist()]
+            [0.0] for coord in adata.obsm['spatial'][:, 0].tolist()]
         adata_dict['rel_y_coord'] = [
-            [0] for coord in adata.obsm['spatial'][:, 1].tolist()]
+            [0.0] for coord in adata.obsm['spatial'][:, 1].tolist()]
 
         # Prepare gene tokens for cell and neighborhood for this batch
         adata_dict['gene_tokens_cell'] = []
@@ -974,7 +977,12 @@ class CellGraphTokenizer(CellBaseTokenizer):
         distances = adata_neigh.obsp['spatial_distances']
         conn_nnz = connectivities.getnnz(axis=1)
         dist_nnz = distances.getnnz(axis=1)
+        # Cast integer coordinates (e.g. 10x Visium pixel coordinates) to float
+        # so the relative position encodings are float — the dataset fills
+        # padded positions with -inf, which overflows an int tensor.
         coords = np.asarray(adata.obsm['spatial'])
+        if not np.issubdtype(coords.dtype, np.floating):
+            coords = coords.astype(np.float32)
         cell_id_list = (adata.obs['cell_id'].values.tolist()
                         if self.add_neigh_cell_ids else None)
         gene_tokens_cell_neigh = adata_dict['gene_tokens_cell_neigh']

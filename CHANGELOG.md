@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning][].
 [keep a changelog]: https://keepachangelog.com/en/1.0.0/
 [semantic versioning]: https://semver.org/spec/v2.0.0.html
 
+## [0.1.13] - 2026-07-28
+
+### Fixed
+
+-   Tokenization no longer crashes on **integer spatial coordinates** (e.g. 10x
+    Visium pixel coordinates) with `RuntimeError: value cannot be converted to
+    type int64_t without overflow`. The relative position coordinates are now
+    always float, regardless of the input coordinate dtype.
+
 ## [0.1.12] - 2026-07-28
 
 ### Changed
