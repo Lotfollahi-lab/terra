@@ -1944,6 +1944,22 @@ s3 = [
 ]
 
 [[package]]
+name = "geomloss"
+version = "0.3.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "torch" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/be/a8/c7635702d96693895bc4831ad909423b57ec93183a2d92d9066369eb7cbf/geomloss-0.3.1.tar.gz", hash = "sha256:8d8bee2a57c9393642866c329e0dd069f6270b06a721683b0f164cadc4902505", size = 67281, upload-time = "2026-05-05T11:40:08.047Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e8/7e/37f7b8b7d78ca5b62062c804264914696faf12850040930f12c5e75fb094/geomloss-0.3.1-py3-none-any.whl", hash = "sha256:3ecb9ed72a7122d1ff60f0975edd759d2d1ac1b2397eaea7af6c7523ee117d4b", size = 82962, upload-time = "2026-05-05T11:40:06.525Z" },
+]
+
+[[package]]
 name = "geopandas"
 version = "1.1.3"
 source = { registry = "https://pypi.org/simple" }
@@ -7894,7 +7910,7 @@ wheels = [
 
 [[package]]
 name = "terra-st"
-version = "0.1.6"
+version = "0.1.8"
 source = { editable = "." }
 dependencies = [
     { name = "anndata", version = "0.11.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -7953,6 +7969,9 @@ notebook = [
     { name = "ipykernel" },
     { name = "jupyterlab" },
 ]
+perturb = [
+    { name = "geomloss" },
+]
 test = [
     { name = "coverage" },
     { name = "pytest" },
@@ -7966,8 +7985,9 @@ requires-dist = [
     { name = "anndata", specifier = ">=0.10" },
     { name = "cellphonedb", marker = "extra == 'eval'" },
     { name = "coverage", marker = "extra == 'test'" },
-    { name = "datasets", specifier = ">=2.18" },
+    { name = "datasets", specifier = ">=2.18,<5" },
     { name = "docutils", marker = "extra == 'doc'", specifier = ">=0.8,!=0.18.*,!=0.19.*" },
+    { name = "geomloss", marker = "extra == 'perturb'", specifier = ">=0.2.6" },
     { name = "huggingface-hub", marker = "extra == 'hub'", specifier = ">=0.20" },
     { name = "ipykernel", marker = "extra == 'doc'" },
     { name = "ipykernel", marker = "extra == 'notebook'", specifier = ">=6" },
@@ -7998,7 +8018,7 @@ requires-dist = [
     { name = "twine", marker = "extra == 'dev'", specifier = ">=4.0.2" },
     { name = "wandb", marker = "extra == 'train'", specifier = ">=0.16" },
 ]
-provides-extras = ["dev", "doc", "test", "train", "notebook", "eval", "hub"]
+provides-extras = ["dev", "doc", "test", "train", "notebook", "eval", "perturb", "hub"]
 
 [[package]]
 name = "texttable"

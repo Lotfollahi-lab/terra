@@ -4,13 +4,13 @@
 job_requirement:
   LSB_DEFAULT_USERGROUP: team361  # The user group to be used for scheduling the job.
   QUEUE: "training-parallel" # "gpu-lotfollahi", "gpu-lotfollahi-train"  # The job queue to be used for scheduling the job.
-  NUM_NODES: 1  # 2 # Number of compute nodes required for the job.
+  NUM_NODES: 2  # 2 # Number of compute nodes required for the job.
   NUM_GPUS_NODE: 8  # 8 # Number of GPUs per node.
   NUM_PROCESSES_NODE: 64 # 64  # Number of processes per node.
   MEM_NODE: 1024 # 1024, 1408  # Memory allocated per node (in GB).
   
 infiniband:
-  NCCL_IB_DISABLE: 1  # 1: Disable InfiniBand, 0: Enable InfiniBand
+  NCCL_IB_DISABLE: 0  # 1: Disable InfiniBand, 0: Enable InfiniBand
 
 environment:
   ENV_PATH: "${TERRA_ENV_PATH}"  # Path to the environment to be activated.
@@ -21,7 +21,7 @@ artifact:
   OUTPUT_DIR: "${TERRA_ARTIFACTS_DIR}/hst_corpus_110m"  # Path to store the artifacts.
   LOG_DIR: "${TERRA_ARTIFACTS_DIR}/hst_corpus_110m"
   EXPERIMENT_NAME: "terra_pretraining"  # Name of the experiment.
-  RUN_NAME: "hst_corpus_110m_train_split_run_64_pachternorm_0998ema_10knn"  # Name of the run.
+  RUN_NAME: "hst_corpus_110m_train_split_run_71_pachternorm_09995ema_10knn_test"  # Name of the run.
 
 runner_script:
   RUNNER_SCRIPT: "${TERRA_REPO_DIR}/scripts/train_model_lsf_mpirun_sanger.sh"  # Path to the runner script.
