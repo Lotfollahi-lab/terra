@@ -185,6 +185,7 @@ def infer(args: dict,
     special_tokens = args['meta']['special_tokens']
     use_bfloat16 = args['meta']['use_bfloat16']
     use_flash_attention = args['meta']['use_flash_attention']
+    attention_backend = args['meta'].get('attention_backend', 'auto')
     use_layer_norm = args['meta']['use_layer_norm']
     
     if 'api_version' in args['meta'].keys():
@@ -313,6 +314,7 @@ def infer(args: dict,
         num_heads=num_heads,
         mlp_ratio=mlp_ratio,
         use_flash_attention=use_flash_attention,
+        attention_backend=attention_backend,
         use_layer_norm=use_layer_norm,
         api_version=api_version,
         sep_gene_tokens_neb=sep_gene_tokens_neb,

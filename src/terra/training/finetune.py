@@ -619,6 +619,7 @@ def finetune(
         num_heads=model_config['meta']['num_heads'],
         mlp_ratio=model_config['meta']['mlp_ratio'],
         use_flash_attention=model_config['meta']['use_flash_attention'],
+        attention_backend=model_config['meta'].get('attention_backend', 'auto'),
         api_version=model_config['meta']['api_version'],
         sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'],
         predict_gene=model_config['meta']['predict_gene'],

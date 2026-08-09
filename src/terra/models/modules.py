@@ -21,6 +21,124 @@ from terra.utils.embedding import compute_mean_unmasked_emb
 logger = logging.getLogger(__name__)
 
 
+# Scaled-dot-product-attention (SDPA) backend presets, selected with the
+# `attention_backend` config option. SDPA tries the listed backends in order
+# and uses the first one that supports the given inputs.
+#
+# The trade-off is softmax precision vs. memory:
+#   * FLASH_ATTENTION is the most memory-efficient (largest usable batch
+#     size), but keeps the softmax in bf16, which loses precision on the
+#     exp/sum step and noticeably hurts JEPA-style training.
+#   * EFFICIENT_ATTENTION / CUDNN_ATTENTION accumulate the softmax in fp32
+#     while still saving memory through tile-wise computation.
+#   * MATH materializes the full attention matrix: highest memory use
+#     (smallest usable batch size), but always available.
+_ATTENTION_BACKEND_PRESETS = {
+    # fp32 softmax, memory-efficient tiling; the training default.
+    'auto': ('CUDNN_ATTENTION', 'EFFICIENT_ATTENTION', 'MATH'),
+    # Prefer flash: lowest memory / largest batch size, bf16 softmax.
+    'flash': ('FLASH_ATTENTION', 'CUDNN_ATTENTION', 'EFFICIENT_ATTENTION',
+              'MATH'),
+    # Pin a single backend (raises if it does not support the inputs).
+    'efficient': ('EFFICIENT_ATTENTION',),
+    'cudnn': ('CUDNN_ATTENTION',),
+    'math': ('MATH',),
+    # Do not constrain the backend: let PyTorch pick (bf16 -> flash).
+    'torch': (),
+}
+
+ATTENTION_BACKENDS = tuple(_ATTENTION_BACKEND_PRESETS)
+
+
+def resolve_sdpa_backends(attention_backend: str = 'auto'):
+    """Resolve an ``attention_backend`` preset to a list of SDPA backends.
+
+    Parameters
+    ----------
+    attention_backend:
+        One of :data:`ATTENTION_BACKENDS`. See
+        ``_ATTENTION_BACKEND_PRESETS`` for the memory/precision trade-off
+        of each preset.
+
+    Returns
+    -------
+    backends:
+        List of ``torch.nn.attention.SDPBackend`` members to pass to
+        ``sdpa_kernel``, or ``None`` to let PyTorch choose the backend
+        (``'torch'``, or a PyTorch build without the backend selector).
+    """
+    if attention_backend not in _ATTENTION_BACKEND_PRESETS:
+        raise ValueError(
+            f"Unknown attention_backend '{attention_backend}'. "
+            f"Expected one of {list(ATTENTION_BACKENDS)}.")
+
+    names = _ATTENTION_BACKEND_PRESETS[attention_backend]
+    if not names:  # 'torch' -> no backend constraint
+        return None
+
+    try:
+        from torch.nn.attention import SDPBackend as _SDPBackend
+    except ImportError:
+        logger.warning(
+            "torch.nn.attention.SDPBackend is unavailable (PyTorch < 2.3), so "
+            "attention_backend='%s' cannot be enforced. Falling back to "
+            "PyTorch's default backend selection, which may hurt training "
+            "stability. Consider upgrading to PyTorch 2.3+.",
+            attention_backend)
+        return None
+
+    # Skip backends the installed PyTorch does not know about (e.g.
+    # CUDNN_ATTENTION was added after the selector API itself).
+    backends = [getattr(_SDPBackend, name) for name in names
+                if hasattr(_SDPBackend, name)]
+    if not backends:
+        logger.warning(
+            "None of the backends %s are available in this PyTorch build; "
+            "falling back to PyTorch's default backend selection.",
+            list(names))
+        return None
+    return backends
+
+
+def describe_attention(use_flash_attention: bool,
+                       attention_backend: str = 'auto') -> str:
+    """Return a human-readable description of the attention configuration."""
+    if not use_flash_attention:
+        return ("manual (eager) attention with fp32 softmax "
+                "[use_flash_attention=False]; attention_backend is ignored")
+
+    backends = resolve_sdpa_backends(attention_backend)
+    if backends is None:
+        order = "PyTorch default (unconstrained)"
+    else:
+        order = ' > '.join(b.name for b in backends)
+    return (f"SDPA with attention_backend='{attention_backend}' "
+            f"(backend preference: {order})")
+
+
+def log_attention_config(use_flash_attention: bool,
+                         attention_backend: str = 'auto') -> None:
+    """Log the attention configuration, with memory/precision caveats."""
+    logger.info("Attention: %s.",
+                describe_attention(use_flash_attention, attention_backend))
+    if not use_flash_attention:
+        logger.warning(
+            "use_flash_attention=False materializes the full attention "
+            "matrix, which uses considerably more memory (smaller usable "
+            "batch size) than the SDPA path.")
+        return
+    if attention_backend == 'flash':
+        logger.warning(
+            "attention_backend='flash' minimizes memory (largest batch "
+            "size) but computes the softmax in bf16, which loses precision "
+            "and can hurt JEPA-style training. Prefer 'auto' for training "
+            "and reserve 'flash' for inference or memory-bound runs.")
+    elif attention_backend == 'math':
+        logger.warning(
+            "attention_backend='math' materializes the full attention "
+            "matrix and will substantially reduce the usable batch size.")
+
+
 class Attention(nn.Module):
     """
     Attention module used in transformer block, containing attention and
@@ -41,7 +159,13 @@ class Attention(nn.Module):
     proj_drop:
         Dropout ratio in projection layer.
     use_flash_attention:
-        If `True`, use flash_attention.
+        If `True`, use PyTorch's scaled dot-product attention (SDPA)
+        instead of the manual (eager) attention implementation.
+    attention_backend:
+        Which SDPA backend(s) to use when `use_flash_attention` is
+        `True`; one of :data:`ATTENTION_BACKENDS`. Controls the
+        memory/softmax-precision trade-off — `'flash'` allows the
+        largest batch size, `'auto'` (default) keeps the fp32 softmax.
     """
     def __init__(self,
                  dim: int,
@@ -52,6 +176,7 @@ class Attention(nn.Module):
                  proj_drop: float=0.0,
                  use_flash_attention: bool = True,
                  rope: RoPE2D | None = None,
+                 attention_backend: str = 'auto',
                  ):
         super().__init__()
         self.num_heads = num_heads
@@ -64,6 +189,12 @@ class Attention(nn.Module):
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
         self.use_flash_attention = use_flash_attention
+        # Resolve the SDPA backend preference once, at construction time,
+        # rather than on every forward pass. `None` means "let PyTorch
+        # choose" (attention_backend='torch', or PyTorch < 2.3).
+        self.attention_backend = attention_backend
+        self._sdpa_backends = (resolve_sdpa_backends(attention_backend)
+                               if use_flash_attention else None)
         # Optional 2D rotary position embedding. When set, q and k are
         # rotated based on the per-token (x, y) coordinates BEFORE the
         # SDPA call, so attention logits depend only on relative
@@ -115,31 +246,15 @@ class Attention(nn.Module):
             q, k = self.rope(q, k, coords_clean)
 
         if self.use_flash_attention:
-            # Memory-efficient SDPA with fp32 softmax accumulator.
-            # The FLASH_ATTENTION backend (PyTorch's default on bf16
-            # inputs) keeps the softmax in bf16, which loses precision
-            # on the exp/sum step and noticeably hurts JEPA-style
-            # training. The MATH backend matches the autocast-promoted
-            # fp32 softmax of the manual path but is slow and
-            # memory-hungry. EFFICIENT_ATTENTION + CUDNN_ATTENTION
-            # give fp32 softmax accumulation while preserving
-            # tile-wise memory savings. We prefer those over FLASH,
-            # falling back to MATH so the kernel is always available.
-            try:
-                from torch.nn.attention import sdpa_kernel, SDPBackend
-                _sdpa_backends = [
-                    SDPBackend.CUDNN_ATTENTION,
-                    SDPBackend.EFFICIENT_ATTENTION,
-                    SDPBackend.MATH,
-                ]
-            except ImportError:
-                logger.warning("Failed to import SDPBackend. Flash attention will be used without backend selection, which may hurt training stability. Consider upgrading to PyTorch 2.3+ for better flash attention support.")
-                # PyTorch < 2.3 — no backend selector API. Fall back
-                # to plain SDPA and accept whatever backend it picks.
-                sdpa_kernel = None
-                _sdpa_backends = None
+            # SDPA, restricted to the backends selected by
+            # `attention_backend` (resolved in __init__). SDPA uses the
+            # first listed backend that supports these inputs, so the
+            # order encodes the memory/precision preference -- see
+            # `_ATTENTION_BACKEND_PRESETS`. `None` means the preference
+            # is unconstrained and PyTorch picks the backend itself.
+            _sdpa_backends = self._sdpa_backends
 
-            if sdpa_kernel is not None:
+            if _sdpa_backends is not None:
                 with sdpa_kernel(_sdpa_backends):
                     if masks is not None:
                         x = nn.functional.scaled_dot_product_attention(
@@ -205,7 +320,10 @@ class Block(nn.Module):
     norm_layer:
         Normalization layer.
     use_flash_attention:
-        If `True`, use flash_attention.
+        If `True`, use PyTorch's scaled dot-product attention (SDPA)
+        instead of the manual (eager) attention implementation.
+    attention_backend:
+        SDPA backend preference; one of :data:`ATTENTION_BACKENDS`.
     """
     def __init__(self,
                  dim: int,
@@ -221,6 +339,7 @@ class Block(nn.Module):
                  use_flash_attention: bool=True,
                  rope: RoPE2D | None = None,
                  cond_dim: int | None = None,
+                 attention_backend: str = 'auto',
                  ):
         super().__init__()
         # When `cond_dim` is provided the two norms become AdaLN (DiT-
@@ -249,7 +368,8 @@ class Block(nn.Module):
                               attn_drop=attn_drop,
                               proj_drop=drop,
                               use_flash_attention=use_flash_attention,
-                              rope=rope)
+                              rope=rope,
+                              attention_backend=attention_backend)
         self.norm2 = _make_norm()
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = MLP(in_features=dim,

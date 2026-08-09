@@ -221,6 +221,7 @@ def train(args: dict,
     special_tokens = args['meta']['special_tokens']
     use_bfloat16 = args['meta']['use_bfloat16']
     use_flash_attention = args['meta']['use_flash_attention']
+    attention_backend = args['meta'].get('attention_backend', 'auto')
     use_layer_norm = args['meta']['use_layer_norm']
     if 'new_spc' in args['meta'].keys():
         new_spc = args['meta']['new_spc']
@@ -785,6 +786,7 @@ def train(args: dict,
         num_heads=num_heads,
         mlp_ratio=mlp_ratio,
         use_flash_attention=use_flash_attention,
+        attention_backend=attention_backend,
         use_layer_norm=use_layer_norm,
         sep_gene_tokens_neb=sep_gene_tokens_neb,
         predict_gene=predict_gene,

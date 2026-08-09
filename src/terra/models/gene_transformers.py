@@ -92,6 +92,10 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         Standard deviation for weight initialization.
     use_flash_attention:
         If `True`, use flash_attention.
+    attention_backend:
+        SDPA backend preference when `use_flash_attention` is
+        `True`; one of `terra.models.modules.ATTENTION_BACKENDS`
+        ('auto', 'flash', 'efficient', 'cudnn', 'math', 'torch').
     use_layer_norm:
         If `True`, use layer normalization, else use dynamic tanh
         normalization.
@@ -121,6 +125,7 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                  norm_layer: nn.modules.normalization=nn.LayerNorm,
                  init_std: float = 0.02,
                  use_flash_attention: bool = True,
+                 attention_backend: str = 'auto',
                  use_layer_norm: bool = True,
                  api_version: Literal['v1', 'v2', 'v3'] = 'v3',
                  sep_gene_tokens_neb: bool = False,
@@ -344,6 +349,7 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                   attn_drop=attn_drop_rate,
                   norm_layer=norm_layer,
                   use_flash_attention=use_flash_attention,
+                  attention_backend=attention_backend,
                   use_layer_norm=use_layer_norm,
                   rope=self.rope,
                   cond_dim=_block_cond_dim)
@@ -1172,6 +1178,10 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
         Standard deviation for weight initialization.
     use_flash_attention:
         If `True`, use flash_attention.
+    attention_backend:
+        SDPA backend preference when `use_flash_attention` is
+        `True`; one of `terra.models.modules.ATTENTION_BACKENDS`
+        ('auto', 'flash', 'efficient', 'cudnn', 'math', 'torch').
     use_layer_norm:
         If `True`, use layer normalization, else use dynamic tanh
         normalization.
@@ -1197,6 +1207,7 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
                  norm_layer: torch.nn.modules.normalization=nn.LayerNorm,
                  init_std: float = 0.02,
                  use_flash_attention: bool = True,
+                 attention_backend: str = 'auto',
                  use_layer_norm: bool = True,
                  api_version: Literal['v1', 'v2', 'v3'] = 'v3',
                  nz_spc: bool = False,
@@ -1448,6 +1459,7 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
                   attn_drop=attn_drop_rate,
                   norm_layer=norm_layer,
                   use_flash_attention=use_flash_attention,
+                  attention_backend=attention_backend,
                   use_layer_norm=use_layer_norm,
                   rope=self.rope,
                   cond_dim=_block_cond_dim)

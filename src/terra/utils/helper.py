@@ -15,6 +15,7 @@ import torch.nn as nn
 
 import terra.models.gene_transformers as gt
 from terra.models.batch_classifier import BatchClassifierHead
+from terra.models.modules import log_attention_config
 from terra.models.multimask import (EncoderMultiMaskWrapper,
                                         PredictorMultiMaskWrapper)
 from terra.models.utils import trunc_normal_
@@ -530,6 +531,7 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
                num_heads: int = 8,
                mlp_ratio: float = 4.0,
                use_flash_attention: bool = True,
+               attention_backend: str = 'auto',
                use_layer_norm: bool = True,
                api_version: Literal['v1', 'v2', 'v3'] = 'v4',
                sep_gene_tokens_neb: bool = False,
@@ -582,7 +584,14 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
     pred_depth:
         Number of transformer blocks in the predictor.
     use_flash_attention:
-        If `True` use flash_attention.
+        If `True`, use PyTorch's scaled dot-product attention (SDPA)
+        instead of the manual (eager) attention implementation.
+    attention_backend:
+        SDPA backend preference when `use_flash_attention` is `True`; one
+        of `terra.models.modules.ATTENTION_BACKENDS`. This sets the
+        memory/softmax-precision trade-off: `'auto'` (default) keeps the
+        fp32 softmax, `'flash'` minimizes memory and allows the largest
+        batch size but computes the softmax in bf16.
     use_layer_norm:
         If `True` use layer norm, else Dynamic Tanh.
     sep_gene_tokens_neb:
@@ -656,6 +665,11 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
             "cumulative size of preceding slots, or set n_experts "
             "large enough to cover the full global range.")
 
+    # Report the attention implementation once, before the encoder and
+    # predictor are built, so every entry point (training, finetuning,
+    # inference) records which attention path a run actually used.
+    log_attention_config(use_flash_attention, attention_backend)
+
     encoder = gt.__dict__["init_gt_encoder"](
         encoder_type=gt_type,
         n_special_values=n_special_values,
@@ -671,6 +685,7 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
         num_heads=num_heads,
         mlp_ratio=mlp_ratio,
         use_flash_attention=use_flash_attention,
+        attention_backend=attention_backend,
         use_layer_norm=use_layer_norm,
         api_version=api_version,
         sep_gene_tokens_neb=sep_gene_tokens_neb,
@@ -700,6 +715,7 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
         num_heads=num_heads,
         mlp_ratio=mlp_ratio,
         use_flash_attention=use_flash_attention,
+        attention_backend=attention_backend,
         use_layer_norm=use_layer_norm,
         api_version=api_version,
         predict_gene=predict_gene,

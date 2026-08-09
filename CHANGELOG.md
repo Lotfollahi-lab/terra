@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning][].
 [keep a changelog]: https://keepachangelog.com/en/1.0.0/
 [semantic versioning]: https://semver.org/spec/v2.0.0.html
 
+## [Unreleased]
+
+### Added
+
+-   New `meta.attention_backend` config option selecting the scaled
+    dot-product-attention (SDPA) backend: `auto` (default, unchanged
+    behaviour — fp32 softmax), `flash` (lowest memory, largest usable batch
+    size, bf16 softmax), `efficient`, `cudnn`, `math`, or `torch`. Previously
+    the backend preference was hard-coded.
+-   The attention implementation and backend preference are now logged when the
+    model is initialized, so every training, finetuning and inference run
+    records which attention path it used.
+
 ## [0.1.13] - 2026-07-28
 
 ### Fixed

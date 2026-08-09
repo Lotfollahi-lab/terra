@@ -55,6 +55,12 @@ meta:
   seg_learnable: False
   use_bfloat16: True
   use_flash_attention: False
+  # SDPA backend preference (only used when use_flash_attention: True):
+  #   auto      - CUDNN > EFFICIENT > MATH; fp32 softmax (training default)
+  #   flash     - prefer FLASH: lowest memory / largest batch, bf16 softmax
+  #   efficient | cudnn | math - pin a single backend
+  #   torch     - let PyTorch choose
+  attention_backend: auto
   use_layer_norm: True
   predict_gene: True
   new_spc: True
