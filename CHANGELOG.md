@@ -20,6 +20,15 @@ and this project adheres to [Semantic Versioning][].
 -   The attention implementation and backend preference are now logged when the
     model is initialized, so every training, finetuning and inference run
     records which attention path it used.
+-   Inference runtime and throughput are now logged by `embed_dataset`,
+    `gene_embed_dataset`, `infer` and `infer_token_distance`, annotated with the
+    attention backend, to make runtime comparisons between configurations
+    straightforward.
+
+### Changed
+
+-   The `hst_corpus_110m` model configs now use `attention_backend: flash`
+    (and `use_flash_attention: True`, which flash requires).
 
 ## [0.1.13] - 2026-07-28
 

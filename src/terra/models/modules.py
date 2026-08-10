@@ -193,8 +193,10 @@ class Attention(nn.Module):
         # rather than on every forward pass. `None` means "let PyTorch
         # choose" (attention_backend='torch', or PyTorch < 2.3).
         self.attention_backend = attention_backend
-        self._sdpa_backends = (resolve_sdpa_backends(attention_backend)
-                               if use_flash_attention else None)
+        # Always resolve (so an invalid name fails fast, even on the eager
+        # path), but only apply the preference when SDPA is actually used.
+        _backends = resolve_sdpa_backends(attention_backend)
+        self._sdpa_backends = _backends if use_flash_attention else None
         # Optional 2D rotary position embedding. When set, q and k are
         # rotated based on the per-token (x, y) coordinates BEFORE the
         # SDPA call, so attention logits depend only on relative

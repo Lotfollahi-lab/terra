@@ -2,6 +2,7 @@ import copy
 import logging
 import os
 import pickle
+import time
 import yaml
 from collections import defaultdict
 from pathlib import Path
@@ -20,8 +21,8 @@ from tqdm import tqdm
 from pyensembl import EnsemblRelease
 from scipy.sparse import issparse
 
-from terra.utils.helper import (init_model, load_checkpoint, parse_arch_kwargs,
-                       parse_protein_init_kwargs)
+from terra.utils.helper import (init_model, load_checkpoint, log_inference_time,
+                       parse_arch_kwargs, parse_protein_init_kwargs, sync_cuda)
 from terra.datasets.cell_datasets import CellBaseDataset, init_cell_dataset
 from terra.datasets.dataloaders import init_dataloader_and_sampler
 from terra.masks.block_masking  import BlockMaskCollator
@@ -420,6 +421,7 @@ def infer(args: dict,
     emd_list = []
 
 
+    _inference_start = time.perf_counter()
     for itr, (udata, _, _, masks_attention, pad_special_tokens) in tqdm(enumerate(loader)):
         for key in udata.keys():
             if key != 'cell_id':
@@ -740,6 +742,16 @@ def infer(args: dict,
                     all_neb_gene_marker_stats['score'].append(gene_score_neb.squeeze(1).cpu())
                     all_neb_gene_marker_stats['pair_count'].append(gene_score_pair_count_neb.squeeze(1).cpu())
                     all_neb_gene_marker_stats['cell_count'].append(gene_score_cell_count_neb.squeeze(1).cpu())
+    # Report inference runtime (and throughput) so runs can be compared
+    # across configurations, e.g. different attention backends.
+    sync_cuda()
+    log_inference_time(
+        time.perf_counter() - _inference_start,
+        description='Inference',
+        n_cells=len(loader.dataset),
+        detail=f"attention_backend="
+               f"{args['meta'].get('attention_backend', 'auto')}",
+        logger_=logger)
                 # --- End: gene marker score computation ---
     # Add metadata
     adata = ad.AnnData(

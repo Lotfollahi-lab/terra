@@ -1,5 +1,6 @@
 import logging
 import pickle
+import time
 import sys
 import yaml
 from collections import defaultdict
@@ -15,7 +16,8 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     SamplesLoss = None
 
-from terra.utils.helper import init_model, load_checkpoint
+from terra.utils.helper import (init_model, load_checkpoint, log_inference_time,
+                                sync_cuda)
 from terra.datasets.cell_datasets import init_cell_dataset
 from terra.datasets.dataloaders import init_dataloader_and_sampler
 from terra.masks.block_masking import BlockMaskCollator
@@ -364,6 +366,7 @@ def infer_token_distance(
     }
 
     write_idx = 0
+    _inference_start = time.perf_counter()
     for batch_original, batch_perturbed in tqdm(
         zip(loader_original, loader_perturbed),
         total=len(loader_original),
@@ -506,6 +509,16 @@ def infer_token_distance(
                 )
 
         write_idx += batch_size_actual
+    # Report inference runtime (and throughput) so runs can be compared
+    # across configurations, e.g. different attention backends.
+    sync_cuda()
+    log_inference_time(
+        time.perf_counter() - _inference_start,
+        description='Token-distance inference',
+        n_cells=len(loader_original.dataset),
+        detail=f"attention_backend="
+               f"{model_config['meta'].get('attention_backend', 'auto')}",
+        logger_=logger)
 
     if write_idx != n_cells:
         raise RuntimeError(

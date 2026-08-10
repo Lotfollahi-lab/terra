@@ -25,6 +25,76 @@ from terra.utils.schedulers import (CosineWDSchedule,
 
 logger = logging.getLogger(__name__)
 
+
+def format_duration(seconds: float) -> str:
+    """Format a duration in seconds as a short human-readable string.
+
+    Parameters
+    ----------
+    seconds:
+        Elapsed wall-clock time in seconds.
+
+    Returns
+    -------
+    duration:
+        Formatted duration, e.g. ``'850 ms'``, ``'12.3 s'``,
+        ``'4 min 18 s'`` or ``'1 h 12 min'``.
+    """
+    if seconds < 1:
+        return f"{seconds * 1e3:.0f} ms"
+    if seconds < 60:
+        return f"{seconds:.1f} s"
+    minutes, secs = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{int(minutes)} min {secs:.0f} s"
+    hours, minutes = divmod(int(minutes), 60)
+    return f"{hours} h {minutes} min"
+
+
+def log_inference_time(elapsed_s: float,
+                       description: str = 'Inference',
+                       n_cells: int | None = None,
+                       detail: str | None = None,
+                       logger_: logging.Logger | None = None) -> None:
+    """Log how long an inference pass took, with throughput.
+
+    Used to compare runtime across configurations (e.g. attention
+    backends) — see :func:`terra.models.modules.log_attention_config`,
+    which reports the attention setup of the same run.
+
+    Parameters
+    ----------
+    elapsed_s:
+        Measured wall-clock time in seconds.
+    description:
+        What was timed, e.g. ``'Embedding'``.
+    n_cells:
+        Number of cells processed; used to report throughput.
+    detail:
+        Optional extra context appended in brackets, e.g. the batch size.
+    logger_:
+        Logger to use. Defaults to this module's logger.
+    """
+    log = logger_ or logger
+    msg = f"{description} took {format_duration(elapsed_s)}"
+    if n_cells and elapsed_s > 0:
+        msg += f" for {n_cells:,} cells ({n_cells / elapsed_s:,.1f} cells/s)"
+    elif n_cells:
+        msg += f" for {n_cells:,} cells"
+    if detail:
+        msg += f" [{detail}]"
+    log.info("%s.", msg)
+
+
+def sync_cuda() -> None:
+    """Wait for queued CUDA work so timings measure real GPU time.
+
+    CUDA kernels are launched asynchronously, so a wall-clock timer can
+    stop before the GPU is actually done. No-op on CPU-only runs.
+    """
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+
 def apply_peft(
         target_encoder: gt.GeneTransformerBaseEncoder | EncoderMultiMaskWrapper,
         peft_method: Literal['lora'] = 'lora',

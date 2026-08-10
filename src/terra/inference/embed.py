@@ -2,6 +2,7 @@ import copy
 import logging
 import os
 import pickle
+import time
 import yaml
 from collections import defaultdict
 from pathlib import Path
@@ -20,8 +21,8 @@ from tqdm import tqdm
 from pyensembl import EnsemblRelease
 from scipy.sparse import issparse
 
-from terra.utils.helper import (init_model, load_checkpoint, parse_arch_kwargs,
-                       parse_protein_init_kwargs)
+from terra.utils.helper import (init_model, load_checkpoint, log_inference_time,
+                       parse_arch_kwargs, parse_protein_init_kwargs, sync_cuda)
 from terra.datasets.cell_datasets import CellBaseDataset, init_cell_dataset
 from terra.datasets.dataloaders import init_dataloader_and_sampler
 from terra.masks.block_masking  import BlockMaskCollator
@@ -253,6 +254,7 @@ def embed_dataset(dataset: Dataset,
     if return_token_embeddings:
         all_token_emb_list = []
 
+    _inference_start = time.perf_counter()
     for itr, (udata, _, _, masks_attention, pad_special_tokens) in tqdm(enumerate(loader)):
         for key in udata.keys():
             if key != 'cell_id':
@@ -334,6 +336,16 @@ def embed_dataset(dataset: Dataset,
         if include_spatial_cell_emb:
             all_spatial_cell_emb_list.append(spatial_cell_emb)
         all_neighborhood_emb_list.append(neighborhood_emb)
+    # Report inference runtime (and throughput) so runs can be compared
+    # across configurations, e.g. different attention backends.
+    sync_cuda()
+    log_inference_time(
+        time.perf_counter() - _inference_start,
+        description='Embedding',
+        n_cells=len(loader.dataset),
+        detail=f"attention_backend="
+               f"{model_config['meta'].get('attention_backend', 'auto')}",
+        logger_=logger)
 
     output_embed = {}        
 
@@ -842,6 +854,7 @@ def gene_embed_dataset(dataset: Dataset,
     MAX_OCC = model_config['data']['n_segments'] -1 
 
 
+    _inference_start = time.perf_counter()
     for itr, (udata, _, _, masks_attention, pad_special_tokens) in tqdm(enumerate(loader)):
         for key in udata.keys():
             if key != 'cell_id':
@@ -1062,6 +1075,16 @@ def gene_embed_dataset(dataset: Dataset,
                 _, emd_out, emd_matrix = batch_rowwise_distances(cos_sim_temp[0], cos_sim_temp[1])
                 emd_list.append(emd_out)
                 emd_matrix_list.append(emd_matrix)
+    # Report inference runtime (and throughput) so runs can be compared
+    # across configurations, e.g. different attention backends.
+    sync_cuda()
+    log_inference_time(
+        time.perf_counter() - _inference_start,
+        description='Gene embedding',
+        n_cells=len(loader.dataset),
+        detail=f"attention_backend="
+               f"{model_config['meta'].get('attention_backend', 'auto')}",
+        logger_=logger)
     # last layer
     if return_gene:
         if include_spatial_cell_emb:

@@ -59,7 +59,7 @@ meta:
   #   flash     - prefer FLASH: lowest memory / largest batch, bf16 softmax
   #   efficient | cudnn | math - pin a single backend
   #   torch     - let PyTorch choose
-  attention_backend: auto
+  attention_backend: flash
   use_layer_norm: True
   predict_gene: True
   new_spc: True
