@@ -24,11 +24,48 @@ and this project adheres to [Semantic Versioning][].
     `gene_embed_dataset`, `infer` and `infer_token_distance`, annotated with the
     attention backend, to make runtime comparisons between configurations
     straightforward.
+-   Opt-in fixes from the October 2026 code review. All defaults reproduce the
+    previous behaviour, including the published TERRA-96M and TERRA-112M
+    results:
+    -   a top-level `seed` config key for pretraining (default 0);
+    -   `keep_special_tokens` for `embed_dataset`, `gene_embed_dataset`, `infer`
+        and `harmonize_tokenize_embed_pipeline`, and a warning when inference
+        pads the metatokens of a model that was trained with them in every
+        sequence (e.g. TERRA-112M);
+    -   tokenizer options `stable_rank_ties`, `zero_expr_from_raw_counts`,
+        `gcrd_basis_target_read_depth` / `gcrd_target_read_depth_per_gene`,
+        `seurat_loess_span` and, for cell-neighborhood models,
+        `aggregate_own_neighbors`; inference reads them from the model
+        config's `data` section;
+    -   `mask.pad_masks_to_batch_max`, which pads the JEPA context and target
+        masks to the longest cell in a batch instead of trimming them to the
+        shortest;
+    -   `schedule_values_at_step`; training also logs the learning rate,
+        weight decay and EMA momentum at its last step (with `ipe_scale` > 1
+        the schedules end before their configured final values).
 
 ### Changed
 
 -   The `hst_corpus_110m` model configs now use `attention_backend: flash`
     (and `use_flash_attention: True`, which flash requires).
+
+### Fixed
+
+-   A checkpoint that cannot be loaded now raises an error instead of
+    silently leaving the model randomly initialized (training, finetuning and
+    inference). For training, `state.allow_checkpoint_load_failure: true`
+    restores the previous behaviour.
+-   Resuming multi-GPU training from the latest checkpoint
+    (`read_checkpoint: null`) now resumes every rank, not only rank 0. The
+    latest checkpoint is written atomically.
+-   Inference tokenizes cell-neighborhood models with the cell/neighborhood
+    split recorded in their config. The tokenizer default changed in April
+    2026.
+-   `n_nonzero_tokens` now counts gene tokens on the dense ranking path, so
+    length-grouped batching works for those tokenizations. It is unchanged on
+    the sparse path, e.g. for the TERRA-96M/112M data.
+-   Tokenizing with Pearson-residual ranks and shifted-log counts no longer
+    fails with an `IndexError`.
 
 ## [0.1.13] - 2026-07-28
 
