@@ -517,6 +517,7 @@ def load_checkpoint(device: str,
                     opt: torch.optim.AdamW,
                     scaler: torch.cuda.amp.GradScaler,
                     is_training: bool = True,
+                    raise_on_error: bool = True,
                     ) -> tuple[gt.GeneTransformerBaseEncoder,
                                gt.GeneTransformerBasePredictor,
                                gt.GeneTransformerBaseEncoder,
@@ -545,6 +546,10 @@ def load_checkpoint(device: str,
         Torch scaler for automatic mixed precision training.
     is_training:
         If 'True', load state dict into DDP module.
+    raise_on_error:
+        If 'True' (default), raise if the checkpoint cannot be loaded. If
+        'False', log a warning and return the modules unchanged (i.e. with
+        their initialization) and epoch 0, as earlier versions always did.
 
     Returns
     -----------
@@ -618,7 +623,13 @@ def load_checkpoint(device: str,
         del checkpoint
 
     except Exception as e:
-        logger.info(f'Encountered exception when loading checkpoint: {e}.')
+        if raise_on_error:
+            raise RuntimeError(
+                f"Could not load checkpoint '{r_path}': {e}") from e
+        logger.warning(
+            f'Encountered exception when loading checkpoint: {e}. '
+            'Continuing WITHOUT the checkpoint (randomly initialized '
+            'modules, epoch 0).')
         epoch = 0
         iter_number = None
 

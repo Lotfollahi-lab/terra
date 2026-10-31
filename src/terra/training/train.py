@@ -98,6 +98,21 @@ _GLOBAL_SEED = 0
 logger = logging.getLogger(__name__)
 
 
+def broadcast_from_rank0(obj):
+    """
+    Return rank 0's ``obj`` on every rank (``obj`` unchanged if not
+    distributed).
+    """
+    import torch.distributed as dist
+    if not (dist.is_available() and dist.is_initialized()):
+        return obj
+    if dist.get_world_size() == 1:
+        return obj
+    obj_list = [obj]
+    dist.broadcast_object_list(obj_list, src=0)
+    return obj_list[0]
+
+
 def resolve_seed(args: dict) -> int:
     """
     Return the training seed from the optional top-level ``seed`` config key.
@@ -593,6 +608,10 @@ def train(args: dict,
     load_model = args['state']['load_checkpoint'] or resume_preempt
     r_file = args['state']['read_checkpoint']
     load_folder_path = args['state']['folder_path']
+    # Opt-in to the previous behaviour of silently training from scratch
+    # when the checkpoint cannot be loaded
+    allow_checkpoint_load_failure = args['state'].get(
+        'allow_checkpoint_load_failure', False)
     use_profiler = args['state'].get('use_profiler', False)
 
     if 'precomputed_epoch_n_nonzero_tokens' in args['data'].keys():
@@ -724,6 +743,11 @@ def train(args: dict,
         save_folder_path = os.path.join(artifact_folder_path,
                                         dataset_name,
                                         current_timestamp)
+    # All ranks use rank 0's folder. Ranks > 0 are not given a folder by
+    # main.py and built their own timestamped one, so resuming from
+    # '<folder>/<write_tag>-latest.pth.tar' (read_checkpoint: null) reloaded
+    # only rank 0 while the other ranks silently restarted from scratch.
+    save_folder_path = broadcast_from_rank0(save_folder_path)
     if rank==0:
         os.makedirs(save_folder_path, exist_ok=True)
 
@@ -1044,7 +1068,8 @@ def train(args: dict,
             predictor=predictor,
             target_encoder=target_encoder,
             opt=optimizer,
-            scaler=scaler)
+            scaler=scaler,
+            raise_on_error=not allow_checkpoint_load_failure)
         for _ in range(start_epoch*ipe):
             scheduler.step()
             wd_scheduler.step()
@@ -1066,7 +1091,11 @@ def train(args: dict,
         if iter_number is not None:
             save_dict['iter_number'] = iter_number
         if rank == 0:
-            torch.save(save_dict, latest_path)
+            # Write to a temporary file and rename it, so that a job killed
+            # while saving keeps the previous checkpoint instead of leaving
+            # a truncated file that fails to load on resume
+            torch.save(save_dict, f'{latest_path}.tmp')
+            os.replace(f'{latest_path}.tmp', latest_path)
             if (epoch + 1) % checkpoint_freq == 0:
                 if iter_number is None:
                     torch.save(save_dict, save_path.format(epoch=f'{epoch}'))
