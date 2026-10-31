@@ -54,6 +54,7 @@ from terra.masks.cell_masking import CellMaskCollator
 from terra.masks.utils import apply_masks
 from terra.models.utils import repeat_interleave_batch
 from terra.utils.distributed import init_distributed
+from terra.utils.schedulers import schedule_values_at_step
 from terra.utils.logging import (AverageMeter,
                                      CSVLogger,
                                      grad_logger)
@@ -1057,6 +1058,18 @@ def train(args: dict,
     momentum_scheduler = (
         ema[0] + i*(ema[1]-ema[0])/(ipe*num_epochs*ipe_scale)
         for i in range(int(ipe*num_epochs*ipe_scale)+1))
+
+    # The schedules span ipe_scale * epochs; log where training actually ends
+    # them (ipe_scale > 1: before final_lr / final_weight_decay / ema[1])
+    end_values = schedule_values_at_step(
+        step=ipe*num_epochs, iterations_per_epoch=ipe, num_epochs=num_epochs,
+        warmup=warmup, start_lr=start_lr, ref_lr=lr, final_lr=final_lr,
+        wd=wd, final_wd=final_wd, ema=ema, ipe_scale=ipe_scale)
+    logger.info(
+        f"Schedules at the last training step (ipe_scale {ipe_scale}): "
+        f"lr {end_values['lr']:.4g} (final_lr {final_lr:.4g}), weight decay "
+        f"{end_values['weight_decay']:.4g} (final {final_wd:.4g}), EMA "
+        f"momentum {end_values['ema_momentum']:.6f} (final {ema[1]}).")
 
     start_epoch = 0
     # Load training checkpoint

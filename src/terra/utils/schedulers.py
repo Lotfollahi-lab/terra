@@ -14,6 +14,7 @@ import torch
 __all__ = [
     "WarmupCosineSchedule",
     "CosineWDSchedule",
+    "schedule_values_at_step",
 ]
 
 
@@ -115,3 +116,55 @@ class CosineWDSchedule(object):
             if ('WD_exclude' not in group) or not group['WD_exclude']:
                 group['weight_decay'] = new_wd
         return new_wd
+
+
+class _NoOptimizer:
+    """Stand-in optimizer so the schedules can be evaluated on their own."""
+    param_groups: list = []
+
+
+def schedule_values_at_step(step: int,
+                            iterations_per_epoch: int,
+                            num_epochs: int,
+                            warmup: float,
+                            start_lr: float,
+                            ref_lr: float,
+                            final_lr: float,
+                            wd: float,
+                            final_wd: float,
+                            ema: tuple[float, float],
+                            ipe_scale: float,
+                            ) -> dict[str, float]:
+    """
+    Learning rate, weight decay and EMA momentum that pretraining uses at
+    (1-based) optimizer step `step`, as set up by `init_opt` and `train`.
+
+    The schedules span ``ipe_scale * num_epochs`` epochs while training stops
+    after `num_epochs`, so with ``ipe_scale > 1`` they never reach `final_lr`,
+    `final_wd` and ``ema[1]``; with ``ipe_scale = 1`` they end at those values.
+
+    Returns
+    ----------
+    values:
+        Dict with keys 'lr', 'weight_decay' and 'ema_momentum'.
+    """
+    t_max = int(ipe_scale * num_epochs * iterations_per_epoch)
+    lr_schedule = WarmupCosineSchedule(
+        _NoOptimizer(),
+        warmup_steps=int(warmup * iterations_per_epoch),
+        start_lr=start_lr,
+        ref_lr=ref_lr,
+        final_lr=final_lr,
+        T_max=t_max)
+    wd_schedule = CosineWDSchedule(
+        _NoOptimizer(),
+        ref_wd=wd,
+        final_wd=final_wd,
+        T_max=t_max)
+    lr_schedule._step = wd_schedule._step = step - 1
+    # Training draws momentum i (0-based) at the i-th optimizer step
+    ema_momentum = ema[0] + (step - 1) * (ema[1] - ema[0]) / (
+        iterations_per_epoch * num_epochs * ipe_scale)
+    return {'lr': lr_schedule.step(),
+            'weight_decay': wd_schedule.step(),
+            'ema_momentum': ema_momentum}

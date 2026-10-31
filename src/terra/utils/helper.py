@@ -990,6 +990,11 @@ def init_opt(encoder: gt.GeneTransformerBaseEncoder,
     final_lr:
     use_bfloat16:
     ipe_scale:
+        The learning rate and weight decay schedules span
+        ``ipe_scale * num_epochs`` epochs. Training stops after `num_epochs`,
+        so with ``ipe_scale > 1`` they end before `final_lr` and `final_wd`
+        (``schedule_values_at_step`` gives the values); use 1.0 for schedules
+        that end at the configured values.
     api_version:
 
     Returns
