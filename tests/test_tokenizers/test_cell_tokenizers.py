@@ -93,3 +93,62 @@ def test_default_sparse_path_is_unchanged(token_dictionary_file_path):
         expected = token_ids[row.indices][np.argsort(-row.data)]
         np.testing.assert_array_equal(np.asarray(tokens),
                                       expected[:MODEL_INPUT_SIZE])
+
+
+RESIDUAL_RANKS = {
+    'pearson': dict(rank_count_norm_method='analytic_pearson_residuals'),
+    'pearson_rank_and_count': dict(
+        rank_count_norm_method='analytic_pearson_residuals',
+        count_count_norm_method='analytic_pearson_residuals'),
+    'seurat_v3': dict(rank_gene_norm_method='seurat_v3'),
+}
+
+
+def test_pearson_rank_with_shifted_log_counts_uses_dense_path(
+        token_dictionary_file_path):
+    # The sparse path requires rank and count with the same sparsity; a
+    # Pearson-residual rank previously took it and raised an IndexError.
+    tk, adata_dict = _tokenize(
+        token_dictionary_file_path,
+        norm_kwargs=RESIDUAL_RANKS['pearson'])
+    assert tk.rank_differs_from_count
+    assert len(adata_dict['gene_tokens_cell']) == N_CELLS
+
+
+def _token_counts(adata):
+    """Raw count of each token id per cell."""
+    counts = adata.X.toarray()
+    return [dict(zip(np.arange(N_GENES) + 2, row)) for row in counts]
+
+
+@pytest.mark.parametrize('rank', RESIDUAL_RANKS)
+def test_residual_ranks_admit_zero_count_genes_by_default(
+        token_dictionary_file_path, rank):
+    # Documents the previous behaviour, kept as default: zero-count genes get
+    # non-zero Seurat/Pearson values and are ranked among expressed genes.
+    _, adata_dict = _tokenize(token_dictionary_file_path,
+                              norm_kwargs=RESIDUAL_RANKS[rank])
+    token_counts = _token_counts(_make_adata())
+    n_zero_count = sum(
+        token_counts[i][t] == 0
+        for i, tokens in enumerate(adata_dict['gene_tokens_cell'])
+        for t in tokens if t != 0)
+    assert n_zero_count > 0
+
+
+@pytest.mark.parametrize('rank', RESIDUAL_RANKS)
+def test_zero_expr_from_raw_counts_excludes_zero_count_genes(
+        token_dictionary_file_path, rank):
+    _, adata_dict = _tokenize(token_dictionary_file_path,
+                              norm_kwargs=RESIDUAL_RANKS[rank],
+                              zero_expr_from_raw_counts=True)
+    token_counts = _token_counts(_make_adata())
+    for i, tokens in enumerate(adata_dict['gene_tokens_cell']):
+        tokens = np.asarray(tokens)
+        n_expressed = sum(c > 0 for c in token_counts[i].values())
+        kept = tokens[tokens != 0]
+        # Only expressed genes, all of them (up to the stored length), and
+        # the padding after them
+        assert all(token_counts[i][t] > 0 for t in kept)
+        assert len(kept) == min(n_expressed, MODEL_INPUT_SIZE)
+        assert np.all(tokens[:len(kept)] != 0)

@@ -163,6 +163,13 @@ class CellBaseTokenizer(ABC):
         Default `False` keeps numpy's default sort, whose order of tied genes
         is unspecified (it depends on the gene order and the numpy build); this
         reproduces how existing data and models were tokenized.
+    zero_expr_from_raw_counts:
+        If `True` (and `include_zero_expr_genes` is `False`), the dense ranking
+        path identifies non-expressed genes by their raw count of 0, ranks
+        them after all expressed genes and pads them. Default `False` keeps
+        the previous behaviour, which only drops genes whose normalized rank
+        value is exactly 0: with Seurat v3 or Pearson-residual ranks, zero-count
+        genes get non-zero values and are ranked among the expressed genes.
     stream_per_file:
         If `True`, assemble the output dataset by building and formatting
         one HF dataset PER input file and concatenating them, instead of
@@ -221,6 +228,7 @@ class CellBaseTokenizer(ABC):
             include_special_tokens: bool = True,
             stream_per_file: bool = False,
             stable_rank_ties: bool = False,
+            zero_expr_from_raw_counts: bool = False,
             ):
         self.nproc = nproc
         self.processing_mode = processing_mode
@@ -244,6 +252,7 @@ class CellBaseTokenizer(ABC):
         self.stream_per_file = stream_per_file
         self.stable_rank_ties = stable_rank_ties
         self.rank_sort_kind = 'stable' if stable_rank_ties else None
+        self.zero_expr_from_raw_counts = zero_expr_from_raw_counts
 
         # Make the PFlog1pPF target source explicit (frozen-corpus vs per-file)
         # so a missing path can never silently mismatch a frozen-trained model.
@@ -271,6 +280,8 @@ class CellBaseTokenizer(ABC):
         if (
             self.rank_cell_norm_method == self.count_cell_norm_method
             and self.rank_gene_norm_method == self.count_gene_norm_method
+            and self.rank_count_norm_method in (
+                None, 'shifted_log', 'pflog1ppf')
             and self.count_count_norm_method in ('shifted_log', 'pflog1ppf')
         ):
             # shifted_log and pflog1ppf are both monotonic within a cell
@@ -279,8 +290,24 @@ class CellBaseTokenizer(ABC):
             # it stores only the nonzero genes per cell -- which keeps
             # n_nonzero_tokens correct (the dense path stores the full panel
             # with non-expressed genes masked to token 0, inflating the count)
-            # and is more memory-efficient.
+            # and is more memory-efficient. This requires the rank to be
+            # sparsity-preserving as well: a Pearson-residual rank has a
+            # different sparsity pattern than the counts, which misaligned
+            # tokens and values in the sparse path (IndexError).
             self.rank_differs_from_count = False
+        if (
+            zero_expr_from_raw_counts
+            and not include_zero_expr_genes
+            and any(method in ('seurat_v3', 'analytic_pearson_residuals')
+                    for method in (self.rank_gene_norm_method,
+                                   self.rank_count_norm_method,
+                                   self.count_gene_norm_method,
+                                   self.count_count_norm_method))
+        ):
+            # Seurat/Pearson values of zero-count genes are non-zero, so the
+            # sparse path would keep them; only the dense path identifies
+            # non-expressed genes by their raw counts.
+            self.rank_differs_from_count = True
 
         # Load token dictionary
         logger.info('Loading token dictionary from '
@@ -908,6 +935,11 @@ class CellGraphTokenizer(CellBaseTokenizer):
 
         else: # conversion to dense arrays which requires higher memory
             logger.info('Ranking gene tokens based on normalized counts (dense version).')
+            # Raw counts (adata.X is not normalized) to identify expressed genes
+            mask_by_counts = (self.zero_expr_from_raw_counts
+                              and not self.include_zero_expr_genes)
+            if mask_by_counts:
+                X_raw_coding = adata.X[:, coding_miRNA_idx]
             for i in range(0, len(adata), self.chunk_size):
                 rank_block = X_rank_coding[i:i+self.chunk_size]
                 count_block = X_count_coding[i:i+self.chunk_size]
@@ -933,13 +965,29 @@ class CellGraphTokenizer(CellBaseTokenizer):
                 idx_pri = np.argsort(-rank_bysec, axis=1, kind='stable')
                 order = np.take_along_axis(idx_sec, idx_pri, axis=1)
 
+                if mask_by_counts:
+                    raw_block = X_raw_coding[i:i+self.chunk_size]
+                    if sp.issparse(raw_block):
+                        raw_block = raw_block.toarray()
+                    expressed = np.asarray(raw_block) > 0
+                    # Move non-expressed genes behind all expressed genes
+                    # (stable, so the rank/count order is kept otherwise)
+                    idx_expr = np.argsort(
+                        ~np.take_along_axis(expressed, order, axis=1),
+                        axis=1, kind='stable')
+                    order = np.take_along_axis(order, idx_expr, axis=1)
+
                 sorted_tokens = coding_miRNA_tokens_cell[order]            # (R, C)
                 sorted_expr = np.take_along_axis(
                     count_block, order, axis=1).astype(np.float64)
 
                 if not self.include_zero_expr_genes:
-                    sorted_rank = np.take_along_axis(rank_block, order, axis=1)
-                    zero_mask = sorted_rank == 0
+                    if mask_by_counts:
+                        zero_mask = ~np.take_along_axis(expressed, order, axis=1)
+                    else:
+                        sorted_rank = np.take_along_axis(
+                            rank_block, order, axis=1)
+                        zero_mask = sorted_rank == 0
                     sorted_tokens = sorted_tokens.copy()
                     sorted_tokens[zero_mask] = 0
                     sorted_expr[zero_mask] = 0.0
@@ -1649,6 +1697,10 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
 
         else:  # dense path with lexsort tie-breaking
             logger.info('Ranking gene tokens based on normalized counts (dense version).')
+            # Raw counts (adata.X, X_neighborhood are not normalized) to
+            # identify expressed genes
+            mask_by_counts = (self.zero_expr_from_raw_counts
+                              and not self.include_zero_expr_genes)
             for i in range(0, len(adata), self.chunk_size):
                 # --- Cell ---
                 cell_rank_block = adata[
@@ -1684,12 +1736,26 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
                 else:
                     neigh_count_block = np.asarray(neigh_count_block)
 
+                if mask_by_counts:
+                    adata_chunk = adata[i : i + self.chunk_size, coding_miRNA_idx]
+                    cell_expressed_block, neigh_expressed_block = [
+                        np.asarray(raw.toarray() if sp.issparse(raw) else raw) > 0
+                        for raw in (adata_chunk.X,
+                                    adata_chunk.layers['X_neighborhood'])]
+
                 for j in range(cell_rank_block.shape[0]):
                     # --- Cell: lexsort with tie-breaking ---
                     cell_rank_row = cell_rank_block[j]
                     cell_count_row = cell_count_block[j]
 
-                    cell_order = np.lexsort((-cell_count_row, -cell_rank_row))
+                    if mask_by_counts:
+                        # Expressed genes first, then rank, then count
+                        cell_order = np.lexsort((
+                            -cell_count_row, -cell_rank_row,
+                            ~cell_expressed_block[j]))
+                    else:
+                        cell_order = np.lexsort(
+                            (-cell_count_row, -cell_rank_row))
 
                     sorted_cell_tokens = coding_miRNA_tokens_cell[
                         cell_order].copy()
@@ -1698,7 +1764,10 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
                         np.float64, copy=True)
 
                     if not self.include_zero_expr_genes:
-                        zero_mask = (sorted_cell_rank == 0)
+                        if mask_by_counts:
+                            zero_mask = ~cell_expressed_block[j][cell_order]
+                        else:
+                            zero_mask = (sorted_cell_rank == 0)
                         sorted_cell_tokens[zero_mask] = 0
                         sorted_cell_expr[zero_mask] = 0.0
 
@@ -1711,8 +1780,13 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
                     neigh_rank_row = neigh_rank_block[j]
                     neigh_count_row = neigh_count_block[j]
 
-                    neigh_order = np.lexsort(
-                        (-neigh_count_row, -neigh_rank_row))
+                    if mask_by_counts:
+                        neigh_order = np.lexsort((
+                            -neigh_count_row, -neigh_rank_row,
+                            ~neigh_expressed_block[j]))
+                    else:
+                        neigh_order = np.lexsort(
+                            (-neigh_count_row, -neigh_rank_row))
 
                     sorted_neigh_tokens = coding_miRNA_tokens_neighborhood[
                         neigh_order].copy()
@@ -1721,7 +1795,10 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
                         np.float64, copy=True)
 
                     if not self.include_zero_expr_genes:
-                        zero_mask = (sorted_neigh_rank == 0)
+                        if mask_by_counts:
+                            zero_mask = ~neigh_expressed_block[j][neigh_order]
+                        else:
+                            zero_mask = (sorted_neigh_rank == 0)
                         sorted_neigh_tokens[zero_mask] = 0
                         sorted_neigh_expr[zero_mask] = 0.0
 

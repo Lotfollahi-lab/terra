@@ -144,7 +144,9 @@ def tokenize_adata(adata: ad.AnnData,
         include_special_tokens=include_special_tokens,
         # Opt-in tokenizer options are read from the model config so that
         # inference tokenizes like the model's training data
-        stable_rank_ties=model_config['data'].get('stable_rank_ties', False))
+        stable_rank_ties=model_config['data'].get('stable_rank_ties', False),
+        zero_expr_from_raw_counts=model_config['data'].get(
+            'zero_expr_from_raw_counts', False))
     dataset_dict = tk._tokenize_adata(adata=adata)
     dataset = tk._create_dataset(
         dataset_dict=dataset_dict,
