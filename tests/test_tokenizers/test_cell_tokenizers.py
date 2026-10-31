@@ -184,3 +184,68 @@ def test_n_nonzero_tokens_counts_expressed_genes_on_dense_path(
             n_nonzero.append(example['n_nonzero_tokens'])
         results.append(n_nonzero)
     assert results[0] == results[1]
+
+
+def test_gcrd_constants_are_configurable(token_dictionary_file_path,
+                                        monkeypatch):
+    # With recent scipy, sparse / dense-matrix division returns a COO matrix,
+    # which recent anndata refuses as a layer; convert (unrelated to the
+    # constants under test).
+    from terra.tokenizers import cell_tokenizers
+    gcrd_fn = cell_tokenizers.normalize_by_gene_corrected_read_depth
+    monkeypatch.setattr(
+        cell_tokenizers, 'normalize_by_gene_corrected_read_depth',
+        lambda x, **kwargs: sp.csr_matrix(gcrd_fn(x, **kwargs)))
+    gcrd = dict(rank_cell_norm_method='gene_corrected_read_depth',
+                count_cell_norm_method='gene_corrected_read_depth',
+                count_count_norm_method=None)
+    _, default = _tokenize(token_dictionary_file_path, norm_kwargs=gcrd,
+                           stable_rank_ties=True)
+    _, custom = _tokenize(token_dictionary_file_path, norm_kwargs=gcrd,
+                          stable_rank_ties=True,
+                          gcrd_basis_target_read_depth=151.1754621380761,
+                          gcrd_target_read_depth_per_gene=0.04705053555567159)
+    # Default target depth 153.4768 + 0.0487 * n_genes; the custom constants
+    # rescale every value by the ratio of the target depths
+    ratio = ((151.1754621380761 + N_GENES * 0.04705053555567159)
+             / (153.4768 + N_GENES * 0.0487))
+    for d_expr, c_expr in zip(default['gene_expr_cell'],
+                              custom['gene_expr_cell']):
+        np.testing.assert_allclose(np.asarray(c_expr),
+                                   np.asarray(d_expr) * ratio, rtol=1e-5)
+
+
+def test_inference_tokenizer_reads_optional_settings(tmp_path, monkeypatch):
+    # tokenize_adata passes the optional tokenizer settings recorded in the
+    # model config; absent keys keep the tokenizer defaults.
+    import yaml
+    from terra.inference import tokenize as inference_tokenize
+
+    captured = {}
+
+    class _Stop(Exception):
+        pass
+
+    def _capture(**kwargs):
+        captured.update(kwargs)
+        raise _Stop
+
+    monkeypatch.setattr(inference_tokenize.cell_tokenizers,
+                        'CellGraphTokenizer', _capture)
+    data = dict(tokenizer_type='cell_graph', model_input_size=40, n_neighs=4,
+                rank_cell_norm_method=None, rank_gene_norm_method=None,
+                rank_count_norm_method=None, count_cell_norm_method=None,
+                count_gene_norm_method=None,
+                count_count_norm_method='shifted_log',
+                stable_rank_ties=True, gcrd_basis_target_read_depth=151.0)
+    with open(tmp_path / 'model_config.yaml', 'w') as f:
+        yaml.safe_dump({'data': data}, f)
+
+    with pytest.raises(_Stop):
+        inference_tokenize.tokenize_adata(
+            adata=None, model_folder_path=str(tmp_path),
+            cache_directory_path=str(tmp_path))
+    assert captured['stable_rank_ties'] is True
+    assert captured['gcrd_basis_target_read_depth'] == 151.0
+    assert 'zero_expr_from_raw_counts' not in captured
+    assert 'gcrd_target_read_depth_per_gene' not in captured

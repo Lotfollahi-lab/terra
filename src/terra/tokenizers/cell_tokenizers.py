@@ -170,6 +170,17 @@ class CellBaseTokenizer(ABC):
         the previous behaviour, which only drops genes whose normalized rank
         value is exactly 0: with Seurat v3 or Pearson-residual ranks, zero-count
         genes get non-zero values and are ranked among the expressed genes.
+    gcrd_basis_target_read_depth:
+        Read depth independent of the number of probed genes used by the
+        'gene_corrected_read_depth' cell normalization. Must equal the value
+        used to compute the 'gene_corrected_read_depth_*' factors in
+        `norm_factor_file_path` (e.g. by `compute_cohort_norm_factors.py`);
+        otherwise the gene-normalized values are off by a dataset-dependent
+        factor. Default 153.4768 (unchanged).
+    gcrd_target_read_depth_per_gene:
+        Read depth increment per probed gene of the
+        'gene_corrected_read_depth' cell normalization; see
+        `gcrd_basis_target_read_depth`. Default 0.0487 (unchanged).
     stream_per_file:
         If `True`, assemble the output dataset by building and formatting
         one HF dataset PER input file and concatenating them, instead of
@@ -229,6 +240,8 @@ class CellBaseTokenizer(ABC):
             stream_per_file: bool = False,
             stable_rank_ties: bool = False,
             zero_expr_from_raw_counts: bool = False,
+            gcrd_basis_target_read_depth: float = 153.4768,
+            gcrd_target_read_depth_per_gene: float = 0.0487,
             ):
         self.nproc = nproc
         self.processing_mode = processing_mode
@@ -253,6 +266,9 @@ class CellBaseTokenizer(ABC):
         self.stable_rank_ties = stable_rank_ties
         self.rank_sort_kind = 'stable' if stable_rank_ties else None
         self.zero_expr_from_raw_counts = zero_expr_from_raw_counts
+        self.gcrd_kwargs = dict(
+            basis_target_read_depth=gcrd_basis_target_read_depth,
+            target_read_depth_per_gene=gcrd_target_read_depth_per_gene)
 
         # Make the PFlog1pPF target source explicit (frozen-corpus vs per-file)
         # so a missing path can never silently mismatch a frozen-trained model.
@@ -672,7 +688,7 @@ class CellGraphTokenizer(CellBaseTokenizer):
 
         elif self.rank_cell_norm_method == 'gene_corrected_read_depth':
             adata.layers['X_rank'] = \
-                normalize_by_gene_corrected_read_depth(adata.X)
+                normalize_by_gene_corrected_read_depth(adata.X, **self.gcrd_kwargs)
 
         elif self.rank_cell_norm_method == 'cell_area':
             adata.layers['X_rank'] = normalize_by_cell_area(
@@ -690,7 +706,7 @@ class CellGraphTokenizer(CellBaseTokenizer):
 
         elif self.count_cell_norm_method == 'gene_corrected_read_depth':
             adata.layers['X_count'] = \
-                normalize_by_gene_corrected_read_depth(adata.X)                   
+                normalize_by_gene_corrected_read_depth(adata.X, **self.gcrd_kwargs)                   
 
         elif self.count_cell_norm_method == 'cell_area':
             adata.layers['X_count'] = normalize_by_cell_area(
@@ -1406,9 +1422,9 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
 
         elif self.rank_cell_norm_method == 'gene_corrected_read_depth':
             adata.layers['X_rank'] = normalize_by_gene_corrected_read_depth(
-                adata.X)
+                adata.X, **self.gcrd_kwargs)
             adata.layers['X_neighborhood_rank'] = normalize_by_gene_corrected_read_depth(
-                adata.layers['X_neighborhood']) 
+                adata.layers['X_neighborhood'], **self.gcrd_kwargs) 
 
         elif self.rank_cell_norm_method == 'cell_area':
             adata.layers['X_rank'] = normalize_by_cell_area(
@@ -1432,9 +1448,9 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
 
         elif self.count_cell_norm_method == 'gene_corrected_read_depth':
             adata.layers['X_count'] = normalize_by_gene_corrected_read_depth(
-                adata.X)
+                adata.X, **self.gcrd_kwargs)
             adata.layers['X_neighborhood_count'] = normalize_by_gene_corrected_read_depth(
-                adata.layers['X_neighborhood']) 
+                adata.layers['X_neighborhood'], **self.gcrd_kwargs) 
 
         elif self.count_cell_norm_method == 'cell_area':
             adata.layers['X_count'] = normalize_by_cell_area(

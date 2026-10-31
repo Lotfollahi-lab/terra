@@ -42,6 +42,16 @@ from typing import Dict, List
 logger = logging.getLogger(__name__)
 
 
+# Optional tokenizer settings that a model config may record under 'data'
+# (absent keys keep the tokenizer defaults, i.e. the previous behaviour)
+TOKENIZER_CONFIG_KEYS = (
+    'stable_rank_ties',
+    'zero_expr_from_raw_counts',
+    'gcrd_basis_target_read_depth',
+    'gcrd_target_read_depth_per_gene',
+)
+
+
 def tokenize_adata(adata: ad.AnnData,
                    model_folder_path: str,
                    cache_directory_path: str,             
@@ -142,11 +152,10 @@ def tokenize_adata(adata: ad.AnnData,
         token_dictionary_file_path=token_dictionary_file_path,
         add_neigh_cell_ids=add_neigh_cell_ids,
         include_special_tokens=include_special_tokens,
-        # Opt-in tokenizer options are read from the model config so that
+        # Optional tokenizer settings are read from the model config so that
         # inference tokenizes like the model's training data
-        stable_rank_ties=model_config['data'].get('stable_rank_ties', False),
-        zero_expr_from_raw_counts=model_config['data'].get(
-            'zero_expr_from_raw_counts', False))
+        **{key: model_config['data'][key] for key in TOKENIZER_CONFIG_KEYS
+           if key in model_config['data']})
     dataset_dict = tk._tokenize_adata(adata=adata)
     dataset = tk._create_dataset(
         dataset_dict=dataset_dict,
