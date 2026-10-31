@@ -51,7 +51,7 @@ from terra.datasets.cell_datasets import init_cell_dataset
 from terra.datasets.dataloaders import init_dataloader_and_sampler
 from terra.masks.block_masking  import BlockMaskCollator
 from terra.masks.cell_masking import CellMaskCollator
-from terra.masks.utils import apply_masks
+from terra.masks.utils import apply_masks, padding_key_masks
 from terra.models.utils import repeat_interleave_batch
 from terra.utils.distributed import init_distributed
 from terra.utils.schedulers import schedule_values_at_step
@@ -556,6 +556,9 @@ def train(args: dict,
     else:
         sample_segments = False
     targets_list = args['mask']['targets_list']
+    # Opt-in: pad context/target masks to the longest cell in the batch
+    # instead of trimming them to the shortest (see BlockMaskCollator)
+    pad_masks_to_batch_max = args['mask'].get('pad_masks_to_batch_max', False)
 
     warmup = args['optimization']['warmup']
     num_epochs = args['optimization']['epochs']
@@ -848,6 +851,29 @@ def train(args: dict,
         adv_classifier_kwargs, embed_dim=enc_emb_dim, device=device)
     target_encoder = copy.deepcopy(encoder)
 
+    if pad_masks_to_batch_max:
+        # Padded mask entries are only excluded from attention and from the
+        # JEPA loss; reject settings that would consume them elsewhere
+        unsupported = {
+            'block_masking: false': not block_masking,
+            'n_contexts != 1 or n_targets != 1': (
+                n_contexts != 1 or n_targets != 1),
+            f"cell_pos_enc '{cell_pos_enc}'": cell_pos_enc in (
+                'alibi', 'polar+alibi'),
+            'VICReg (lambda_var/lambda_cov > 0)': (
+                lambda_var > 0 or lambda_cov > 0),
+            'adversarial batch classifier': batch_classifier is not None,
+            'distribution alignment': (
+                dist_align_kwargs is not None and lambda_align > 0),
+            'cycle consistency': (
+                cycle_kwargs is not None and lambda_cycle > 0),
+        }
+        unsupported = [name for name, used in unsupported.items() if used]
+        if unsupported:
+            raise ValueError(
+                'mask.pad_masks_to_batch_max is not supported with: '
+                f'{", ".join(unsupported)}.')
+
     # Initialize mask collator
     if block_masking:
        mask_collator = BlockMaskCollator(
@@ -861,7 +887,8 @@ def train(args: dict,
             sample_segments=sample_segments,
             sample_gene_masks=True,
             restrict_special_attention=restrict_special_attention,
-            special_token_pad_ratio=special_token_pad_ratio)
+            special_token_pad_ratio=special_token_pad_ratio,
+            pad_masks_to_batch_max=pad_masks_to_batch_max)
     elif cell_masking:
        mask_collator = CellMaskCollator(
             n_targets=n_targets,
@@ -1156,6 +1183,10 @@ def train(args: dict,
             masks_enc = [u.to(device, non_blocking=True) for u in masks_enc]
             masks_pred = [u.to(device, non_blocking=True) for u in masks_pred]
             masks_attention = masks_attention.to(device, non_blocking=True)
+            if pad_masks_to_batch_max:
+                # [1, B, L] validity of the padded context / target entries
+                masks_enc_valid = udata.pop('masks_enc_valid')
+                masks_pred_valid = udata.pop('masks_pred_valid')
 
             assert len(masks_enc) == 1, 'Currently require num encoder masks = 1'
 
@@ -1229,11 +1260,20 @@ def train(args: dict,
                         h = F.layer_norm(h, (h.size(-1),))
                     h = apply_masks(h, masks_pred, concat=False)
 
+                # Key masks for padded mask entries (None: no padding)
+                enc_masks_attention, pred_masks_attention = None, None
+                if pad_masks_to_batch_max:
+                    enc_masks_attention, pred_masks_attention = \
+                        padding_key_masks(
+                            masks_enc_valid[0], masks_pred_valid[0],
+                            n_special_tokens=n_special_tokens,
+                            new_spc=new_spc)
+
                 # Forward pass of context encoder
                 z, token_emb = encoder(
                     batch=udata,
                     masks=masks_enc,
-                    masks_attention=None)
+                    masks_attention=enc_masks_attention)
                 # Keep a reference to the encoder's outputs (a list of
                 # one tensor per context mask) for the adversarial
                 # classifier head. The predictor call below REBINDS
@@ -1249,24 +1289,44 @@ def train(args: dict,
                     batch=udata,
                     masks_enc=masks_enc,
                     masks_pred=masks_pred,
-                    masks_attention=None)
+                    masks_attention=pred_masks_attention)
 
                 # Compute loss
                 loss_exp = 1.0
                 loss = 0.
-                for zi, hi in zip(z, h):
-                    if loss_fn_type == 'smooth_l1':
+                if pad_masks_to_batch_max:
+                    # Mean over valid (non-padded) target entries only
+                    for zi, hi, vi in zip(z, h, masks_pred_valid):
                         if excl_spc_from_loss and not pad_special_tokens:
-                            loss += F.smooth_l1_loss(zi[:, n_special_tokens:, :], hi[:, n_special_tokens:, :])
+                            zi = zi[:, n_special_tokens:, :]
+                            hi = hi[:, n_special_tokens:, :]
+                            vi = vi[:, n_special_tokens:]
+                        if loss_fn_type == 'smooth_l1':
+                            token_loss = F.smooth_l1_loss(
+                                zi.float(), hi.float(), reduction='none')
+                        elif loss_fn_type == 'l1':
+                            token_loss = torch.abs(
+                                zi.float() - hi.float())**loss_exp / loss_exp
                         else:
-                            loss += F.smooth_l1_loss(zi, hi)
-                    elif loss_fn_type == 'l1':
-                        if excl_spc_from_loss and not pad_special_tokens:
-                            loss += torch.mean(
-                                torch.abs(zi[:, n_special_tokens:, :] - hi[:, n_special_tokens:, :])**loss_exp) / loss_exp
-                        else:
-                            loss += torch.mean(
-                                torch.abs(zi - hi)**loss_exp) / loss_exp
+                            raise ValueError(
+                                f'Unknown loss_fn_type {loss_fn_type}.')
+                        weight = vi.unsqueeze(-1).to(token_loss.dtype)
+                        loss += (token_loss * weight).sum() / (
+                            weight.sum() * token_loss.size(-1)).clamp_min(1)
+                else:
+                    for zi, hi in zip(z, h):
+                        if loss_fn_type == 'smooth_l1':
+                            if excl_spc_from_loss and not pad_special_tokens:
+                                loss += F.smooth_l1_loss(zi[:, n_special_tokens:, :], hi[:, n_special_tokens:, :])
+                            else:
+                                loss += F.smooth_l1_loss(zi, hi)
+                        elif loss_fn_type == 'l1':
+                            if excl_spc_from_loss and not pad_special_tokens:
+                                loss += torch.mean(
+                                    torch.abs(zi[:, n_special_tokens:, :] - hi[:, n_special_tokens:, :])**loss_exp) / loss_exp
+                            else:
+                                loss += torch.mean(
+                                    torch.abs(zi - hi)**loss_exp) / loss_exp
                 loss /= len(masks_pred)
 
                 # ----------------------------------------------------

@@ -43,6 +43,16 @@ class BlockMaskCollator:
     sample_gene_masks:
         If `True`, sample a gene mask for each cell. Should be used
         during training but not inference.
+    pad_masks_to_batch_max:
+        If `False` (default), the context and target index lists of all cells
+        are trimmed to the shortest list in the batch, so the cell with the
+        fewest gene tokens sets the context and target size of every cell
+        (the other cells lose a random part of their context and targets).
+        If `True`, shorter lists are padded to the longest one instead and
+        the collated batch holds boolean validity masks
+        ``'masks_enc_valid'`` / ``'masks_pred_valid'`` (shape
+        ``[n_masks, B, L]``) that the training loop applies as attention key
+        masks and to the loss.
     """
     def __init__(self,
                  n_targets: int,
@@ -56,7 +66,8 @@ class BlockMaskCollator:
                  cell_segment_sampling_ratio: float = 0.09090909090909091,
                  special_token_pad_ratio: float = 0.,
                  sample_gene_masks: bool = True,
-                 restrict_special_attention: bool = False):
+                 restrict_special_attention: bool = False,
+                 pad_masks_to_batch_max: bool = False):
         self.n_targets = n_targets
         self.n_contexts = n_contexts
         self.n_segments = n_segments
@@ -70,6 +81,31 @@ class BlockMaskCollator:
         self.restrict_special_attention = restrict_special_attention
         self.cell_segment_sampling_ratio = cell_segment_sampling_ratio
         self.special_token_pad_ratio = special_token_pad_ratio
+        self.pad_masks_to_batch_max = pad_masks_to_batch_max
+
+    @staticmethod
+    def _pad_masks(mask_list: list[list[torch.Tensor]],
+                   length: int,
+                   ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Pad per-cell index lists to `length` (with the cell's first index;
+        any index works since padded entries are flagged invalid) and return
+        the stacked masks and validity flags, both ``[n_masks, B, length]``.
+        """
+        padded, valid = [], []
+        for masks in mask_list:
+            padded_cell, valid_cell = [], []
+            for m in masks:
+                m = m.to(torch.long)
+                fill = m[:1] if m.numel() else torch.zeros(1, dtype=torch.long)
+                padded_cell.append(torch.cat(
+                    [m, fill.expand(length - m.numel())]))
+                valid_cell.append(torch.arange(length) < m.numel())
+            padded.append(torch.stack(padded_cell, dim=0))
+            valid.append(torch.stack(valid_cell, dim=0))
+        # [B, n_masks, length] -> [n_masks, B, length]
+        return (torch.stack(padded, dim=0).permute(1, 0, 2).contiguous(),
+                torch.stack(valid, dim=0).permute(1, 0, 2).contiguous())
 
     def _sample_gene_mask(
         self,
@@ -288,6 +324,25 @@ class BlockMaskCollator:
                     keep_ctx = min(keep_ctx, min(m.numel() for m in ctx))
                 tgt_list.append(tgt)
                 ctx_list.append(ctx)
+
+            if self.pad_masks_to_batch_max:
+                # Pad to the longest list instead of trimming to the
+                # shortest; padded entries are flagged invalid
+                keep_tgt = max(
+                    (m.numel() for masks in tgt_list for m in masks),
+                    default=0)
+                keep_ctx = max(
+                    (m.numel() for masks in ctx_list for m in masks),
+                    default=0)
+                collated_target_masks, collated['masks_pred_valid'] = \
+                    self._pad_masks(tgt_list, keep_tgt)
+                collated_context_masks, collated['masks_enc_valid'] = \
+                    self._pad_masks(ctx_list, keep_ctx)
+                return collated, \
+                       collated_context_masks, \
+                       collated_target_masks, \
+                       masks_attention, \
+                       pad_special_tokens
 
             # Trim to min length and stack directly (faster than
             # default_collate on nested lists)

@@ -38,3 +38,45 @@ def apply_masks(x: torch.Tensor,
     if concat:
         all_x = torch.cat(all_x, dim=0)
     return all_x
+
+
+def padding_key_masks(masks_enc_valid: torch.Tensor,
+                      masks_pred_valid: torch.Tensor,
+                      n_special_tokens: int,
+                      new_spc: bool,
+                      ) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Attention key masks for context and target masks padded by
+    ``BlockMaskCollator(pad_masks_to_batch_max=True)``.
+
+    Parameters
+    ----------
+    masks_enc_valid:
+        Boolean validity of the context mask entries, shape (B, L_ctx).
+    masks_pred_valid:
+        Boolean validity of the target mask entries, shape (B, L_tgt).
+    n_special_tokens:
+        Number of special tokens at the start of each mask.
+    new_spc:
+        The predictor's `new_spc` setting, which determines the layout of
+        its input sequence.
+
+    Returns
+    ----------
+    enc_masks_attention:
+        Key mask for the context encoder, shape (B, 1, 1, L_ctx).
+    pred_masks_attention:
+        Key mask for the predictor, shape (B, 1, 1, L_ctx + L_tgt), in the
+        order of the predictor's input sequence: ``[context special tokens,
+        target tokens without special tokens, context gene tokens]`` if
+        `new_spc`, else ``[target tokens, context tokens]``.
+    """
+    if new_spc:
+        pred_valid = torch.cat([
+            masks_enc_valid[:, :n_special_tokens],
+            masks_pred_valid[:, n_special_tokens:],
+            masks_enc_valid[:, n_special_tokens:]], dim=1)
+    else:
+        pred_valid = torch.cat([masks_pred_valid, masks_enc_valid], dim=1)
+    return (masks_enc_valid[:, None, None, :],
+            pred_valid[:, None, None, :])
