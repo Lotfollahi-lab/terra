@@ -22,7 +22,7 @@ def process_gene_tokens(gene_tokens: list[int],
     processed_gene_tokens:
        Array containing padded or truncated (ranked) gene tokens.
     num_nonzero_tokens:
-       Number of nonzero gene tokens.
+       Number of nonzero (non-pad) gene tokens.
     """
     processed_gene_tokens = np.array(gene_tokens, dtype=np.int64)
     
@@ -30,7 +30,6 @@ def process_gene_tokens(gene_tokens: list[int],
     if pad_size < 0:
         # Truncate
         processed_gene_tokens = processed_gene_tokens[:length]
-        num_nonzero_tokens = length
     else:
         # Add pad tokens
         processed_gene_tokens = np.pad(
@@ -38,7 +37,15 @@ def process_gene_tokens(gene_tokens: list[int],
             (0, pad_size),
             'constant',
             constant_values=token_dict.get('<pad>'))
-        num_nonzero_tokens = len(processed_gene_tokens) - pad_size
+
+    # Count the gene tokens rather than the list length: the dense ranking
+    # path stores the full panel with non-expressed genes set to token 0, so
+    # the list length overstates the number of genes (the length-grouped
+    # sampler then groups cells by panel size instead of expressed genes).
+    # Identical to the list length for the sparse path.
+    num_nonzero_tokens = int(np.count_nonzero(
+        (processed_gene_tokens != 0)
+        & (processed_gene_tokens != token_dict.get('<pad>', 0))))
                 
     return processed_gene_tokens, num_nonzero_tokens
 

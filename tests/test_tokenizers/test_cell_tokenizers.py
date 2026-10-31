@@ -28,11 +28,16 @@ def token_dictionary_file_path(tmp_path):
     return path
 
 
-def _make_adata(seed: int = 0) -> ad.AnnData:
+def _make_adata(seed: int = 0, lam: float = 0.5) -> ad.AnnData:
     rng = np.random.default_rng(seed)
-    # ~20 expressed genes per cell, mostly count 1-2: the top-8 cut falls
-    # inside a tie group in almost every cell
-    counts = rng.poisson(0.5, (N_CELLS, N_GENES)).astype(np.float32)
+    # lam=0.5: ~25 expressed genes per cell, mostly count 1-2, so the top-8
+    # cut falls inside a tie group in almost every cell
+    counts = rng.poisson(lam, (N_CELLS, N_GENES)).astype(np.float32)
+    # Every cell expresses at least one gene (cells without counts would be
+    # empty segments on the sparse path but full zero segments on the dense
+    # path)
+    empty = counts.sum(axis=1) == 0
+    counts[empty, rng.integers(0, N_GENES, empty.sum())] = 1
     adata = ad.AnnData(X=sp.csr_matrix(counts))
     adata.var['ensembl_id'] = [f'ENSG{i:011d}' for i in range(N_GENES)]
     adata.obs['cell_id'] = [f'cell_{i}' for i in range(N_CELLS)]
@@ -40,7 +45,8 @@ def _make_adata(seed: int = 0) -> ad.AnnData:
     return adata
 
 
-def _tokenize(token_dictionary_file_path, dense=False, **kwargs):
+def _tokenize(token_dictionary_file_path, dense=False, adata=None,
+              **kwargs):
     norm_kwargs = dict(rank_cell_norm_method=None,
                        rank_gene_norm_method=None,
                        rank_count_norm_method=None,
@@ -58,7 +64,8 @@ def _tokenize(token_dictionary_file_path, dense=False, **kwargs):
     if dense:
         # Same ranking, but through the dense (lexsort) path
         tk.rank_differs_from_count = True
-    adata_dict = tk._tokenize_adata(adata=_make_adata())
+    adata_dict = tk._tokenize_adata(
+        adata=_make_adata() if adata is None else adata)
     return tk, adata_dict
 
 
@@ -152,3 +159,28 @@ def test_zero_expr_from_raw_counts_excludes_zero_count_genes(
         assert all(token_counts[i][t] > 0 for t in kept)
         assert len(kept) == min(n_expressed, MODEL_INPUT_SIZE)
         assert np.all(tokens[:len(kept)] != 0)
+
+
+def test_n_nonzero_tokens_counts_expressed_genes_on_dense_path(
+        token_dictionary_file_path):
+    # Same data through the sparse and the dense path: n_nonzero_tokens must
+    # count the gene tokens of the formatted example in both, not the stored
+    # list length (the dense path stores the full panel padded with 0).
+    results = []
+    for dense in (False, True):
+        # ~3 expressed genes per cell, fewer than the 8 per segment
+        tk, adata_dict = _tokenize(token_dictionary_file_path, dense=dense,
+                                   adata=_make_adata(lam=0.05),
+                                   stable_rank_ties=True)
+        n_nonzero = []
+        for i in range(N_CELLS):
+            example = tk._format_examples(
+                {key: adata_dict[key][i] for key in (
+                    'gene_tokens_cell', 'gene_expr_cell',
+                    'gene_tokens_neighborhood', 'gene_expr_neighborhood',
+                    'seg_tokens_neighborhood')})
+            assert example['n_nonzero_tokens'] == np.count_nonzero(
+                example['gene_tokens'])
+            n_nonzero.append(example['n_nonzero_tokens'])
+        results.append(n_nonzero)
+    assert results[0] == results[1]

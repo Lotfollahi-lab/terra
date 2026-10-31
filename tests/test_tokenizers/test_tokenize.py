@@ -211,6 +211,21 @@ class TestProcessGeneTokens(unittest.TestCase):
         )
         self.assertEqual(num_nonzero, 2)
 
+    def test_counts_gene_tokens_not_list_length(self):
+        # Dense ranking path: non-expressed genes are stored as token 0
+        # inside the list. They must not count as non-zero tokens.
+        gene_tokens = [5, 6, 0, 0, 0]
+
+        processed, num_nonzero = process_gene_tokens(
+            gene_tokens, length=4, token_dict=self.TOKEN_DICT
+        )
+        self.assertEqual(num_nonzero, 2)
+
+        processed, num_nonzero = process_gene_tokens(
+            gene_tokens, length=8, token_dict=self.TOKEN_DICT
+        )
+        self.assertEqual(num_nonzero, 2)
+
     def test_fewer_tokens_than_seq_length_is_all_padded(self):
         # Edge case: a single non-zero token padded out to the sequence length.
         gene_tokens = [42]
