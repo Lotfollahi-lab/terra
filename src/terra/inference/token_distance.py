@@ -17,7 +17,7 @@ except ImportError:  # pragma: no cover - optional dependency
     SamplesLoss = None
 
 from terra.utils.helper import (init_model, load_checkpoint, log_inference_time,
-                                sync_cuda)
+                                resolve_special_token_padding, sync_cuda)
 from terra.datasets.cell_datasets import init_cell_dataset
 from terra.datasets.dataloaders import init_dataloader_and_sampler
 from terra.masks.block_masking import BlockMaskCollator
@@ -113,6 +113,9 @@ def _init_embed_inference_loader(
     Mirrors the loader-building block in ``embed.py`` (v9), including the
     ``special_token_pad_ratio`` argument of ``BlockMaskCollator``.
     """
+    # Special tokens are always padded here; warn if the model never saw
+    # padded special tokens in training
+    resolve_special_token_padding(model_config)
     mask_collator = BlockMaskCollator(
         n_targets=model_config['mask']['n_targets'],
         n_contexts=model_config['mask']['n_contexts'],

@@ -22,7 +22,8 @@ from pyensembl import EnsemblRelease
 from scipy.sparse import issparse
 
 from terra.utils.helper import (init_model, load_checkpoint, log_inference_time,
-                       parse_arch_kwargs, parse_protein_init_kwargs, sync_cuda)
+                       parse_arch_kwargs, parse_protein_init_kwargs,
+                       resolve_special_token_padding, sync_cuda)
 from terra.datasets.cell_datasets import CellBaseDataset, init_cell_dataset
 from terra.datasets.dataloaders import init_dataloader_and_sampler
 from terra.masks.block_masking  import BlockMaskCollator
@@ -66,6 +67,7 @@ def embed_dataset(dataset: Dataset,
                   ignore_spc_tokens: bool = True,
                   agg_type: Literal['avg',
                                     'softmax'] = 'avg',
+                  keep_special_tokens: bool = False,
                   ) -> dict:
     """
     Embed a tokenized dataset, returning cell-, neighborhood- and gene-level embeddings.
@@ -101,6 +103,10 @@ def embed_dataset(dataset: Dataset,
         How gene embeddings are aggregated into cell and neighborhood
         embeddings (`'avg'` for an unweighted mean or `'softmax'` for a
         count-softmax-weighted mean).
+    keep_special_tokens:
+        If `True`, keep the special tokens (metatokens) instead of padding
+        them. Requires a dataset tokenized with `include_special_tokens=True`.
+        Default `False` (padded, as before).
 
     Returns
     -----------
@@ -188,6 +194,11 @@ def embed_dataset(dataset: Dataset,
     else:
         return_layer_emb_fn = target_encoder.backbone.return_layer_emb
 
+    # Pad the special tokens unless asked to keep them (warns if the model
+    # never saw padded special tokens in training)
+    pad_spc_tokens = resolve_special_token_padding(
+        model_config, keep_special_tokens)
+
     # Create mask collator
     mask_collator = BlockMaskCollator(
         n_targets=model_config['mask']['n_targets'],
@@ -200,7 +211,7 @@ def embed_dataset(dataset: Dataset,
         sample_segments=False,
         sample_gene_masks=False,
         restrict_special_attention=model_config['meta']['restrict_special_attention'],
-        special_token_pad_ratio=1.0)
+        special_token_pad_ratio=1.0 if pad_spc_tokens else 0.0)
         
     # Create torch dataset
     cell_dataset = init_cell_dataset(
@@ -216,7 +227,7 @@ def embed_dataset(dataset: Dataset,
         n_nonzero_tokens_list=[],
         include_cell_id=True,
         sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'],
-        pad_special_tokens=True,
+        pad_special_tokens=pad_spc_tokens,
         truncate_neighbors=model_config['data'].get('truncate_neighbors', False),
         tokenized_seq_len_cell=model_config['data'].get('tokenized_seq_len_cell', None),)
 
@@ -400,6 +411,7 @@ def harmonize_tokenize_embed_pipeline(
         ignore_spc_tokens: bool = True,
         agg_type: Literal['avg',
                     'softmax'] = 'avg',
+        keep_special_tokens: bool = False,
         ) -> ad.AnnData:
     """
     Harmonize, tokenize and embed an AnnData object.
@@ -481,6 +493,10 @@ def harmonize_tokenize_embed_pipeline(
     agg_type:
         How gene embeddings are aggregated into cell and neighborhood
         embeddings (`'avg'` or `'softmax'`).
+    keep_special_tokens:
+        If `True`, tokenize with special tokens and keep them at inference
+        instead of padding them. The batches (and assays, ...) of `adata` must
+        then exist in the model's token dictionary. Default `False`.
 
     Returns
     -----------
@@ -544,7 +560,7 @@ def harmonize_tokenize_embed_pipeline(
                 nproc=nproc,
                 processing_mode=processing_mode,
                 add_neigh_cell_ids=add_neigh_cell_ids,
-                include_special_tokens=False)
+                include_special_tokens=keep_special_tokens)
             datasets.append(dataset_sample)
             logger.info(f"Tokenized sample {sample}.")
 
@@ -586,7 +602,8 @@ def harmonize_tokenize_embed_pipeline(
             nproc=nproc,
             processing_mode=processing_mode,
             add_neigh_cell_ids=add_neigh_cell_ids,
-            use_generator=use_generator)       
+            use_generator=use_generator,
+            include_special_tokens=keep_special_tokens)
 
     if harmonized_adata_save_path:
         logger.info(f"Saving harmonized data...")
@@ -611,7 +628,8 @@ def harmonize_tokenize_embed_pipeline(
         pin_memory=pin_memory,
         num_workers=num_workers,
         ignore_spc_tokens=ignore_spc_tokens,
-        agg_type=agg_type)
+        agg_type=agg_type,
+        keep_special_tokens=keep_special_tokens)
     logger.info(f"Embedded tokenized data.")
 
     # Add embeddings to adata
@@ -639,6 +657,7 @@ def gene_embed_dataset(dataset: Dataset,
                        include_spatial_cell_emb: bool = True,
                        description: str='',
                        ignore_spc_tokens: bool = True,
+                       keep_special_tokens: bool = False,
                        ) -> tuple | dict | None:
     """
     Compute per-gene embeddings or co-occurrence statistics over a tokenized dataset.
@@ -686,6 +705,10 @@ def gene_embed_dataset(dataset: Dataset,
         Description for task that is currently using this function.
     ignore_spc_tokens:
         Whether to ignore special tokens when retrieving layer embeddings.
+    keep_special_tokens:
+        If `True`, keep the special tokens (metatokens) instead of padding
+        them. Requires a dataset tokenized with `include_special_tokens=True`.
+        Default `False` (padded, as before).
 
     Returns
     -----------
@@ -781,6 +804,11 @@ def gene_embed_dataset(dataset: Dataset,
     else:
         return_layer_emb_fn = target_encoder.backbone.return_layer_emb
 
+    # Pad the special tokens unless asked to keep them (warns if the model
+    # never saw padded special tokens in training)
+    pad_spc_tokens = resolve_special_token_padding(
+        model_config, keep_special_tokens)
+
     # Create mask collator
     mask_collator = BlockMaskCollator(
         n_targets=model_config['mask']['n_targets'],
@@ -793,7 +821,7 @@ def gene_embed_dataset(dataset: Dataset,
         sample_segments=False,
         sample_gene_masks=False,
         restrict_special_attention=model_config['meta']['restrict_special_attention'],
-        special_token_pad_ratio=1.0)
+        special_token_pad_ratio=1.0 if pad_spc_tokens else 0.0)
         
     # Create torch dataset
     cell_dataset = init_cell_dataset(
@@ -809,7 +837,7 @@ def gene_embed_dataset(dataset: Dataset,
         n_nonzero_tokens_list=[],
         include_cell_id=True,
         sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'],
-        pad_special_tokens=True,
+        pad_special_tokens=pad_spc_tokens,
         truncate_neighbors=model_config['data'].get('truncate_neighbors', False),
         tokenized_seq_len_cell=model_config['data'].get('tokenized_seq_len_cell', None),)
 

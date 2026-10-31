@@ -22,7 +22,8 @@ from pyensembl import EnsemblRelease
 from scipy.sparse import issparse
 
 from terra.utils.helper import (init_model, load_checkpoint, log_inference_time,
-                       parse_arch_kwargs, parse_protein_init_kwargs, sync_cuda)
+                       parse_arch_kwargs, parse_protein_init_kwargs,
+                       resolve_special_token_padding, sync_cuda)
 from terra.datasets.cell_datasets import CellBaseDataset, init_cell_dataset
 from terra.datasets.dataloaders import init_dataloader_and_sampler
 from terra.masks.block_masking  import BlockMaskCollator
@@ -74,6 +75,7 @@ def infer(args: dict,
           include_spatial_cell_emb: bool = False,
           ignore_spc_tokens: bool = True,
           debug: bool = False,
+          keep_special_tokens: bool = False,
           ) -> ad.AnnData:
     """
     Use a trained model for inference, returning cell, neighborhood and optionally gene embeddings.
@@ -135,6 +137,10 @@ def infer(args: dict,
     debug:
         If `True`, log additional diagnostic statistics about the embeddings and
         masks during inference.
+    keep_special_tokens:
+        If `True`, keep the special tokens (metatokens) instead of padding
+        them. Requires a dataset tokenized with `include_special_tokens=True`.
+        Default `False` (padded, as before).
 
     Returns
     -----------
@@ -331,6 +337,10 @@ def infer(args: dict,
     else:
         return_layer_emb_fn = target_encoder.backbone.return_layer_emb
 
+    # Pad the special tokens unless asked to keep them (warns if the model
+    # never saw padded special tokens in training)
+    pad_spc_tokens = resolve_special_token_padding(args, keep_special_tokens)
+
     # Initialize mask collator
     if block_masking:
        mask_collator = BlockMaskCollator(
@@ -344,7 +354,7 @@ def infer(args: dict,
             sample_segments=False,
             sample_gene_masks=False,
             restrict_special_attention=restrict_special_attention,
-            special_token_pad_ratio=1.0)
+            special_token_pad_ratio=1.0 if pad_spc_tokens else 0.0)
     elif cell_masking:
        mask_collator = CellMaskCollator(
             n_targets=n_targets,
@@ -376,8 +386,8 @@ def infer(args: dict,
         # batch_value / *_value columns) does not raise KeyError in
         # _add_special_seq. This is behaviour-preserving for the embeddings
         # because the collator below uses special_token_pad_ratio=1.0 and
-        # zeroes those positions regardless.
-        pad_special_tokens=True,
+        # zeroes those positions regardless (unless keep_special_tokens).
+        pad_special_tokens=pad_spc_tokens,
         truncate_neighbors=args['data'].get('truncate_neighbors', False),
         tokenized_seq_len_cell=args['data'].get('tokenized_seq_len_cell', None))
 

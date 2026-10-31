@@ -466,6 +466,49 @@ def parse_protein_init_kwargs(args: dict,
     return kwargs
 
 
+def resolve_special_token_padding(model_config: dict,
+                                  keep_special_tokens: bool = False,
+                                  ) -> bool:
+    """
+    Decide whether the special tokens (metatokens) are padded at inference.
+
+    Inference pads the special tokens by default. A model trained with
+    ``mask.special_token_pad_ratio`` 0 (the default; also every model trained
+    before the option existed, e.g. TERRA-112M) has never seen a sequence
+    without its special tokens, so its embeddings with padded special tokens
+    are out of the training distribution. This is logged as a warning.
+    ``keep_special_tokens=True`` keeps the special tokens instead; the data
+    must then be tokenized with ``include_special_tokens=True``, i.e. its
+    batch (and assay, ...) values must exist in the model's token dictionary.
+
+    Parameters
+    -----------
+    model_config:
+        Model config (``model_config.yaml`` / ``params.yaml``).
+    keep_special_tokens:
+        If `True`, keep the special tokens instead of padding them.
+
+    Returns
+    -----------
+    pad_special_tokens:
+        `True` if the special tokens are padded.
+    """
+    special_tokens = model_config['meta'].get('special_tokens') or []
+    if not special_tokens:
+        return True
+    if keep_special_tokens:
+        return False
+    if not (model_config.get('mask') or {}).get('special_token_pad_ratio', 0.0):
+        logger.warning(
+            f"The model was trained with its special tokens {special_tokens} "
+            "in every sequence (mask.special_token_pad_ratio 0), but they are "
+            "padded at inference, so embeddings are computed out of the "
+            "training distribution. Use keep_special_tokens=True with data "
+            "tokenized with include_special_tokens=True to keep them, or "
+            "train with mask.special_token_pad_ratio > 0.")
+    return True
+
+
 def load_checkpoint(device: str,
                     r_path: str,
                     encoder: gt.GeneTransformerBaseEncoder,
