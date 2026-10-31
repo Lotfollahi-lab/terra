@@ -98,6 +98,19 @@ _GLOBAL_SEED = 0
 logger = logging.getLogger(__name__)
 
 
+def resolve_seed(args: dict) -> int:
+    """
+    Return the training seed from the optional top-level ``seed`` config key.
+
+    Without the key the historical seed ``0`` is used, so existing configs
+    train exactly as before. The seed drives the weight initialization, the
+    order of the length-grouped sampler and, through the DataLoader worker
+    seeds, the masks; replicate runs therefore need different seeds.
+    """
+    seed = args.get('seed')
+    return _GLOBAL_SEED if seed is None else int(seed)
+
+
 def train(args: dict,
           train_dataset: datasets.Dataset,
           resume_preempt: bool = False,
@@ -134,11 +147,13 @@ def train(args: dict,
             "`pip install terra-st[train]`."
         ) from exc
 
-    # Set random seeds
-    np.random.seed(_GLOBAL_SEED)
-    torch.manual_seed(_GLOBAL_SEED)
+    # Set random seeds (optional top-level `seed` config key; 0 if absent)
+    seed = resolve_seed(args)
+    logger.info(f'Random seed: {seed}.')
+    np.random.seed(seed)
+    torch.manual_seed(seed)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(_GLOBAL_SEED)
+        torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = False # set to True for reproducibility
     torch.backends.cudnn.benchmark = True # set to False for reproducibility
 
@@ -889,7 +904,8 @@ def train(args: dict,
                 drop_last=True,
                 prefetch_factor=(4 if num_workers > 0 else None),
                 persistent_workers=False,
-                mega_batch_mult_max=mega_batch_mult_max)
+                mega_batch_mult_max=mega_batch_mult_max,
+                seed=seed)
             train_loaders.append(train_loader)
             train_samplers.append(train_sampler)
 
@@ -906,7 +922,8 @@ def train(args: dict,
             drop_last=True,
             prefetch_factor=(4 if num_workers > 0 else None),
             persistent_workers=False,
-            mega_batch_mult_max=mega_batch_mult_max)
+            mega_batch_mult_max=mega_batch_mult_max,
+            seed=seed)
 
     logger.info(f"Length of train loader: {len(train_loader)}.")
     ipe = len(train_loader)

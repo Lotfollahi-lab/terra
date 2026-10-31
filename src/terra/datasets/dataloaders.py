@@ -183,6 +183,7 @@ def init_dataloader_and_sampler(cell_dataset: CellBaseDataset,
                                 world_size: int,
                                 rank: int,
                                 mega_batch_mult_max: int,
+                                seed: int = _GLOBAL_SEED,
                                 **dataloader_kwargs,
     ) -> tuple[torch.utils.data.DataLoader,
                torch.utils.data.distributed.DistributedSampler | None]:
@@ -201,6 +202,9 @@ def init_dataloader_and_sampler(cell_dataset: CellBaseDataset,
         Number of replicas of the distributed sampler.
     rank:
         Rank of the distributed sampler.
+    seed:
+        Seed of the sampler's shuffling (the training seed; defaults to the
+        historical seed 0).
     dataloader_kwargs:
         Keyword arguments for the dataloader.
 
@@ -217,7 +221,7 @@ def init_dataloader_and_sampler(cell_dataset: CellBaseDataset,
             batch_size=batch_size,
             num_replicas=world_size,
             rank=rank,
-            seed=_GLOBAL_SEED,
+            seed=seed,
             mega_batch_mult_max=mega_batch_mult_max)
     else:
         dist_sampler = DistributedSampler(
@@ -225,7 +229,7 @@ def init_dataloader_and_sampler(cell_dataset: CellBaseDataset,
             num_replicas=world_size,
             rank=rank,
             shuffle=False,
-            seed=_GLOBAL_SEED,
+            seed=seed,
         )
         
     dataloader = DataLoader(cell_dataset,
