@@ -48,8 +48,8 @@ from torch.nn.parallel import DistributedDataParallel
 
 from datasets import Dataset, load_from_disk
 
-from terra.utils.helper import (init_model, load_checkpoint, apply_peft,
-                                parse_protein_init_kwargs)
+from terra.utils.helper import (init_model_from_config, load_checkpoint,
+                                apply_peft, resolve_special_token_padding)
 from terra.datasets.cell_datasets import init_cell_dataset
 from terra.datasets.dataloaders import init_dataloader_and_sampler
 from terra.masks.block_masking  import BlockMaskCollator
@@ -94,6 +94,69 @@ def parse_arguments():
 
 
 @torch.no_grad()
+def build_selection_mask(
+        tokens: torch.Tensor,
+        n_special_tokens: int,
+        model_config: dict,
+        selection_type: str,
+        agg_excluded_tokens: list[int] | None,
+        top_k: int | None,
+    ) -> torch.Tensor:
+    """
+    Create the aggregation mask over the full token sequence.
+
+    The mask is built on the gene tokens; the leading special token positions
+    are never selected. It therefore aligns with the encoder output, which
+    includes the special tokens.
+
+    Parameters
+    ----------
+    tokens:
+        Token ids of the batch, including the leading special tokens.
+    n_special_tokens:
+        Number of leading special tokens.
+    model_config:
+        Model configuration dict loaded from the pretrained checkpoint.
+    selection_type:
+        'agg_cell' or 'agg_graph' — determines which tokens are pooled.
+    agg_excluded_tokens:
+        Token ids to exclude from aggregation (or None).
+    top_k:
+        If set, restrict aggregation to the top-k expressed genes.
+
+    Returns
+    -------
+    selection_mask:
+        Mask of shape (batch size, number of tokens).
+    """
+    ns_tokens = tokens[:, n_special_tokens:]
+    if selection_type == 'agg_cell':
+        selection_mask = create_binary_selection_mask(
+            ns_tokens,
+            selection_type=selection_type,
+            excluded_tokens=agg_excluded_tokens,
+            seq_len_cell=model_config['data']['seq_len_cell'],
+            top_k=top_k,
+        )
+    elif selection_type == 'agg_graph':
+        selection_mask = create_binary_selection_mask(
+            ns_tokens,
+            selection_type=selection_type,
+            excluded_tokens=agg_excluded_tokens,
+            seq_len_cell=model_config['data']['seq_len_cell'],
+            top_k=top_k,
+            n_segments=model_config['data']['n_segments']
+        )
+    else:
+        raise ValueError(f"Selection type {selection_type} not supported.")
+
+    # Never select the special tokens
+    return torch.cat(
+        [selection_mask.new_zeros(selection_mask.shape[0], n_special_tokens),
+         selection_mask],
+        dim=1)
+
+
 def validate(
         model,
         val_loader,
@@ -161,27 +224,10 @@ def validate(
                 udata[key] = udata[key].to(device, non_blocking=True)
         masks_attention = masks_attention.to(device, non_blocking=True)
 
-        ns_tokens = udata['tokens'][:, n_special_tokens:]
         # Create cell mask or neighborhood mask for aggregation depending on the selection type (agg_cell or agg_graph)
-        if selection_type == 'agg_cell':
-            selection_mask = create_binary_selection_mask(
-                ns_tokens,
-                selection_type=selection_type,
-                excluded_tokens=agg_excluded_tokens,
-                seq_len_cell=model_config['data']['seq_len_cell'],
-                top_k=top_k,
-            )
-        elif selection_type == 'agg_graph':
-            selection_mask = create_binary_selection_mask(
-                ns_tokens,
-                selection_type=selection_type,
-                excluded_tokens=agg_excluded_tokens,
-                seq_len_cell=model_config['data']['seq_len_cell'],
-                top_k=top_k,
-                n_segments=model_config['data']['n_segments']
-            )
-        else:
-            raise ValueError(f"Selection type {selection_type} not supported.")
+        selection_mask = build_selection_mask(
+            udata['tokens'], n_special_tokens, model_config, selection_type,
+            agg_excluded_tokens, top_k)
 
         logits = model(
             udata=udata,
@@ -251,27 +297,10 @@ def test(
                 udata[key] = udata[key].to(device, non_blocking=True)
         masks_attention = masks_attention.to(device, non_blocking=True)
 
-        ns_tokens = udata['tokens'][:, n_special_tokens:]
         # Create cell mask or neighborhood mask for aggregation depending on the selection type (agg_cell or agg_graph)
-        if selection_type == 'agg_cell':
-            selection_mask = create_binary_selection_mask(
-                ns_tokens,
-                selection_type=selection_type,
-                excluded_tokens=agg_excluded_tokens,
-                seq_len_cell=model_config['data']['seq_len_cell'],
-                top_k=top_k,
-            )
-        elif selection_type == 'agg_graph':
-            selection_mask = create_binary_selection_mask(
-                ns_tokens,
-                selection_type=selection_type,
-                excluded_tokens=agg_excluded_tokens,
-                seq_len_cell=model_config['data']['seq_len_cell'],
-                top_k=top_k,
-                n_segments=model_config['data']['n_segments']
-            )
-        else:
-            raise ValueError(f"Selection type {selection_type} not supported.")
+        selection_mask = build_selection_mask(
+            udata['tokens'], n_special_tokens, model_config, selection_type,
+            agg_excluded_tokens, top_k)
 
         logits = model(
             udata=udata,
@@ -419,22 +448,24 @@ def finetune(
     # -------------------------------------------------------------------- #
     logger.info("Loading token dictionary...")
     n_special_tokens = len(model_config['meta']['special_tokens'])
-    seq_len = (
-        model_config['data']['seq_len_cell'] +
-        model_config['data']['seq_len_neighborhood'] +
-        n_special_tokens)
 
     with open(token_dictionary_file_path, 'rb') as file:
         token_dict = pickle.load(file)
     vocab_size = len(token_dict)
-    n_special_values = sum(1 for key in token_dict if "spv" in key)
 
-    # Mirror train.py: if the original training run used protein
-    # initialization for the token embedding, the encoder must be
-    # rebuilt with the same structure or state_dict loading will fail.
-    protein_init_kwargs = parse_protein_init_kwargs(args)
-    if protein_init_kwargs is not None:
-        protein_init_kwargs['token_dict'] = token_dict
+    # Pad the special tokens unless asked to keep them, as at inference
+    # (warns if the model never saw padded special tokens in training)
+    pad_spc_tokens = resolve_special_token_padding(
+        model_config, args['finetune'].get('keep_special_tokens', False))
+
+    # The data must be tokenized like the pretraining data; a finetuning
+    # config may override the neighbor truncation
+    truncate_neighbors = args['data'].get(
+        'truncate_neighbors',
+        model_config['data'].get('truncate_neighbors', False))
+    tokenized_seq_len_cell = args['data'].get(
+        'tokenized_seq_len_cell',
+        model_config['data'].get('tokenized_seq_len_cell', None))
 
     # -------------------------------------------------------------------- #
     # PREPARE MASK COLLATOR
@@ -448,7 +479,10 @@ def finetune(
         n_special_tokens=n_special_tokens,
         per_block_mask_ratio=model_config['mask']['per_block_mask_ratio'],
         sample_segments=False,
-        sample_gene_masks=False
+        sample_gene_masks=False,
+        restrict_special_attention=model_config['mask'].get(
+            'restrict_special_attention', False),
+        special_token_pad_ratio=1.0 if pad_spc_tokens else 0.0
     )
 
     # -------------------------------------------------------------------- #
@@ -468,8 +502,10 @@ def finetune(
         n_nonzero_tokens_list=None,
         include_cell_id=True,
         sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'],
-        truncate_neighbors=args['data'].get('truncate_neighbors', False),
-        tokenized_seq_len_cell=args['data'].get('tokenized_seq_len_cell', None)
+        nz_spc=model_config['data'].get('nz_spc', False),
+        pad_special_tokens=pad_spc_tokens,
+        truncate_neighbors=truncate_neighbors,
+        tokenized_seq_len_cell=tokenized_seq_len_cell
     )
 
     train_loader, _ = init_dataloader_and_sampler(
@@ -506,8 +542,10 @@ def finetune(
             n_nonzero_tokens_list=None,
             include_cell_id=True,
             sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'],
-            truncate_neighbors=args['data'].get('truncate_neighbors', False),
-            tokenized_seq_len_cell=args['data'].get('tokenized_seq_len_cell', None)
+            nz_spc=model_config['data'].get('nz_spc', False),
+            pad_special_tokens=pad_spc_tokens,
+            truncate_neighbors=truncate_neighbors,
+            tokenized_seq_len_cell=tokenized_seq_len_cell
         )
 
         val_loader, _ = init_dataloader_and_sampler(
@@ -545,8 +583,10 @@ def finetune(
         n_nonzero_tokens_list=None,
         include_cell_id=True,
         sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'],
-        truncate_neighbors=args['data'].get('truncate_neighbors', False),
-        tokenized_seq_len_cell=args['data'].get('tokenized_seq_len_cell', None)
+        nz_spc=model_config['data'].get('nz_spc', False),
+        pad_special_tokens=pad_spc_tokens,
+        truncate_neighbors=truncate_neighbors,
+        tokenized_seq_len_cell=tokenized_seq_len_cell
     )
 
     eval_loader, _ = init_dataloader_and_sampler(
@@ -601,31 +641,11 @@ def finetune(
     # -------------------------------------------------------------------- #
     # LOAD TARGET ENCODER
     # -------------------------------------------------------------------- #
-    target_encoder, _ = init_model(
-        gt_type=model_config['meta']['gt_type'],
-        count_encoding=model_config['meta']['count_encoding'],
-        n_value_bins=model_config['meta']['n_value_bins'],
-        cell_pos_enc=model_config['meta']['cell_pos_enc'],
-        device=device,
-        vocab_size=vocab_size,
-        seq_len=seq_len,
-        n_special_tokens=n_special_tokens,
-        n_segments=model_config['data']['n_segments'],
-        n_special_values=n_special_values,
-        enc_emb_dim=model_config['meta']['enc_emb_dim'],
-        enc_depth=model_config['meta']['enc_depth'],
-        pred_emb_dim=model_config['meta']['pred_emb_dim'],
-        pred_depth=model_config['meta']['pred_depth'],
-        num_heads=model_config['meta']['num_heads'],
-        mlp_ratio=model_config['meta']['mlp_ratio'],
-        use_flash_attention=model_config['meta']['use_flash_attention'],
-        attention_backend=model_config['meta'].get('attention_backend', 'auto'),
-        api_version=model_config['meta']['api_version'],
-        sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'],
-        predict_gene=model_config['meta']['predict_gene'],
-        pos_learnable=model_config['meta']['pos_learnable'],
-        protein_init_kwargs=protein_init_kwargs
-    )
+    # A `protein_init` block in the finetuning config (e.g. with local
+    # paths to the protein embeddings) replaces the pretraining one
+    target_encoder, _ = init_model_from_config(
+        model_config, token_dict, device,
+        protein_init_config=args if args.get('protein_init') else None)
 
     _, _, target_encoder, _, _, _, _ = load_checkpoint(
             device=device,
@@ -787,27 +807,10 @@ def finetune(
                     udata[key] = udata[key].to(device, non_blocking=True)
             masks_attention = masks_attention.to(device, non_blocking=True)
 
-            ns_tokens = udata['tokens'][:, n_special_tokens:]
             # Create cell mask or neighborhood mask for aggregation depending on the selection type (agg_cell or agg_graph)
-            if selection_type == 'agg_cell':
-                selection_mask = create_binary_selection_mask(
-                    ns_tokens,
-                    selection_type=selection_type,
-                    excluded_tokens=agg_excluded_tokens,
-                    seq_len_cell=model_config['data']['seq_len_cell'],
-                    top_k=top_k,
-                )
-            elif selection_type == 'agg_graph':
-                selection_mask = create_binary_selection_mask(
-                    ns_tokens,
-                    selection_type=selection_type,
-                    excluded_tokens=agg_excluded_tokens,
-                    seq_len_cell=model_config['data']['seq_len_cell'],
-                    top_k=top_k,
-                    n_segments=model_config['data']['n_segments']
-                )
-            else:
-                raise ValueError(f"Selection type {selection_type} not supported.")
+            selection_mask = build_selection_mask(
+                udata['tokens'], n_special_tokens, model_config, selection_type,
+                agg_excluded_tokens, top_k)
 
             optimizer.zero_grad()
             logits = model(

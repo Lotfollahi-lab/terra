@@ -36,7 +36,8 @@ from terra.datasets.cell_datasets import init_cell_dataset
 from terra.datasets.dataloaders import init_dataloader_and_sampler
 from terra.masks.block_masking import BlockMaskCollator
 from terra.masks.utils import apply_masks
-from terra.utils.helper import init_model, init_opt
+from terra.utils.helper import (init_model_from_config, init_opt,
+                                resolve_special_token_padding)
 
 logger = logging.getLogger(__name__)
 
@@ -187,15 +188,15 @@ def finetune_self_supervised(
         model_config = yaml.safe_load(file)
 
     n_special_tokens = len(model_config['meta']['special_tokens'])
-    seq_len = (
-        model_config['data']['seq_len_cell'] +
-        model_config['data']['seq_len_neighborhood'] +
-        n_special_tokens)
 
     with open(token_dictionary_file_path, 'rb') as file:
         token_dict = pickle.load(file)
     vocab_size = len(token_dict)
-    n_special_values = sum(1 for key in token_dict if "spv" in key)
+
+    # Pad the special tokens unless asked to keep them, as at inference
+    # (warns if the model never saw padded special tokens in training)
+    pad_spc_tokens = resolve_special_token_padding(
+        model_config, args['finetune'].get('keep_special_tokens', False))
 
     # -- Mask generator + tokenised dataset + dataloader ----------------------
     mask_collator = BlockMaskCollator(
@@ -208,6 +209,9 @@ def finetune_self_supervised(
         per_block_mask_ratio=model_config['mask']['per_block_mask_ratio'],
         sample_segments=args['data'].get('sample_segments', False),
         sample_gene_masks=args['data'].get('sample_gene_masks', False),
+        restrict_special_attention=model_config['mask'].get(
+            'restrict_special_attention', False),
+        special_token_pad_ratio=1.0 if pad_spc_tokens else 0.0,
     )
 
     cell_dataset = init_cell_dataset(
@@ -222,7 +226,15 @@ def finetune_self_supervised(
         sampling_strategy=None,
         n_nonzero_tokens_list=None,
         include_cell_id=True,
-        sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'])
+        sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'],
+        nz_spc=model_config['data'].get('nz_spc', False),
+        pad_special_tokens=pad_spc_tokens,
+        truncate_neighbors=args['data'].get(
+            'truncate_neighbors',
+            model_config['data'].get('truncate_neighbors', False)),
+        tokenized_seq_len_cell=args['data'].get(
+            'tokenized_seq_len_cell',
+            model_config['data'].get('tokenized_seq_len_cell', None)))
 
     loader, _ = init_dataloader_and_sampler(
         cell_dataset=cell_dataset,
@@ -258,31 +270,12 @@ def finetune_self_supervised(
     # -- Initialize encoder, predictor and target encoder ---------------------
     logger.info("Initializing encoder, predictor, and target encoder...")
 
+    # A `protein_init` block in the finetuning config (e.g. with local
+    # paths to the protein embeddings) replaces the pretraining one
     def _build_model():
-        return init_model(
-            gt_type=model_config['meta']['gt_type'],
-            count_encoding=model_config['meta']['count_encoding'],
-            n_value_bins=model_config['meta']['n_value_bins'],
-            cell_pos_enc=model_config['meta']['cell_pos_enc'],
-            device=device,
-            vocab_size=vocab_size,
-            seq_len=seq_len,
-            n_special_tokens=n_special_tokens,
-            n_segments=model_config['data']['n_segments'],
-            n_special_values=n_special_values,
-            enc_emb_dim=model_config['meta']['enc_emb_dim'],
-            enc_depth=model_config['meta']['enc_depth'],
-            pred_emb_dim=model_config['meta']['pred_emb_dim'],
-            pred_depth=model_config['meta']['pred_depth'],
-            num_heads=model_config['meta']['num_heads'],
-            mlp_ratio=model_config['meta']['mlp_ratio'],
-            use_flash_attention=model_config['meta']['use_flash_attention'],
-            attention_backend=model_config['meta'].get('attention_backend', 'auto'),
-            api_version=model_config['meta']['api_version'],
-            sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'],
-            predict_gene=model_config['meta']['predict_gene'],
-            pos_learnable=model_config['meta']['pos_learnable'],
-            mlp_bias=model_config['meta'].get('mlp_bias', True))
+        return init_model_from_config(
+            model_config, token_dict, device,
+            protein_init_config=args if args.get('protein_init') else None)
 
     encoder, predictor = _build_model()
     target_encoder, _ = _build_model()

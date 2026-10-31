@@ -898,6 +898,82 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
     return encoder, predictor
 
 
+def init_model_from_config(model_config: dict,
+                           token_dict: dict,
+                           device: str | torch.device,
+                           protein_init_config: dict | None = None,
+                           ) -> tuple[gt.GeneTransformerBaseEncoder,
+                                      gt.GeneTransformerBasePredictor]:
+    """
+    Initialize the encoder and predictor of a trained model from its saved
+    config, with the architecture the model was trained with.
+
+    Every entry point that loads a trained checkpoint (embedding, token
+    distances, finetuning) builds the model here, so none of them can drift
+    from training. Keys missing from the config fall back to the defaults of
+    ``train.py``, which differ from ``init_model``'s own defaults for some keys
+    (e.g. ``mlp_bias``), and ``n_special_values`` is read from the config
+    rather than counted in the token dictionary.
+
+    Parameters
+    -----------
+    model_config:
+        Saved model config (``model_config.yaml`` of a model folder or
+        ``params.yaml`` of a training run).
+    token_dict:
+        Token dictionary the model was trained with.
+    device:
+        Device on which the model will be initialized.
+    protein_init_config:
+        Config whose ``protein_init`` block is used instead of the one in
+        ``model_config``, e.g. to point at local copies of the protein
+        embedding files. If `None`, the block in ``model_config`` is used.
+
+    Returns
+    -----------
+    encoder:
+        Initialized GeneTransformerEncoder module (weights not loaded).
+    predictor:
+        Initialized GeneTransformerPredictor module (weights not loaded).
+    """
+    meta = model_config['meta']
+    data = model_config['data']
+    n_special_tokens = len(meta['special_tokens'])
+    return init_model(
+        gt_type=meta['gt_type'],
+        count_encoding=meta['count_encoding'],
+        n_value_bins=meta['n_value_bins'],
+        cell_pos_enc=meta.get('cell_pos_enc', 'segment'),
+        device=device,
+        vocab_size=len(token_dict),
+        seq_len=(data['seq_len_cell'] + data['seq_len_neighborhood'] +
+                 n_special_tokens),
+        n_special_tokens=n_special_tokens,
+        n_segments=data['n_segments'],
+        n_special_values=data.get('n_special_values', 0),
+        enc_emb_dim=meta['enc_emb_dim'],
+        enc_depth=meta['enc_depth'],
+        pred_emb_dim=meta['pred_emb_dim'],
+        pred_depth=meta['pred_depth'],
+        num_heads=meta.get('num_heads', 8),
+        mlp_ratio=meta.get('mlp_ratio', 4.0),
+        use_flash_attention=meta['use_flash_attention'],
+        attention_backend=meta.get('attention_backend', 'auto'),
+        use_layer_norm=meta.get('use_layer_norm', True),
+        api_version=meta.get('api_version', 'v4'),
+        sep_gene_tokens_neb=data.get('sep_gene_tokens_neb', False),
+        predict_gene=meta.get('predict_gene', True),
+        pos_learnable=meta.get('pos_learnable', False),
+        nz_spc=data.get('nz_spc', False),
+        new_spc=meta.get('new_spc', False),
+        mlp_bias=meta.get('mlp_bias', True),
+        protein_init_kwargs=parse_protein_init_kwargs(
+            (model_config if protein_init_config is None
+             else protein_init_config),
+            token_dict),
+        **parse_arch_kwargs(model_config))
+
+
 def build_batch_classifier_head(
         adv_classifier_kwargs: dict | None,
         embed_dim: int,

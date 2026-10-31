@@ -16,7 +16,8 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     SamplesLoss = None
 
-from terra.utils.helper import (init_model, load_checkpoint, log_inference_time,
+from terra.utils.helper import (init_model_from_config, load_checkpoint,
+                                log_inference_time,
                                 resolve_special_token_padding, sync_cuda)
 from terra.datasets.cell_datasets import init_cell_dataset
 from terra.datasets.dataloaders import init_dataloader_and_sampler
@@ -269,10 +270,6 @@ def infer_token_distance(
         model_config = yaml.safe_load(file)
 
     n_special_tokens = len(model_config['meta']['special_tokens'])
-    seq_len = (
-        model_config['data']['seq_len_cell'] +
-        model_config['data']['seq_len_neighborhood'] +
-        n_special_tokens)
     seq_len_cell = model_config['data']['seq_len_cell']
     pad_token_id = 0
 
@@ -282,7 +279,6 @@ def infer_token_distance(
     with open(token_dictionary_file_path, 'rb') as file:
         token_dict = pickle.load(file)
     vocab_size = len(token_dict)
-    n_special_values = model_config['data'].get('n_special_values', 0)
 
     logger.info('STEP 2: GENERATING TOKEN DISTANCES...')
     if not torch.cuda.is_available():
@@ -297,31 +293,8 @@ def infer_token_distance(
             str(inference_device) if inference_device.type == 'cuda' else 'cpu'
         )
 
-    target_encoder, _ = init_model(
-        gt_type=model_config['meta']['gt_type'],
-        count_encoding=model_config['meta']['count_encoding'],
-        n_value_bins=model_config['meta']['n_value_bins'],
-        cell_pos_enc=model_config['meta']['cell_pos_enc'],
-        device=inference_device,
-        vocab_size=vocab_size,
-        seq_len=seq_len,
-        n_special_tokens=n_special_tokens,
-        n_segments=model_config['data']['n_segments'],
-        n_special_values=n_special_values,
-        enc_emb_dim=model_config['meta']['enc_emb_dim'],
-        enc_depth=model_config['meta']['enc_depth'],
-        pred_emb_dim=model_config['meta']['pred_emb_dim'],
-        pred_depth=model_config['meta']['pred_depth'],
-        num_heads=model_config['meta']['num_heads'],
-        mlp_ratio=model_config['meta']['mlp_ratio'],
-        use_flash_attention=model_config['meta']['use_flash_attention'],
-        attention_backend=model_config['meta'].get('attention_backend', 'auto'),
-        api_version=model_config['meta']['api_version'],
-        sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'],
-        predict_gene=model_config['meta']['predict_gene'],
-        pos_learnable=model_config['meta']['pos_learnable'],
-        nz_spc=model_config['data'].get('nz_spc', False),
-        mlp_bias=model_config['meta'].get('mlp_bias', True))
+    target_encoder, _ = init_model_from_config(
+        model_config, token_dict, inference_device)
 
     if model_config['meta']['api_version'] != 'v3':
         return_layer_emb_fn = target_encoder.return_layer_emb

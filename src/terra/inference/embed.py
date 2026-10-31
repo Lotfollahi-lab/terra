@@ -21,9 +21,9 @@ from tqdm import tqdm
 from pyensembl import EnsemblRelease
 from scipy.sparse import issparse
 
-from terra.utils.helper import (init_model, load_checkpoint, log_inference_time,
-                       parse_arch_kwargs, parse_protein_init_kwargs,
-                       resolve_special_token_padding, sync_cuda)
+from terra.utils.helper import (init_model_from_config, load_checkpoint,
+                       log_inference_time, resolve_special_token_padding,
+                       sync_cuda)
 from terra.datasets.cell_datasets import CellBaseDataset, init_cell_dataset
 from terra.datasets.dataloaders import init_dataloader_and_sampler
 from terra.masks.block_masking  import BlockMaskCollator
@@ -128,12 +128,8 @@ def embed_dataset(dataset: Dataset,
     with open(model_config_file_path, 'r') as file:
         model_config = yaml.safe_load(file)
 
-    # Get token sequence length and number of special tokens
+    # Get number of special tokens
     n_special_tokens = len(model_config['meta']['special_tokens'])
-    seq_len = (
-        model_config['data']['seq_len_cell'] +
-        model_config['data']['seq_len_neighborhood'] +
-        n_special_tokens)
 
     # Specify last emb layer if not defined
     if emb_layer is None:
@@ -143,7 +139,6 @@ def embed_dataset(dataset: Dataset,
     with open(token_dictionary_file_path, 'rb') as file:
         token_dict = pickle.load(file)
     vocab_size = len(token_dict)
-    n_special_values = model_config['data'].get('n_special_values', 0)
 
     if agg_excluded_genes:
         agg_excluded_tokens = [
@@ -160,34 +155,8 @@ def embed_dataset(dataset: Dataset,
         torch.cuda.set_device(device)
 
     # Initialize encoder, predictor, and target encoder
-    target_encoder, _ = init_model(
-        gt_type=model_config['meta']['gt_type'],
-        count_encoding=model_config['meta']['count_encoding'],
-        n_value_bins=model_config['meta']['n_value_bins'],
-        cell_pos_enc=model_config['meta']['cell_pos_enc'],
-        device=device,
-        vocab_size=vocab_size,
-        seq_len=seq_len,
-        n_special_tokens=n_special_tokens,
-        n_segments=model_config['data']['n_segments'],
-        n_special_values=n_special_values,
-        enc_emb_dim=model_config['meta']['enc_emb_dim'],
-        enc_depth=model_config['meta']['enc_depth'],
-        pred_emb_dim=model_config['meta']['pred_emb_dim'],
-        pred_depth=model_config['meta']['pred_depth'],
-        num_heads=model_config['meta']['num_heads'],
-        mlp_ratio=model_config['meta']['mlp_ratio'],
-        use_flash_attention=model_config['meta']['use_flash_attention'],
-        attention_backend=model_config['meta'].get('attention_backend', 'auto'),
-        api_version=model_config['meta']['api_version'],
-        sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'],
-        predict_gene=model_config['meta']['predict_gene'],
-        pos_learnable=model_config['meta']['pos_learnable'],
-        nz_spc=model_config['data'].get('nz_spc', False),
-        mlp_bias=model_config['meta'].get('mlp_bias', True),
-        protein_init_kwargs=parse_protein_init_kwargs(
-            model_config, token_dict),
-        **parse_arch_kwargs(model_config))
+    target_encoder, _ = init_model_from_config(
+        model_config, token_dict, device)
 
     if model_config['meta']['api_version'] != 'v3':
         return_layer_emb_fn = target_encoder.return_layer_emb
@@ -743,12 +712,8 @@ def gene_embed_dataset(dataset: Dataset,
     with open(model_config_file_path, 'r') as file:
         model_config = yaml.safe_load(file)
 
-    # Get token sequence length and number of special tokens
+    # Get number of special tokens
     n_special_tokens = len(model_config['meta']['special_tokens'])
-    seq_len = (
-        model_config['data']['seq_len_cell'] +
-        model_config['data']['seq_len_neighborhood'] +
-        n_special_tokens)
     seq_len_cell = model_config['data']['seq_len_cell']
     # Specify last emb layer if not defined
     if emb_layer is None:
@@ -758,7 +723,6 @@ def gene_embed_dataset(dataset: Dataset,
     with open(token_dictionary_file_path, 'rb') as file:
         token_dict = pickle.load(file)
     vocab_size = len(token_dict)
-    n_special_values = model_config['data'].get('n_special_values', 0)
 
     logger.info(f'STEP 2: {description}')
     # Set device
@@ -769,35 +733,8 @@ def gene_embed_dataset(dataset: Dataset,
         torch.cuda.set_device(device)
 
     # Initialize encoder, predictor, and target encoder
-    target_encoder, _ = init_model(
-        gt_type=model_config['meta']['gt_type'],
-        count_encoding=model_config['meta']['count_encoding'],
-        n_value_bins=model_config['meta']['n_value_bins'],
-        cell_pos_enc=model_config['meta']['cell_pos_enc'],
-        device=device,
-        vocab_size=vocab_size,
-        seq_len=seq_len,
-        n_special_tokens=n_special_tokens,
-        n_segments=model_config['data']['n_segments'],
-        n_special_values=n_special_values,
-        enc_emb_dim=model_config['meta']['enc_emb_dim'],
-        enc_depth=model_config['meta']['enc_depth'],
-        pred_emb_dim=model_config['meta']['pred_emb_dim'],
-        pred_depth=model_config['meta']['pred_depth'],
-        num_heads=model_config['meta']['num_heads'],
-        mlp_ratio=model_config['meta']['mlp_ratio'],
-        use_flash_attention=model_config['meta']['use_flash_attention'],
-        attention_backend=model_config['meta'].get('attention_backend', 'auto'),
-        api_version=model_config['meta']['api_version'],
-        sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'],
-        predict_gene=model_config['meta']['predict_gene'],
-        pos_learnable=model_config['meta']['pos_learnable'],
-        nz_spc=model_config['data'].get('nz_spc', False),
-        mlp_bias=model_config['meta'].get('mlp_bias', True),
-        protein_init_kwargs=parse_protein_init_kwargs(
-            model_config, token_dict),
-        **parse_arch_kwargs(model_config),
-        )
+    target_encoder, _ = init_model_from_config(
+        model_config, token_dict, device)
 
     if model_config['meta']['api_version'] != 'v3':
         return_layer_emb_fn = target_encoder.return_layer_emb
