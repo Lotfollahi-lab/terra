@@ -156,6 +156,13 @@ class CellBaseTokenizer(ABC):
         If `True`, add neighbor cell IDs.
     include_special_tokens:
         If `True`, include special tokens.
+    stable_rank_ties:
+        If `True`, the sparse ranking path breaks ties by gene order (stable
+        sort), like the dense path's lexsort, so both paths select the same
+        genes when a cell has more expressed genes than fit into its segment.
+        Default `False` keeps numpy's default sort, whose order of tied genes
+        is unspecified (it depends on the gene order and the numpy build); this
+        reproduces how existing data and models were tokenized.
     stream_per_file:
         If `True`, assemble the output dataset by building and formatting
         one HF dataset PER input file and concatenating them, instead of
@@ -213,6 +220,7 @@ class CellBaseTokenizer(ABC):
             add_neigh_cell_ids: bool = False,
             include_special_tokens: bool = True,
             stream_per_file: bool = False,
+            stable_rank_ties: bool = False,
             ):
         self.nproc = nproc
         self.processing_mode = processing_mode
@@ -234,6 +242,8 @@ class CellBaseTokenizer(ABC):
         self.add_neigh_cell_ids = add_neigh_cell_ids
         self.include_special_tokens = include_special_tokens
         self.stream_per_file = stream_per_file
+        self.stable_rank_ties = stable_rank_ties
+        self.rank_sort_kind = 'stable' if stable_rank_ties else None
 
         # Make the PFlog1pPF target source explicit (frozen-corpus vs per-file)
         # so a missing path can never silently mismatch a frozen-trained model.
@@ -862,13 +872,14 @@ class CellGraphTokenizer(CellBaseTokenizer):
                     adata_dict['gene_tokens_cell'] += [
                         rank_gene_tokens(norm_counts_cell_rank[j],
                         coding_miRNA_tokens_cell,
-                        n_tokens=self.model_input_size)
+                        n_tokens=self.model_input_size,
+                        stable=self.stable_rank_ties)
                         for j in range(norm_counts_cell_rank.shape[0])]
 
                     # Rank gene expression and append across chunks
                     adata_dict['gene_expr_cell'] += [
                         norm_counts_cell_count[j][
-                            np.argsort(-norm_counts_cell_rank[j])][
+                            np.argsort(-norm_counts_cell_rank[j], kind=self.rank_sort_kind)][
                                 :self.model_input_size]
                         for j in range(norm_counts_cell_count.shape[0])]
 
@@ -884,13 +895,14 @@ class CellGraphTokenizer(CellBaseTokenizer):
                         rank_gene_tokens(
                             norm_counts_cell_rank[j].data,
                             coding_miRNA_tokens_cell[norm_counts_cell_rank[j].indices],
-                            n_tokens=self.model_input_size)
+                            n_tokens=self.model_input_size,
+                            stable=self.stable_rank_ties)
                         for j in range(norm_counts_cell_rank.shape[0])]
 
                     # Rank gene expression and append across chunks
                     adata_dict['gene_expr_cell'] += [
                         norm_counts_cell_count[j].data[
-                            np.argsort(-norm_counts_cell_rank[j].data)][
+                            np.argsort(-norm_counts_cell_rank[j].data, kind=self.rank_sort_kind)][
                                 :self.model_input_size]
                         for j in range(norm_counts_cell_count.shape[0])]
 
@@ -1576,21 +1588,23 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
                     # Rank gene tokens and append across chunks
                     adata_dict['gene_tokens_cell'] += [
                         rank_gene_tokens(norm_counts_cell_rank[j],
-                        coding_miRNA_tokens_cell)
+                        coding_miRNA_tokens_cell,
+                        stable=self.stable_rank_ties)
                         for j in range(norm_counts_cell_rank.shape[0])]
                     adata_dict['gene_tokens_neighborhood'] += [
                         rank_gene_tokens(norm_counts_neighborhood_rank[j],
-                        coding_miRNA_tokens_neighborhood)
+                        coding_miRNA_tokens_neighborhood,
+                        stable=self.stable_rank_ties)
                         for j in range(norm_counts_neighborhood_rank.shape[0])]
 
                     # Rank gene expression and append across chunks
                     adata_dict['gene_expr_cell'] += [
                         norm_counts_cell_count[j][
-                            np.argsort(-norm_counts_cell_rank[j])]
+                            np.argsort(-norm_counts_cell_rank[j], kind=self.rank_sort_kind)]
                         for j in range(norm_counts_cell_count.shape[0])]
                     adata_dict['gene_expr_neighborhood'] += [
                         norm_counts_neighborhood_count[j][
-                            np.argsort(-norm_counts_neighborhood_rank[j])]
+                            np.argsort(-norm_counts_neighborhood_rank[j], kind=self.rank_sort_kind)]
                         for j in range(norm_counts_neighborhood_count.shape[0])]
 
                 else:
@@ -1612,23 +1626,25 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
                         rank_gene_tokens(
                             norm_counts_cell_rank[j].data,
                             coding_miRNA_tokens_cell[
-                                norm_counts_cell_rank[j].indices])
+                                norm_counts_cell_rank[j].indices],
+                            stable=self.stable_rank_ties)
                         for j in range(norm_counts_cell_rank.shape[0])]
                     adata_dict['gene_tokens_neighborhood'] += [
                         rank_gene_tokens(
                             norm_counts_neighborhood_rank[j].data,
                             coding_miRNA_tokens_neighborhood[
-                                norm_counts_neighborhood_rank[j].indices])
+                                norm_counts_neighborhood_rank[j].indices],
+                            stable=self.stable_rank_ties)
                         for j in range(norm_counts_neighborhood_rank.shape[0])]
 
                     # Rank gene expression and append across chunks
                     adata_dict['gene_expr_cell'] += [
                         norm_counts_cell_count[j].data[
-                            np.argsort(-norm_counts_cell_rank[j].data)]
+                            np.argsort(-norm_counts_cell_rank[j].data, kind=self.rank_sort_kind)]
                         for j in range(norm_counts_cell_rank.shape[0])]
                     adata_dict['gene_expr_neighborhood'] += [
                         norm_counts_neighborhood_count[j].data[
-                            np.argsort(-norm_counts_neighborhood_rank[j].data)]
+                            np.argsort(-norm_counts_neighborhood_rank[j].data, kind=self.rank_sort_kind)]
                         for j in range(norm_counts_neighborhood_rank.shape[0])]
 
         else:  # dense path with lexsort tie-breaking

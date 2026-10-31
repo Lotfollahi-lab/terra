@@ -82,6 +82,7 @@ def process_gene_expr(gene_expr: list[float],
 def rank_gene_tokens(gene_scores: np.ndarray,
                      gene_tokens: np.ndarray,
                      n_tokens: int | None = None,
+                     stable: bool = False,
                      ) -> np.ndarray:
     """
     Rank gene tokens based on matching gene scores (highest score ->
@@ -95,6 +96,10 @@ def rank_gene_tokens(gene_scores: np.ndarray,
         1D vector containing gene tokens.
     n_tokens:
         Number of tokens to be returned.
+    stable:
+        If `True`, break ties in `gene_scores` by input order (stable sort).
+        Default `False` uses numpy's default sort, whose order of tied genes
+        is unspecified (it depends on the input order and the numpy build).
 
     Returns
     ----------
@@ -102,7 +107,8 @@ def rank_gene_tokens(gene_scores: np.ndarray,
         1D vector containing gene tokens ranked by gene scores.
     """
     # Sort gene tokens by gene scores
-    sorted_indices = np.argsort(-gene_scores)
+    sorted_indices = np.argsort(-gene_scores,
+                                kind='stable' if stable else None)
     ranked_gene_tokens = gene_tokens[sorted_indices][:n_tokens]
     
     return ranked_gene_tokens

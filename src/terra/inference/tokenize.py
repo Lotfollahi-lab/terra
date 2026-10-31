@@ -141,7 +141,10 @@ def tokenize_adata(adata: ad.AnnData,
         pf_targets_file_path=pf_targets_file_path,
         token_dictionary_file_path=token_dictionary_file_path,
         add_neigh_cell_ids=add_neigh_cell_ids,
-        include_special_tokens=include_special_tokens)
+        include_special_tokens=include_special_tokens,
+        # Opt-in tokenizer options are read from the model config so that
+        # inference tokenizes like the model's training data
+        stable_rank_ties=model_config['data'].get('stable_rank_ties', False))
     dataset_dict = tk._tokenize_adata(adata=adata)
     dataset = tk._create_dataset(
         dataset_dict=dataset_dict,

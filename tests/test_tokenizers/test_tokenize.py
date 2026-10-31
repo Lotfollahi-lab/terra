@@ -72,15 +72,45 @@ class TestRankGeneTokens(unittest.TestCase):
         self.assertEqual(ranked.shape, (3,))
 
     def test_ties_resolved_by_stable_sort(self):
-        # Tokens 10 and 30 tie at 0.5; numpy's default argsort is stable,
-        # so the lower original index (token 10) comes first.
+        # Tokens 10 and 30 tie at 0.5; with stable=True the lower original
+        # index (token 10) comes first. (numpy's default argsort is not
+        # stable in general; it only happens to be for tiny arrays.)
         gene_scores = np.array([0.5, 0.9, 0.5])
         gene_tokens = np.array([10, 20, 30])
 
-        ranked = rank_gene_tokens(gene_scores, gene_tokens)
+        ranked = rank_gene_tokens(gene_scores, gene_tokens, stable=True)
 
         # argsort(-[0.5, 0.9, 0.5]) -> [1, 0, 2] -> tokens [20, 10, 30]
         np.testing.assert_array_equal(ranked, np.array([20, 10, 30]))
+
+
+    def test_stable_ties_match_dense_lexsort(self):
+        # Many integer ties, as in a 5k-panel cell cut to 256 genes: the
+        # stable sparse ranking must select the same genes, in the same
+        # order, as the dense path's lexsort((-count, -rank)) (count == rank).
+        rng = np.random.default_rng(0)
+        counts = rng.poisson(0.15, 5000).astype(np.float32)
+        nz = np.flatnonzero(counts)
+        gene_tokens = np.arange(5000) + 100
+
+        sparse = rank_gene_tokens(counts[nz], gene_tokens[nz], n_tokens=256,
+                                  stable=True)
+        order = np.lexsort((-counts, -counts))
+        dense = gene_tokens[order][:256]
+
+        np.testing.assert_array_equal(sparse, dense)
+
+    def test_stable_ties_do_not_depend_on_sort_algorithm(self):
+        # The stable ranking is fully determined by the input: identical to
+        # an explicit (score desc, input position asc) ordering.
+        rng = np.random.default_rng(1)
+        scores = rng.integers(0, 4, 2000).astype(np.float64)
+        tokens = np.arange(2000)
+
+        ranked = rank_gene_tokens(scores, tokens, n_tokens=300, stable=True)
+        expected = np.array(sorted(tokens, key=lambda t: (-scores[t], t)))[:300]
+
+        np.testing.assert_array_equal(ranked, expected)
 
 
 class TestProcessGeneExpr(unittest.TestCase):
