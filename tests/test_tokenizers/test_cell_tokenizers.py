@@ -249,3 +249,48 @@ def test_inference_tokenizer_reads_optional_settings(tmp_path, monkeypatch):
     assert captured['gcrd_basis_target_read_depth'] == 151.0
     assert 'zero_expr_from_raw_counts' not in captured
     assert 'gcrd_target_read_depth_per_gene' not in captured
+
+
+def test_cell_neigh_split_follows_model_config():
+    from terra.inference.tokenize import cell_neigh_split_is_equal
+
+    data = dict(model_input_size=704, n_neighs=10)
+    assert cell_neigh_split_is_equal({**data, 'seq_len_cell': 352}) is True
+    # Models tokenized before the April 2026 default change: 64 / 640
+    assert cell_neigh_split_is_equal({**data, 'seq_len_cell': 64}) is False
+    with pytest.raises(ValueError):
+        cell_neigh_split_is_equal({**data, 'seq_len_cell': 100})
+
+
+@pytest.mark.parametrize('seq_len_cell, equal', [(352, True), (64, False)])
+def test_inference_cell_neigh_tokenizer_uses_model_split(
+        tmp_path, monkeypatch, seq_len_cell, equal):
+    import yaml
+    from terra.inference import tokenize as inference_tokenize
+
+    captured = {}
+
+    class _Stop(Exception):
+        pass
+
+    def _capture(**kwargs):
+        captured.update(kwargs)
+        raise _Stop
+
+    monkeypatch.setattr(inference_tokenize.cell_tokenizers,
+                        'CellNeighborhoodTokenizer', _capture)
+    data = dict(tokenizer_type='cell_neigh', model_input_size=704,
+                n_neighs=10, seq_len_cell=seq_len_cell,
+                rank_cell_norm_method=None, rank_gene_norm_method=None,
+                rank_count_norm_method=None, count_cell_norm_method=None,
+                count_gene_norm_method=None,
+                count_count_norm_method='shifted_log')
+    with open(tmp_path / 'model_config.yaml', 'w') as f:
+        yaml.safe_dump({'data': data}, f)
+
+    with pytest.raises(_Stop):
+        inference_tokenize.tokenize_adata(
+            adata=None, model_folder_path=str(tmp_path),
+            cache_directory_path=str(tmp_path))
+    assert captured['split_cell_neigh_equally'] is equal
+    assert 'aggregate_own_neighbors' not in captured

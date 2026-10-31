@@ -53,6 +53,28 @@ TOKENIZER_CONFIG_KEYS = (
 )
 
 
+def cell_neigh_split_is_equal(data_config: dict) -> bool:
+    """
+    Return the `split_cell_neigh_equally` value of a cell-neighborhood model.
+
+    The index-cell part of the input is `seq_len_cell` tokens in the model
+    config: `model_input_size / 2` (equal split, the tokenizer default since
+    April 2026) or `model_input_size / (n_neighs + 1)` (the earlier default).
+    """
+    model_input_size = data_config['model_input_size']
+    seq_len_cell = data_config['seq_len_cell']
+    n_neighs = data_config.get('n_neighs')
+    if seq_len_cell == int(model_input_size / 2):
+        return True
+    if (n_neighs is not None
+            and seq_len_cell == int(model_input_size / (n_neighs + 1))):
+        return False
+    raise ValueError(
+        f"seq_len_cell {seq_len_cell} matches neither cell-neighborhood split "
+        f"of model_input_size {model_input_size} with n_neighs {n_neighs} "
+        "(model_input_size / 2 or model_input_size / (n_neighs + 1)).")
+
+
 def tokenize_adata(adata: ad.AnnData,
                    model_folder_path: str,
                    cache_directory_path: str,             
@@ -131,8 +153,16 @@ def tokenize_adata(adata: ad.AnnData,
 
     logger.info('STEP 2: TOKENIZING ANNDATA OBJECT...')
     # Tokenize adata
+    tokenizer_kwargs = {}
     if model_config['data']['tokenizer_type'] == 'cell_neigh':
         Tokenizer = cell_tokenizers.CellNeighborhoodTokenizer
+        # Split the input between index cell and neighborhood as in the
+        # model's training data (the tokenizer default changed in April 2026)
+        tokenizer_kwargs['split_cell_neigh_equally'] = (
+            cell_neigh_split_is_equal(model_config['data']))
+        if 'aggregate_own_neighbors' in model_config['data']:
+            tokenizer_kwargs['aggregate_own_neighbors'] = (
+                model_config['data']['aggregate_own_neighbors'])
     elif model_config['data']['tokenizer_type'] == 'cell_graph':
         Tokenizer = cell_tokenizers.CellGraphTokenizer
     tk = Tokenizer(
@@ -156,7 +186,8 @@ def tokenize_adata(adata: ad.AnnData,
         # Optional tokenizer settings are read from the model config so that
         # inference tokenizes like the model's training data
         **{key: model_config['data'][key] for key in TOKENIZER_CONFIG_KEYS
-           if key in model_config['data']})
+           if key in model_config['data']},
+        **tokenizer_kwargs)
     dataset_dict = tk._tokenize_adata(adata=adata)
     dataset = tk._create_dataset(
         dataset_dict=dataset_dict,

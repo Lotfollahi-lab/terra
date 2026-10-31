@@ -1324,6 +1324,7 @@ class CellGraphTokenizer(CellBaseTokenizer):
 class CellNeighborhoodTokenizer(CellBaseTokenizer):
     def __init__(self,
                  split_cell_neigh_equally: bool = True,
+                 aggregate_own_neighbors: bool = False,
                  **base_tokenizer_kwargs,
                  ):
         """
@@ -1334,7 +1335,13 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
         split_cell_neigh_equally:
             Whether to split the model input size equally between the index
             cell and neighborhood cells, or to allocate more space for the
-            neighborhood.
+            neighborhood. The default changed from `False` to `True` in April
+            2026; data tokenized before used `model_input_size / (n_neighs + 1)`
+            index-cell tokens.
+        aggregate_own_neighbors:
+            If `True`, the neighborhood counts are the sum over each cell's
+            own neighbors; default `False` keeps the previous reverse-kNN
+            aggregation (see `construct_neighbor_graph`).
         **base_tokenizer_kwargs:
             Keyword arguments for the initialization of the
             CellBaseTokenizer.
@@ -1345,6 +1352,7 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
             self.seq_len_cell = int(self.model_input_size / 2)
         else:
             self.seq_len_cell = int(self.model_input_size / (self.n_neighs + 1))
+        self.aggregate_own_neighbors = aggregate_own_neighbors
 
     def _tokenize_adata(self,
                         adata_file_path: Path | str | None = None,
@@ -1416,7 +1424,8 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
             radius=self.radius,
             delaunay=self.delaunay,
             include_self_loop=True,
-            compute_neighbor_counts=True)
+            compute_neighbor_counts=True,
+            aggregate_own_neighbors=self.aggregate_own_neighbors)
 
         logger.info('Normalizing gene expression counts...')
         # Perform normalization of counts per cell for rank and count

@@ -70,6 +70,7 @@ def construct_neighbor_graph(adata: ad.AnnData,
                              include_self_loop: bool = False,
                              batch_key: str | None = None,
                              compute_neighbor_counts: bool = False,
+                             aggregate_own_neighbors: bool = False,
                              ) -> ad.AnnData:
     """
     Compute neighbor graph and optionally aggregate cell features across
@@ -102,6 +103,14 @@ def construct_neighbor_graph(adata: ad.AnnData,
     compute_neighbor_counts:
         If 'True', aggregate counts across neighborhood and store in
         `adata.layers['X_neighborhood']`.
+    aggregate_own_neighbors:
+        If 'True', aggregate the counts of each cell's own neighbors
+        (`C @ X`, row i of the connectivities `C` holds cell i's neighbors).
+        Default 'False' keeps the previous aggregation `C.T @ X`, which sums
+        the cells that have cell i among THEIR neighbors. The two only differ
+        for asymmetric graphs, i.e. kNN graphs (`n_neighs`): with `C.T`, an
+        isolated cell aggregates only itself and a cell in a dense region
+        aggregates more than `n_neighs` cells.
 
     Returns
     ----------
@@ -143,7 +152,10 @@ def construct_neighbor_graph(adata: ad.AnnData,
             include_self_loop)           
     
     if compute_neighbor_counts:
-        adata.layers['X_neighborhood'] = (
-            adata.obsp['spatial_connectivities'].T @ adata.X)
+        connectivities = adata.obsp['spatial_connectivities']
+        if aggregate_own_neighbors:
+            adata.layers['X_neighborhood'] = connectivities @ adata.X
+        else:
+            adata.layers['X_neighborhood'] = connectivities.T @ adata.X
 
     return adata
