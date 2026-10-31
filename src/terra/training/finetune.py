@@ -55,13 +55,13 @@ from terra.datasets.dataloaders import init_dataloader_and_sampler
 from terra.masks.block_masking  import BlockMaskCollator
 from terra.masks.cell_masking import CellMaskCollator
 from terra.utils.distributed import init_distributed
+from terra.training.train import resolve_seed
 from terra.models.modules import ClassificationModel
 from terra.utils.embedding import create_binary_selection_mask
 
 
 os.environ["NCCL_ASYNC_ERROR_HANDLING"] = "1" # Better error propagation
 
-_GLOBAL_SEED = 0
 LOCAL_RANK = None
 
 logger = logging.getLogger(__name__)
@@ -413,10 +413,13 @@ def finetune(
     # BACKEND SETUP
     # -------------------------------------------------------------------- #
     logger.info("Configuring backend...")
-    np.random.seed(_GLOBAL_SEED)
-    torch.manual_seed(_GLOBAL_SEED)
+    # Set random seeds (optional top-level `seed` config key; 0 if absent)
+    seed = resolve_seed(args)
+    logger.info(f'Random seed: {seed}.')
+    np.random.seed(seed)
+    torch.manual_seed(seed)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(_GLOBAL_SEED)
+        torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = False
     torch.backends.cudnn.benchmark = True
 
@@ -519,7 +522,8 @@ def finetune(
         num_workers=args['data']['num_workers'],
         drop_last=False,
         persistent_workers=False,
-        mega_batch_mult_max=args['data'].get('mega_batch_mult_max', 1000)
+        mega_batch_mult_max=args['data'].get('mega_batch_mult_max', 1000),
+        seed=seed
     )
 
     # -------------------------------------------------------------------- #
@@ -559,7 +563,8 @@ def finetune(
             num_workers=args['data']['num_workers'],
             drop_last=False,
             persistent_workers=False,
-            mega_batch_mult_max=args['data'].get('mega_batch_mult_max', 1000)
+            mega_batch_mult_max=args['data'].get('mega_batch_mult_max', 1000),
+            seed=seed
         )
 
         # Create validation label lookup
@@ -600,7 +605,8 @@ def finetune(
         num_workers=args['data']['num_workers'],
         drop_last=False,
         persistent_workers=False,
-        mega_batch_mult_max=args['data'].get('mega_batch_mult_max', 1000)
+        mega_batch_mult_max=args['data'].get('mega_batch_mult_max', 1000),
+        seed=seed
     )
 
     # -------------------------------------------------------------------- #

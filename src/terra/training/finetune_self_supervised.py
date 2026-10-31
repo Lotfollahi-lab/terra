@@ -36,6 +36,7 @@ from terra.datasets.cell_datasets import init_cell_dataset
 from terra.datasets.dataloaders import init_dataloader_and_sampler
 from terra.masks.block_masking import BlockMaskCollator
 from terra.masks.utils import apply_masks
+from terra.training.train import resolve_seed
 from terra.utils.helper import (init_model_from_config, init_opt,
                                 resolve_special_token_padding)
 
@@ -84,7 +85,8 @@ def _load_pretrained_checkpoint(device, r_path, encoder, predictor,
     return encoder, predictor, target_encoder
 
 
-def _load_finetune_dataset(dataset_paths: list[str]) -> Dataset:
+def _load_finetune_dataset(dataset_paths: list[str],
+                           seed: int = _GLOBAL_SEED) -> Dataset:
     """Load, annotate, concatenate and shuffle tokenised section datasets."""
     logger.info("Loading %d dataset(s)...", len(dataset_paths))
     datasets = []
@@ -95,7 +97,7 @@ def _load_finetune_dataset(dataset_paths: list[str]) -> Dataset:
         ds = ds.add_column('section', [Path(path).name] * len(ds))
         datasets.append(ds)
     dataset = concatenate_datasets(datasets)
-    dataset = dataset.shuffle(seed=_GLOBAL_SEED)
+    dataset = dataset.shuffle(seed=seed)
     # Set torch format, excluding non-tensorable metadata columns
     cols = [c for c in dataset.column_names if c != 'section']
     dataset.set_format(type="torch", columns=cols, output_all_columns=True)
@@ -156,10 +158,13 @@ def finetune_self_supervised(
             _owns_wandb = True
 
     # -- Backend setup --------------------------------------------------------
-    np.random.seed(_GLOBAL_SEED)
-    torch.manual_seed(_GLOBAL_SEED)
+    # Optional top-level `seed` config key; 0 if absent
+    seed = resolve_seed(args)
+    logger.info('Random seed: %d.', seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(_GLOBAL_SEED)
+        torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = False
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -176,7 +181,8 @@ def finetune_self_supervised(
 
     # -- Load the tokenised dataset if not provided ---------------------------
     if dataset is None:
-        dataset = _load_finetune_dataset(args['data']['finetune_dataset'])
+        dataset = _load_finetune_dataset(
+            args['data']['finetune_dataset'], seed=seed)
 
     # -- Load pretrained model paths + config ---------------------------------
     pretrained_checkpoint_path = Path(args['model']['pretrained_checkpoint_path'])
@@ -247,7 +253,8 @@ def finetune_self_supervised(
         num_workers=args['data']['num_workers'],
         drop_last=args['data'].get('drop_last', True),
         persistent_workers=False,
-        mega_batch_mult_max=1000)
+        mega_batch_mult_max=1000,
+        seed=seed)
 
     # -- Checkpoint directory -------------------------------------------------
     if not save_folder_path:

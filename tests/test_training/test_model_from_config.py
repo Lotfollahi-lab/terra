@@ -8,6 +8,9 @@ biases, and a TERRA-112M-like model (``data.n_special_values``,
 ``data.nz_spc``, ``meta.new_spc``) could not be loaded. Every entry point
 that loads a trained checkpoint now builds the model with
 ``init_model_from_config``.
+
+Finetuning also hard-coded the seed 0; the optional top-level ``seed`` config
+key now sets it, as for pretraining.
 """
 
 import copy
@@ -305,3 +308,63 @@ def test_selection_mask_never_selects_special_tokens():
     assert mask.shape == tokens.shape
     assert not mask[:, 0].any()
     assert mask[:, 1:].any()
+
+
+def _finetune_args(bundle, **extra):
+    args = {
+        'model': {'pretrained_checkpoint_path': str(bundle)},
+        'data': {'label_name': 'label', 'batch_size': 8, 'pin_memory': False,
+                 'num_workers': 0},
+        'finetune': {'use_peft': False, 'peft_target_modules': ['0.attn.qkv'],
+                     'use_mlp': False, 'hidden_dim': 8, 'lr': 1e-4,
+                     'num_epochs': 1, 'patience': 10, 'save_every_k_epochs': -1,
+                     'selection_type': 'agg_graph', 'excluded_tokens': None,
+                     'top_k': None}}
+    args.update(extra)
+    return args
+
+
+def test_finetune_seed_is_configurable(tmp_path, monkeypatch):
+    import terra.training.finetune as finetune_module
+
+    bundle = tmp_path / 'bundle'
+    _write_bundle(bundle, '96M')
+    parts = _split(*_tokenized_data(bundle, tmp_path / 'cache'))
+
+    heads = []
+    base_class = finetune_module.ClassificationModel
+
+    class Spy(base_class):
+        def __init__(self, base_model, **kwargs):
+            super().__init__(base_model=base_model, **kwargs)
+            heads.append(self.classification_head.weight.detach().clone())
+
+    monkeypatch.setattr(finetune_module, 'ClassificationModel', Spy)
+    for extra in ({}, {'seed': 0}, {'seed': 1}):
+        finetune_module.finetune(
+            args=_finetune_args(bundle, **extra),
+            train_adata=parts['train'][0], train_dataset=parts['train'][1],
+            test_adata=parts['test'][0], test_dataset=parts['test'][1])
+
+    # Without the key the historical seed 0 is used
+    assert torch.equal(heads[0], heads[1])
+    assert not torch.equal(heads[1], heads[2])
+
+
+def test_self_supervised_dataset_shuffle_follows_seed(tmp_path):
+    from datasets import Dataset
+
+    from terra.training.finetune_self_supervised import _load_finetune_dataset
+
+    paths = []
+    for name in ('section_a', 'section_b'):
+        path = tmp_path / name
+        Dataset.from_dict({'cell_id': [f'{name}_{i}' for i in range(20)],
+                           'tokens': [[i] for i in range(20)]}).save_to_disk(path)
+        paths.append(str(path))
+
+    def order(**kwargs):
+        return list(_load_finetune_dataset(paths, **kwargs)['cell_id'])
+
+    assert order() == order(seed=0)
+    assert order(seed=0) != order(seed=1)
