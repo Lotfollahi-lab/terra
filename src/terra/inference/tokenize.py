@@ -49,6 +49,7 @@ TOKENIZER_CONFIG_KEYS = (
     'zero_expr_from_raw_counts',
     'gcrd_basis_target_read_depth',
     'gcrd_target_read_depth_per_gene',
+    'seurat_loess_span',
 )
 
 

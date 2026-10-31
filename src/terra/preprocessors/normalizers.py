@@ -191,7 +191,9 @@ def normalize_by_read_depth(x: sp.csr_matrix,
     return y
 
 
-def normalize_by_seurat(x: sp.csr_matrix) -> sp.csr_matrix:
+def normalize_by_seurat(x: sp.csr_matrix,
+                        loess_span: float = 0.75,
+                        ) -> sp.csr_matrix:
     """
     Normalize gene expression counts per gene (within the batch) using
     seurat v3 `FindVariableFeatures`.
@@ -214,6 +216,13 @@ def normalize_by_seurat(x: sp.csr_matrix) -> sp.csr_matrix:
         A sparse matrix where each row represents an observation and
         each column represents a feature, containing raw counts as
         features (i.e. not scaled or normalized).
+    loess_span:
+        Span of the LOESS fit of log variance on log mean. Seurat v3 and
+        scanpy use 0.3. The default 0.75 reproduces earlier versions of this
+        function, which meant to use 0.3 but passed it as
+        `options={'span': 0.3, ...}`, which `skmisc.loess.loess` ignores
+        (it takes the options as keyword arguments), so its default span of
+        0.75 was used.
 
     Returns
     ----------
@@ -235,7 +244,8 @@ def normalize_by_seurat(x: sp.csr_matrix) -> sp.csr_matrix:
 
     model = loess(gene_log_means,
                   gene_log_variances,
-                  options={'span': 0.3, 'degree': 2})
+                  span=loess_span,
+                  degree=2)
     model.fit()
 
     expected_log_variances = np.zeros(x.shape[1], dtype=np.float64)

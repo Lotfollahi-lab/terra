@@ -181,6 +181,10 @@ class CellBaseTokenizer(ABC):
         Read depth increment per probed gene of the
         'gene_corrected_read_depth' cell normalization; see
         `gcrd_basis_target_read_depth`. Default 0.0487 (unchanged).
+    seurat_loess_span:
+        LOESS span of the 'seurat_v3' gene normalization. Seurat v3 and scanpy
+        use 0.3; the default 0.75 reproduces how existing data were tokenized
+        (the intended 0.3 was not applied, see `normalize_by_seurat`).
     stream_per_file:
         If `True`, assemble the output dataset by building and formatting
         one HF dataset PER input file and concatenating them, instead of
@@ -242,6 +246,7 @@ class CellBaseTokenizer(ABC):
             zero_expr_from_raw_counts: bool = False,
             gcrd_basis_target_read_depth: float = 153.4768,
             gcrd_target_read_depth_per_gene: float = 0.0487,
+            seurat_loess_span: float = 0.75,
             ):
         self.nproc = nproc
         self.processing_mode = processing_mode
@@ -269,6 +274,7 @@ class CellBaseTokenizer(ABC):
         self.gcrd_kwargs = dict(
             basis_target_read_depth=gcrd_basis_target_read_depth,
             target_read_depth_per_gene=gcrd_target_read_depth_per_gene)
+        self.seurat_loess_span = seurat_loess_span
 
         # Make the PFlog1pPF target source explicit (frozen-corpus vs per-file)
         # so a missing path can never silently mismatch a frozen-trained model.
@@ -751,7 +757,7 @@ class CellGraphTokenizer(CellBaseTokenizer):
                 probed_genes=adata.var['ensembl_id'],
                 norm_factor=norm_factor)              
         elif self.rank_gene_norm_method == 'seurat_v3':
-            adata.layers['X_rank'] = normalize_by_seurat(adata.X)
+            adata.layers['X_rank'] = normalize_by_seurat(adata.X, loess_span=self.seurat_loess_span)
         else:
             if self.rank_gene_norm_method is None:
                 pass
@@ -788,7 +794,7 @@ class CellGraphTokenizer(CellBaseTokenizer):
                 probed_genes=adata.var['ensembl_id'],
                 norm_factor=norm_factor)            
         elif self.count_gene_norm_method == 'seurat_v3':
-            adata.layers['X_count'] = normalize_by_seurat(adata.X)
+            adata.layers['X_count'] = normalize_by_seurat(adata.X, loess_span=self.seurat_loess_span)
         else:
             if self.count_gene_norm_method is None:
                 pass
@@ -1508,9 +1514,9 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
                 probed_genes=adata.var['ensembl_id'],
                 norm_factor=f"{norm_factor}_neighborhood")
         elif self.rank_gene_norm_method == 'seurat_v3':
-            adata.layers['X_rank'] = normalize_by_seurat(adata.layers['X_rank'])
+            adata.layers['X_rank'] = normalize_by_seurat(adata.layers['X_rank'], loess_span=self.seurat_loess_span)
             adata.layers['X_neighborhood_rank'] = normalize_by_seurat(
-                adata.layers['X_neighborhood_rank'])
+                adata.layers['X_neighborhood_rank'], loess_span=self.seurat_loess_span)
         else:
             if self.rank_gene_norm_method is None:
                 pass
@@ -1558,9 +1564,9 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
                 norm_factor=f"{norm_factor}_neighborhood")
         elif self.count_gene_norm_method == 'seurat_v3':
             adata.layers['X_count'] = normalize_by_seurat(
-                adata.layers['X_count'])
+                adata.layers['X_count'], loess_span=self.seurat_loess_span)
             adata.layers['X_neighborhood_count'] = normalize_by_seurat(
-                adata.layers['X_neighborhood_count'])
+                adata.layers['X_neighborhood_count'], loess_span=self.seurat_loess_span)
         else:
             if self.count_gene_norm_method is None:
                 pass

@@ -38,3 +38,41 @@ def test_seurat_v3():
 
     np.testing.assert_equal(np.round(x_normalized_mean, decimals=1), expected_mean)
     np.testing.assert_equal(np.round(x_normalized_std, decimals=1), expected_std)
+
+
+def _seurat_reference(x: np.ndarray, span: float) -> np.ndarray:
+    """Seurat v3 standardization with an explicit LOESS span."""
+    from skmisc.loess import loess
+    gene_means = x.mean(axis=0)
+    gene_vars = x.var(axis=0)
+    not_const = gene_vars > 0
+    model = loess(np.log10(gene_means[not_const]),
+                  np.log10(gene_vars[not_const]), span=span, degree=2)
+    model.fit()
+    expected_log_variances = np.zeros(x.shape[1])
+    expected_log_variances[not_const] = model.outputs.fitted_values
+    return (x - gene_means) / np.sqrt(10 ** expected_log_variances)
+
+
+def _counts(seed: int = 0) -> np.ndarray:
+    # 200 genes spanning a range of means, so the LOESS span matters
+    rng = np.random.default_rng(seed)
+    means = np.exp(rng.uniform(-3, 3, 200))
+    return rng.negative_binomial(5, 5 / (5 + means), (300, 200)).astype(float)
+
+
+def test_seurat_v3_default_span_unchanged():
+    # The default reproduces the previous output, which (because the
+    # intended span 0.3 was passed in a way skmisc ignores) used span 0.75.
+    x = _counts()
+    np.testing.assert_allclose(
+        normalize_by_seurat(scipy.sparse.csr_matrix(x)),
+        _seurat_reference(x, span=0.75))
+
+
+def test_seurat_v3_span_is_applied():
+    x = _counts()
+    y_03 = normalize_by_seurat(scipy.sparse.csr_matrix(x), loess_span=0.3)
+    np.testing.assert_allclose(y_03, _seurat_reference(x, span=0.3))
+    assert not np.allclose(y_03, normalize_by_seurat(
+        scipy.sparse.csr_matrix(x)))
