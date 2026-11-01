@@ -193,6 +193,24 @@ def harmonize_adata(adata: ad.AnnData,
             'other genes are dropped. Check that adata.var_names are gene '
             "names (symbols) or Ensembl gene IDs of the model's species.")
 
+    # A gene in several columns (e.g. duplicated var_names) would occur
+    # several times in the token sequence of a cell
+    ensembl_id_gene_names = defaultdict(list)
+    for gene_name, ensembl_id in zip(harmonized_gene_names,
+                                     matching_ensembl_ids):
+        ensembl_id_gene_names[ensembl_id].append(gene_name)
+    duplicated = {ensembl_id: gene_names for ensembl_id, gene_names
+                  in ensembl_id_gene_names.items() if len(gene_names) > 1}
+    if duplicated:
+        examples = '; '.join(
+            f'{ensembl_id}: {gene_names}' for ensembl_id, gene_names
+            in list(duplicated.items())[:5])
+        raise ValueError(
+            f'{len(duplicated)} genes occur in more than one column of adata '
+            f'({examples}). Each gene must occur once: make adata.var_names '
+            'unique (e.g. with adata.var_names_make_unique()) or sum the '
+            'counts of the duplicated columns before harmonization.')
+
     # Subset into a new object; the caller's AnnData is never modified
     adata = adata[:, adata.var.index.isin(harmonized_gene_names)].copy()
     if use_counts_from_layers:

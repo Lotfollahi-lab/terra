@@ -148,3 +148,31 @@ def test_almost_no_mapped_gene_warns(gene_mapping_dict_file_path, caplog):
     assert harmonized.n_vars == 1
     assert any(record.getMessage().startswith('Only 1 of 25 genes')
                for record in caplog.records)
+
+
+def test_duplicated_genes_raise(gene_mapping_dict_file_path):
+    # Previously both columns were kept: the gene occurred twice in the
+    # token sequence of a cell, and the multi-sample pipeline failed with an
+    # InvalidIndexError
+    adata = _adata()
+    names = list(adata.var_names)
+    names[1] = names[0]
+    adata.var_names = names
+    with pytest.raises(ValueError, match=r'ENSG00000000001: \[.GENE0., '
+                                         r'.GENE0.\]'):
+        _harmonize(adata, gene_mapping_dict_file_path)
+
+    # The same gene twice, as Ensembl IDs with different version suffixes
+    adata.var_names = (['ENSG00000000001.1', 'ENSG00000000001.2']
+                       + [f'ENSG{i + 1:011d}' for i in range(2, N_GENES)])
+    with pytest.raises(ValueError, match='more than one column'):
+        _harmonize(adata, gene_mapping_dict_file_path)
+
+
+def test_duplicated_unmapped_names_are_dropped(gene_mapping_dict_file_path):
+    adata = _adata()
+    names = list(adata.var_names)
+    names[:2] = ['NegControlProbe', 'NegControlProbe']
+    adata.var_names = names
+    harmonized = _harmonize(adata, gene_mapping_dict_file_path)
+    assert list(harmonized.var_names) == names[2:]
