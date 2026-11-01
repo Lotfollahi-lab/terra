@@ -66,7 +66,7 @@ def infer(args: dict,
           agg_type: Literal['avg',
                             'weighted_avg'] = 'avg',
           masked_tokens: list[int] | None = None,
-          agg_excluded_genes: list[int] | None = None,
+          agg_excluded_genes: list[str] | None = None,
           top_k: int | None = None,
           return_gene: bool=True,
           return_cosine_sim: bool=False,
@@ -118,7 +118,9 @@ def infer(args: dict,
         List of tokens to be masked by the attention mask during
         inference.
     agg_excluded_genes:
-        List of tokens to be excluded from the aggregation.
+        Ensembl IDs of genes whose embeddings are left out when the gene
+        embeddings are aggregated into cell and neighborhood embeddings (in
+        every segment). The genes remain part of the model input.
     top_k:
         Include only top_k genes in aggregation.
     return_gene:

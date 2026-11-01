@@ -355,7 +355,9 @@ def embed_dataset(dataset: Dataset,
     emb_layer:
         Layer for which to retrieve the embedding.
     agg_excluded_genes:
-        List of gene ensembl IDs to be excluded from the aggregation.
+        Ensembl IDs of genes whose embeddings are left out when the gene
+        embeddings are aggregated into cell and neighborhood embeddings (in
+        every segment). The genes remain part of the model input.
     top_k:
         Include only top_k genes in aggregation.
     batch_size:
@@ -604,7 +606,7 @@ def harmonize_tokenize_embed_pipeline(
         save_dataset_path: Path | str | None = None,
         num_shards: int = 32,
         emb_layer: int | None = None,
-        agg_excluded_genes: list[int] | None = None,
+        agg_excluded_genes: list[str] | None = None,
         top_k: int | None = None,
         batch_size: int = 128,
         pin_memory: bool = False,
@@ -679,7 +681,9 @@ def harmonize_tokenize_embed_pipeline(
     emb_layer:
         Layer for which to retrieve the embedding.
     agg_excluded_genes:
-        List of tokens to be excluded from the aggregation.
+        Ensembl IDs of genes whose embeddings are left out when the gene
+        embeddings are aggregated into cell and neighborhood embeddings (in
+        every segment). The genes remain part of the model input.
     top_k:
         Include only top_k genes in aggregation.
     batch_size:
