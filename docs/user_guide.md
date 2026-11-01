@@ -68,12 +68,13 @@ from terra import (download_pretrained, harmonize_adata, tokenize_adata,
 model_dir = download_pretrained("Lotfollahi-lab/TERRA-96M")
 
 # 1. Harmonize: map gene symbols -> Ensembl IDs and apply QC, using the bundle's
-#    gene-reference files (min_*_per_* = 0 mirrors the pipeline default).
+#    gene-reference files (as the pipeline does by default: cells without any
+#    expressed gene are removed, all genes are kept).
 adata = harmonize_adata(
     adata,                              # raw counts in adata.X
     gene_mapping_dict_file_path=os.path.join(model_dir, "ensembl_dictionary.pkl"),
     gene_occurrence_count_file_path=os.path.join(model_dir, "gene_count_dictionary.pkl"),
-    min_genes_per_cell=0,
+    min_genes_per_cell=1,
     min_cells_per_gene=0,
 )
 
