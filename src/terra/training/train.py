@@ -1744,13 +1744,18 @@ def train(args: dict,
             # Step 2: backward pass and step
             _enc_norm, _pred_norm = None, None
             loss.backward()
-            if warmup >= 1: # iteration-based clipping didn't always work # TODO
+            # Clip gradients after the warmup: from epoch `warmup` on, or for
+            # a fractional warmup after warmup * ipe iterations of the run
+            # (counting only the iterations of the current epoch turned
+            # clipping off again at the start of every epoch)
+            if warmup >= 1:
                 if (epoch >= warmup) and (clip_grad is not None):
                     _enc_norm = torch.nn.utils.clip_grad_norm_(
                         encoder.parameters(), clip_grad)
                     _pred_norm = torch.nn.utils.clip_grad_norm_(
                         predictor.parameters(), clip_grad)
-            elif (itr > (warmup * ipe)) and (clip_grad is not None):
+            elif ((epoch * ipe + itr > warmup * ipe)
+                    and (clip_grad is not None)):
                 _enc_norm = torch.nn.utils.clip_grad_norm_(
                     encoder.parameters(), clip_grad)
                 _pred_norm = torch.nn.utils.clip_grad_norm_(

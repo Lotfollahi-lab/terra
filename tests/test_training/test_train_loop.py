@@ -11,6 +11,8 @@ group.
   ``optimizer.zero_grad``, and without clipping (e.g. during warmup) the
   logged global norms were 0. They are now read before the gradients are
   zeroed.
+* Fractional warmup: clipping was skipped for the first warmup * ipe
+  iterations of every epoch, not only of the run.
 """
 
 import copy
@@ -193,3 +195,14 @@ def test_gradient_norms_are_logged_during_warmup(run_train):
     for payload in result['logged']:
         assert payload['global_norm_enc'] > 0
         assert payload['global_norm_pred'] > 0
+
+
+@pytest.mark.parametrize('warmup, first_clipped_step', [(0.5, 3), (0, 1)])
+def test_fractional_warmup_clips_every_step_after_warmup(
+        run_train, warmup, first_clipped_step):
+    result = run_train(optimization={'warmup': warmup})
+    # Clipping (encoder and predictor) from the first step after
+    # warmup * ITERATIONS_PER_EPOCH iterations on, in both epochs
+    assert result['clip_steps'] == [
+        step for step in range(first_clipped_step, 2 * ITERATIONS_PER_EPOCH)
+        for _ in ('encoder', 'predictor')]
