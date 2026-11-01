@@ -52,6 +52,83 @@ torch.backends.cudnn.benchmark = True
 
 logger = logging.getLogger(__name__)
 
+# Keys of `adata.uns` from which the tokenizer reads the special token values
+# (include_special_tokens=True)
+SPECIAL_TOKEN_UNS_KEYS = ('dataset_id', 'batch', 'assay', 'species', 'tissue')
+
+
+def _check_special_token_metadata(adata: ad.AnnData,
+                                  token_dict: dict,
+                                  ) -> None:
+    """
+    Check that `adata` has the special token values the tokenizer reads.
+
+    With ``include_special_tokens=True`` the tokenizer reads the batch from
+    ``adata.uns['dataset_id']`` and ``adata.uns['batch']`` (token
+    ``spv_<dataset_id>_<batch>``) and the assay, species and tissue from
+    ``adata.uns`` (tokens ``spv_<value>``). Their tokens exist only for values
+    seen in training: there is no metatoken for a batch the model was not
+    trained on.
+
+    Parameters
+    -----------
+    adata:
+        AnnData object to be tokenized with its special tokens.
+    token_dict:
+        Token dictionary of the model.
+
+    Raises
+    -----------
+    ValueError:
+        If a key is missing from ``adata.uns`` or a value has no token.
+    """
+    missing = [key for key in SPECIAL_TOKEN_UNS_KEYS if key not in adata.uns]
+    if missing:
+        raise ValueError(
+            "keep_special_tokens=True reads the special token values from "
+            "adata.uns, which has no "
+            f"{', '.join(repr(key) for key in missing)} (required: "
+            f"{', '.join(repr(key) for key in SPECIAL_TOKEN_UNS_KEYS)}; the "
+            "batch token is spv_<dataset_id>_<batch>). Set them to the values "
+            "of the training data, or use keep_special_tokens=False.")
+    tokens = {
+        'batch': f"spv_{adata.uns['dataset_id']}_{adata.uns['batch']}",
+        'assay': f"spv_{adata.uns['assay']}",
+        'species': f"spv_{adata.uns['species']}",
+        'tissue': f"spv_{adata.uns['tissue']}"}
+    unknown = [f'{name} ({token})' for name, token in tokens.items()
+               if token not in token_dict]
+    if unknown:
+        raise ValueError(
+            "keep_special_tokens=True needs special token values the model "
+            "was trained with, but its token dictionary has no "
+            f"{', '.join(unknown)}. Data from a batch the model was not "
+            "trained on has no metatoken: use keep_special_tokens=False "
+            "(special tokens padded).")
+
+
+def _check_special_token_columns(dataset: Dataset,
+                                 special_tokens: list[str],
+                                 ) -> None:
+    """
+    Check that a tokenized dataset holds the values of the special tokens
+    (columns ``<special token>_value``), which are kept at inference.
+
+    Raises
+    -----------
+    ValueError:
+        If a column is missing.
+    """
+    missing = [f'{token}_value' for token in special_tokens
+               if f'{token}_value' not in dataset.column_names]
+    if missing:
+        raise ValueError(
+            "keep_special_tokens=True needs the special token values, but "
+            f"the dataset has no column {', '.join(missing)}. Tokenize the "
+            "data with include_special_tokens=True (as "
+            "harmonize_tokenize_embed_pipeline(keep_special_tokens=True) "
+            "does), or use keep_special_tokens=False.")
+
 
 def _restrict_special_attention(model_config: dict,
                                 pad_special_tokens: bool,
@@ -121,6 +198,8 @@ def _init_inference_loader(dataset: Dataset,
     """
     meta = model_config['meta']
     data = model_config['data']
+    if not pad_special_tokens:
+        _check_special_token_columns(dataset, meta['special_tokens'])
 
     # Create mask collator
     mask_collator = BlockMaskCollator(
@@ -225,8 +304,9 @@ def embed_dataset(dataset: Dataset,
         count-softmax-weighted mean).
     keep_special_tokens:
         If `True`, keep the special tokens (metatokens) instead of padding
-        them. Requires a dataset tokenized with `include_special_tokens=True`.
-        Default `False` (padded, as before).
+        them. Requires a dataset tokenized with `include_special_tokens=True`
+        (a `ValueError` names the missing columns otherwise). Default `False`
+        (padded, as before).
 
     Returns
     -----------
@@ -548,8 +628,12 @@ def harmonize_tokenize_embed_pipeline(
         embeddings (`'avg'` or `'softmax'`).
     keep_special_tokens:
         If `True`, tokenize with special tokens and keep them at inference
-        instead of padding them. The batches (and assays, ...) of `adata` must
-        then exist in the model's token dictionary. Default `False`.
+        instead of padding them. The special token values are read from
+        `adata.uns` (keys 'dataset_id', 'batch', 'assay', 'species' and
+        'tissue'; one set of values for the whole AnnData) and must exist in
+        the model's token dictionary, i.e. the batch must be one the model was
+        trained on; otherwise a `ValueError` names what is missing. Has no
+        effect for models without special tokens. Default `False`.
 
     Returns
     -----------
@@ -569,6 +653,16 @@ def harmonize_tokenize_embed_pipeline(
         _ref = Path(model_folder_path) / 'gene_count_dictionary.pkl'
         if _ref.is_file():
             gene_occurrence_count_file_path = str(_ref)
+    # Special tokens are only tokenized for models that have them; check
+    # their values before any processing
+    include_special_tokens = False
+    if keep_special_tokens:
+        with open(Path(model_folder_path) / 'model_config.yaml', 'r') as file:
+            include_special_tokens = bool(
+                yaml.safe_load(file)['meta']['special_tokens'])
+    if include_special_tokens:
+        with open(Path(model_folder_path) / 'token_dictionary.pkl', 'rb') as file:
+            _check_special_token_metadata(adata, pickle.load(file))
     datasets = []
     adata.obs_names_make_unique()
     if sample_key:
@@ -613,7 +707,7 @@ def harmonize_tokenize_embed_pipeline(
                 nproc=nproc,
                 processing_mode=processing_mode,
                 add_neigh_cell_ids=add_neigh_cell_ids,
-                include_special_tokens=keep_special_tokens)
+                include_special_tokens=include_special_tokens)
             datasets.append(dataset_sample)
             logger.info(f"Tokenized sample {sample}.")
 
@@ -656,7 +750,7 @@ def harmonize_tokenize_embed_pipeline(
             processing_mode=processing_mode,
             add_neigh_cell_ids=add_neigh_cell_ids,
             use_generator=use_generator,
-            include_special_tokens=keep_special_tokens)
+            include_special_tokens=include_special_tokens)
 
     if harmonized_adata_save_path:
         logger.info(f"Saving harmonized data...")
@@ -760,8 +854,9 @@ def gene_embed_dataset(dataset: Dataset,
         Whether to ignore special tokens when retrieving layer embeddings.
     keep_special_tokens:
         If `True`, keep the special tokens (metatokens) instead of padding
-        them. Requires a dataset tokenized with `include_special_tokens=True`.
-        Default `False` (padded, as before).
+        them. Requires a dataset tokenized with `include_special_tokens=True`
+        (a `ValueError` names the missing columns otherwise). Default `False`
+        (padded, as before).
 
     Returns
     -----------

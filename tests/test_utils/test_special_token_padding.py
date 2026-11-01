@@ -7,8 +7,9 @@ never saw a sequence without them, so padding them is out of distribution:
 this must be warned about, and ``keep_special_tokens=True`` must keep them.
 """
 
-import logging
+import warnings
 
+import pytest
 import torch
 
 from terra.masks.block_masking import BlockMaskCollator
@@ -20,32 +21,31 @@ def _config(special_tokens, pad_ratio=None):
     return {'meta': {'special_tokens': special_tokens}, 'mask': mask}
 
 
-def test_no_special_tokens_is_unchanged_and_silent(caplog):
-    with caplog.at_level(logging.WARNING):
+def test_no_special_tokens_is_unchanged_and_silent():
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
         assert resolve_special_token_padding(_config([])) is True
-    assert not caplog.records
 
 
-def test_always_present_special_token_is_padded_with_warning(caplog):
-    # TERRA-112M: special_tokens [batch], no special_token_pad_ratio key
-    with caplog.at_level(logging.WARNING):
+def test_always_present_special_token_is_padded_with_warning():
+    # TERRA-112M: special_tokens [batch], no special_token_pad_ratio key. The
+    # warning is a UserWarning, visible without any logging configuration
+    with pytest.warns(UserWarning, match='out of the training distribution'):
         assert resolve_special_token_padding(_config(['batch'])) is True
-    assert any('out of the training distribution' in r.getMessage()
-               for r in caplog.records)
 
 
-def test_model_trained_with_padding_is_silent(caplog):
-    with caplog.at_level(logging.WARNING):
+def test_model_trained_with_padding_is_silent():
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
         assert resolve_special_token_padding(
             _config(['batch'], pad_ratio=0.5)) is True
-    assert not caplog.records
 
 
-def test_keep_special_tokens(caplog):
-    with caplog.at_level(logging.WARNING):
+def test_keep_special_tokens():
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
         assert resolve_special_token_padding(
             _config(['batch']), keep_special_tokens=True) is False
-    assert not caplog.records
 
 
 def test_collator_keeps_special_token_when_not_padded():

@@ -46,3 +46,18 @@ def test_token_distance_ignores_special_token_columns(tiny):
         str(bundle), **KW)
     for key in ('cell_score', 'spatial_cell_score', 'neighborhood_score'):
         np.testing.assert_array_equal(plain[key], with_columns[key])
+
+
+def test_token_distance_keep_special_tokens(tiny):
+    bundle = tiny.bundle('112M')
+    original = tiny.dataset(bundle, include_special_tokens=True)
+    perturbed = tiny.dataset(bundle, include_special_tokens=True, seed=1)
+    padded = infer_token_distance(original, perturbed, str(bundle), **KW)
+    kept = infer_token_distance(original, perturbed, str(bundle),
+                                keep_special_tokens=True, **KW)
+    assert np.isfinite(kept['neighborhood_score']).all()
+    assert not np.allclose(kept['neighborhood_score'],
+                           padded['neighborhood_score'])
+    with pytest.raises(ValueError, match='batch_value'):
+        infer_token_distance(tiny.dataset(bundle), tiny.dataset(bundle),
+                             str(bundle), keep_special_tokens=True, **KW)

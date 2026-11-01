@@ -38,7 +38,7 @@ from terra.utils.embedding import (create_binary_selection_mask,
                                        compute_sum_and_nonzero_count,
                                        batch_rowwise_distances)
 from terra.utils.logging import CSVLogger
-from .embed import _restrict_special_attention
+from .embed import _check_special_token_columns, _restrict_special_attention
 from typing import Dict, List
 
 
@@ -140,8 +140,9 @@ def infer(args: dict,
         masks during inference.
     keep_special_tokens:
         If `True`, keep the special tokens (metatokens) instead of padding
-        them. Requires a dataset tokenized with `include_special_tokens=True`.
-        Default `False` (padded, as before).
+        them. Requires a dataset tokenized with `include_special_tokens=True`
+        (a `ValueError` names the missing columns otherwise). Default `False`
+        (padded, as before).
 
     Returns
     -----------
@@ -341,6 +342,8 @@ def infer(args: dict,
     # as in training) and kept
     restrict_special_attention = _restrict_special_attention(
         args, pad_spc_tokens)
+    if not pad_spc_tokens:
+        _check_special_token_columns(dataset, special_tokens)
 
     # Initialize mask collator
     if block_masking:

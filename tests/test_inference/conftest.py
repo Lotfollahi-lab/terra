@@ -139,7 +139,8 @@ def tiny(tmp_path_factory):
 
     ``tiny.bundle(name, config)`` writes (once) and returns a model folder;
     ``tiny.dataset(bundle, include_special_tokens=False, seed=0)`` returns the
-    tokenized synthetic data for it.
+    tokenized synthetic data for it; ``tiny.adata(...)`` returns new
+    synthetic data (see ``make_adata``).
     """
     root = tmp_path_factory.mktemp('tiny')
 
@@ -156,6 +157,10 @@ def tiny(tmp_path_factory):
                 self._bundles[name] = write_bundle(
                     root / name, config or self.configs[name])
             return self._bundles[name]
+
+        @staticmethod
+        def adata(n_cells=40, seed=0, uns=None):
+            return make_adata(n_cells=n_cells, seed=seed, uns=uns)
 
         def dataset(self, bundle, include_special_tokens=False, seed=0,
                     n_cells=40):

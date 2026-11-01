@@ -134,6 +134,7 @@ def infer_token_distance(
     backend: str = "tensorized",
     device: str | None = None,
     ignore_spc_tokens: bool = True,
+    keep_special_tokens: bool = False,
 ) -> dict:
     """
     Compare token-embedding point clouds between aligned original and perturbed
@@ -170,6 +171,10 @@ def infer_token_distance(
         still follows the repository's default device selection.
     ignore_spc_tokens:
         Passed through to the model embedding extraction path.
+    keep_special_tokens:
+        If `True`, keep the special tokens (metatokens) instead of padding
+        them, as in ``embed_dataset``. Requires datasets tokenized with
+        `include_special_tokens=True`. Default `False` (padded, as before).
 
     Returns
     -----------
@@ -239,10 +244,11 @@ def infer_token_distance(
     else:
         return_layer_emb_fn = target_encoder.backbone.return_layer_emb
 
-    # The special tokens are padded (warns if the model never saw padded
-    # special tokens in training); the dataset and collator are set up as for
-    # the embeddings
-    pad_spc_tokens = resolve_special_token_padding(model_config)
+    # Pad the special tokens unless asked to keep them (warns if the model
+    # never saw padded special tokens in training); the dataset and collator
+    # are set up as for the embeddings
+    pad_spc_tokens = resolve_special_token_padding(
+        model_config, keep_special_tokens)
     loader_original = _init_inference_loader(
         dataset=dataset_original,
         model_config=model_config,
