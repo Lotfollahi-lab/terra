@@ -1859,9 +1859,18 @@ def train(args: dict,
                     log_payload["vicreg/cov_loss"] = float(loss_cov.detach())
                 wandb.log(log_payload)
             assert not np.isnan(float(loss)), 'loss is nan'
-            if itr % checkpoint_freq_iter == 0:
-                logger.info(f'Saving checkpoint at epoch {epoch} iteration {itr}')
-                save_checkpoint(epoch, itr // checkpoint_freq_iter)
+            # Mid-epoch checkpoint k after k * checkpoint_freq_iter iterations
+            # of the epoch (`itr % checkpoint_freq_iter == 0` also saved one
+            # after the first iteration of every epoch, a near copy of the
+            # previous end-of-epoch checkpoint, whatever checkpoint_freq_iter);
+            # the end of the epoch is saved below
+            n_iterations_done = itr + 1
+            if (n_iterations_done % checkpoint_freq_iter == 0
+                    and n_iterations_done < len(train_loader)):
+                logger.info(f'Saving checkpoint at epoch {epoch} iteration '
+                            f'{n_iterations_done}')
+                save_checkpoint(
+                    epoch, n_iterations_done // checkpoint_freq_iter)
 
         # -- Save Checkpoint after every epoch
         logger.info('avg. loss %.3f' % loss_meter.avg)
