@@ -7,6 +7,10 @@ group.
   checkpoint after the first iteration of every epoch (a near copy of the
   previous end-of-epoch checkpoint), whatever ``checkpoint_freq_iter``.
   Checkpoint k is now saved after k * checkpoint_freq_iter iterations.
+* Gradient norms: the gradient statistics were read after
+  ``optimizer.zero_grad``, and without clipping (e.g. during warmup) the
+  logged global norms were 0. They are now read before the gradients are
+  zeroed.
 """
 
 import copy
@@ -179,3 +183,13 @@ def test_mid_epoch_checkpoints_every_checkpoint_freq_iter(run_train):
                                ('terra-ep0.pth.tar', 4),
                                ('terra-ep1_1.pth.tar', 6),
                                ('terra-ep1.pth.tar', 8)]
+
+
+def test_gradient_norms_are_logged_during_warmup(run_train):
+    result = run_train()
+    # Warmup 1: no clipping in epoch 0, clipping in epoch 1
+    assert result['clip_steps'] == [step for step in range(4, 8)
+                                    for _ in ('encoder', 'predictor')]
+    for payload in result['logged']:
+        assert payload['global_norm_enc'] > 0
+        assert payload['global_norm_pred'] > 0

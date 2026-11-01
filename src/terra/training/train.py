@@ -99,6 +99,18 @@ _GLOBAL_SEED = 0
 logger = logging.getLogger(__name__)
 
 
+def _grad_global_norm(parameters) -> torch.Tensor:
+    """
+    Global L2 norm of the gradients of `parameters`, as returned by
+    ``clip_grad_norm_``, without modifying them.
+    """
+    norms = [torch.linalg.vector_norm(p.grad.detach(), 2.0)
+             for p in parameters if p.grad is not None]
+    if not norms:
+        return torch.tensor(0.)
+    return torch.linalg.vector_norm(torch.stack(norms), 2.0)
+
+
 def broadcast_from_rank0(obj):
     """
     Return rank 0's ``obj`` on every rank (``obj`` unchanged if not
@@ -1730,7 +1742,7 @@ def train(args: dict,
                         loss = loss + lambda_cycle * cycle_loss_val
 
             # Step 2: backward pass and step
-            _enc_norm, _pred_norm = 0., 0.
+            _enc_norm, _pred_norm = None, None
             loss.backward()
             if warmup >= 1: # iteration-based clipping didn't always work # TODO
                 if (epoch >= warmup) and (clip_grad is not None):
@@ -1743,6 +1755,24 @@ def train(args: dict,
                     encoder.parameters(), clip_grad)
                 _pred_norm = torch.nn.utils.clip_grad_norm_(
                     predictor.parameters(), clip_grad)
+
+            # Gradient statistics for logging, read before the gradients are
+            # zeroed (they were read after zero_grad, and without clipping,
+            # e.g. during warmup, the global norms were logged as 0). The
+            # global norms are those before clipping.
+            if compute_grad_stats:
+                grad_stats = grad_logger(encoder.named_parameters())
+                grad_stats.global_norm = float(
+                    _enc_norm if _enc_norm is not None
+                    else _grad_global_norm(encoder.parameters()))
+                grad_stats_pred = grad_logger(predictor.named_parameters())
+                grad_stats_pred.global_norm = float(
+                    _pred_norm if _pred_norm is not None
+                    else _grad_global_norm(predictor.parameters()))
+            else:
+                grad_stats = None
+                grad_stats_pred = None
+
             optimizer.step()
             optimizer.zero_grad(set_to_none=True)
 
@@ -1757,16 +1787,6 @@ def train(args: dict,
                 torch._foreach_mul_(k_params, m)
                 tmp = torch._foreach_mul(q_params, (1.0 - m))
                 torch._foreach_add_(k_params, tmp)
-
-            # Logging
-            if compute_grad_stats:
-                grad_stats = grad_logger(encoder.named_parameters())
-                grad_stats.global_norm = float(_enc_norm)
-                grad_stats_pred = grad_logger(predictor.named_parameters())
-                grad_stats_pred.global_norm = float(_pred_norm)
-            else:
-                grad_stats = None
-                grad_stats_pred = None
 
             loss_meter.update(float(loss))
 
