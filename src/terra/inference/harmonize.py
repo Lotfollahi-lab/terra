@@ -41,6 +41,12 @@ from typing import Dict, List
 logger = logging.getLogger(__name__)
 
 
+def _contains_integers(x) -> bool:
+    """Return `True` if all (stored) values of a count matrix are integers."""
+    data = x.data if issparse(x) else np.asarray(x)
+    return np.allclose(data, data.astype(int))
+
+
 def harmonize_adata(adata: ad.AnnData,
                     gene_mapping_dict_file_path: str | None = None,
                     gene_occurrence_count_file_path: str | None = None,
@@ -79,30 +85,24 @@ def harmonize_adata(adata: ad.AnnData,
     Returns
     -----------
     adata : anndata.AnnData
-        A harmonized AnnData object.
+        A harmonized AnnData object (a new object; `adata` is not modified).
+        If `adata.X` does not contain raw counts, its `X` holds the counts of
+        `adata.layers['counts']`.
     """
     logger.info('STEP 1: DATA VALIDATION...')
     logger.info('Checking that adata.X contains raw counts...')
-    use_counts_from_layers = False
-    while True:
-        if issparse(adata.X):
-            data = adata.X.data
-        else:
-            data = np.asarray(adata.X)
-        all_integers = np.allclose(data, data.astype(int))
-
-        if not all_integers:
-            if 'counts' in adata.layers.keys():
-                adata.X = adata.layers['counts']
-                use_counts_from_layers = True
-                continue
-            else:
-                raise ValueError(
-                    "adata.X does not contain raw counts. "
-                    "Found non-integer values in the count matrix."
-                )
-        else:
-            break
+    use_counts_from_layers = not _contains_integers(adata.X)
+    if use_counts_from_layers:
+        if 'counts' not in adata.layers.keys():
+            raise ValueError(
+                "adata.X does not contain raw counts. "
+                "Found non-integer values in the count matrix."
+            )
+        if not _contains_integers(adata.layers['counts']):
+            raise ValueError(
+                "Neither adata.X nor adata.layers['counts'] contains raw "
+                "counts. Found non-integer values in both count matrices."
+            )
 
     if use_counts_from_layers:
         logger.warning("Using counts from adata.layers['counts'] as adata.X"
@@ -133,8 +133,7 @@ def harmonize_adata(adata: ad.AnnData,
             gene_ensembl_map_dict = pickle.load(f)
 
     adata_gene_names = [gene_name for gene_name in adata.var_names.tolist()]
-    adata.var.index = adata_gene_names
-    
+
     harmonized_gene_names = []
     matching_ensembl_ids = []
     for gene_name in adata_gene_names:
@@ -146,7 +145,10 @@ def harmonize_adata(adata: ad.AnnData,
     if len(adata_gene_names) - len(harmonized_gene_names) > 0:
         logger.warning(f'Genes excluded due to non-matching ensembl IDs: {set(adata_gene_names) - set(harmonized_gene_names)}.')
 
+    # Subset into a new object; the caller's AnnData is never modified
     adata = adata[:, adata.var.index.isin(harmonized_gene_names)].copy()
+    if use_counts_from_layers:
+        adata.X = adata.layers['counts'].copy()
     adata.var = pd.DataFrame(
         index=pd.Index(harmonized_gene_names, name='gene_name'),
         data={'ensembl_id': matching_ensembl_ids})
