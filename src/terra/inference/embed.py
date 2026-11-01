@@ -53,6 +53,95 @@ torch.backends.cudnn.benchmark = True
 logger = logging.getLogger(__name__)
 
 
+def _init_inference_loader(dataset: Dataset,
+                           model_config: dict,
+                           vocab_size: int,
+                           pad_special_tokens: bool,
+                           batch_size: int,
+                           pin_memory: bool,
+                           num_workers: int,
+                           ) -> torch.utils.data.DataLoader:
+    """
+    Initialize the dataloader of the inference entry points.
+
+    The cell dataset and the mask collator are set up from the model config,
+    so that every entry point (embeddings, gene embeddings, token distances)
+    feeds the model the same input.
+
+    Parameters
+    -----------
+    dataset:
+        Tokenized Hugging Face dataset.
+    model_config:
+        Model config (``model_config.yaml`` of the model folder).
+    vocab_size:
+        Size of the model's token dictionary.
+    pad_special_tokens:
+        If `True`, pad the special tokens (metatokens), as returned by
+        ``resolve_special_token_padding``.
+    batch_size:
+        Dataloader param.
+    pin_memory:
+        Dataloader param.
+    num_workers:
+        Number of workers used.
+
+    Returns
+    -----------
+    loader:
+        Torch dataloader yielding collated batches and attention masks.
+    """
+    meta = model_config['meta']
+    data = model_config['data']
+
+    # Create mask collator
+    mask_collator = BlockMaskCollator(
+        n_targets=model_config['mask']['n_targets'],
+        n_contexts=model_config['mask']['n_contexts'],
+        n_segments=data['n_segments'],
+        seq_len_cell=data['seq_len_cell'],
+        seq_len_neighborhood=data['seq_len_neighborhood'],
+        n_special_tokens=len(meta['special_tokens']),
+        per_block_mask_ratio=model_config['mask']['per_block_mask_ratio'],
+        sample_segments=False,
+        sample_gene_masks=False,
+        restrict_special_attention=meta['restrict_special_attention'],
+        special_token_pad_ratio=1.0 if pad_special_tokens else 0.0)
+
+    # Create torch dataset
+    cell_dataset = init_cell_dataset(
+        dataset=dataset,
+        vocab_size=vocab_size,
+        seq_len_cell=data['seq_len_cell'],
+        seq_len_neighborhood=data['seq_len_neighborhood'],
+        tokenizer_type=data['tokenizer_type'],
+        gt_type=meta['gt_type'],
+        cell_pos_enc=meta['cell_pos_enc'],
+        special_tokens=meta['special_tokens'],
+        sampling_strategy=None,
+        n_nonzero_tokens_list=[],
+        include_cell_id=True,
+        sep_gene_tokens_neb=data['sep_gene_tokens_neb'],
+        pad_special_tokens=pad_special_tokens,
+        truncate_neighbors=data.get('truncate_neighbors', False),
+        tokenized_seq_len_cell=data.get('tokenized_seq_len_cell', None),)
+
+    # Initialize dataloader
+    loader, _ = init_dataloader_and_sampler(
+        cell_dataset=cell_dataset,
+        batch_size=batch_size,
+        distributed=False,
+        world_size=1,
+        rank=0,
+        collate_fn=mask_collator,
+        pin_memory=pin_memory,
+        num_workers=num_workers,
+        drop_last=False,
+        persistent_workers=False,
+        mega_batch_mult_max=data.get('mega_batch_mult_max', 1000))
+    return loader
+
+
 @torch.inference_mode()
 def embed_dataset(dataset: Dataset,
                   model_folder_path: str,
@@ -168,51 +257,15 @@ def embed_dataset(dataset: Dataset,
     pad_spc_tokens = resolve_special_token_padding(
         model_config, keep_special_tokens)
 
-    # Create mask collator
-    mask_collator = BlockMaskCollator(
-        n_targets=model_config['mask']['n_targets'],
-        n_contexts=model_config['mask']['n_contexts'],
-        n_segments=model_config['data']['n_segments'],
-        seq_len_cell=model_config['data']['seq_len_cell'],
-        seq_len_neighborhood=model_config['data']['seq_len_neighborhood'],
-        n_special_tokens=n_special_tokens,
-        per_block_mask_ratio=model_config['mask']['per_block_mask_ratio'],
-        sample_segments=False,
-        sample_gene_masks=False,
-        restrict_special_attention=model_config['meta']['restrict_special_attention'],
-        special_token_pad_ratio=1.0 if pad_spc_tokens else 0.0)
-        
-    # Create torch dataset
-    cell_dataset = init_cell_dataset(
-        dataset=dataset,
-        vocab_size=vocab_size,
-        seq_len_cell=model_config['data']['seq_len_cell'],
-        seq_len_neighborhood=model_config['data']['seq_len_neighborhood'],
-        tokenizer_type=model_config['data']['tokenizer_type'],
-        gt_type=model_config['meta']['gt_type'],
-        cell_pos_enc=model_config['meta']['cell_pos_enc'],
-        special_tokens=model_config['meta']['special_tokens'],
-        sampling_strategy=None,
-        n_nonzero_tokens_list=[],
-        include_cell_id=True,
-        sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'],
-        pad_special_tokens=pad_spc_tokens,
-        truncate_neighbors=model_config['data'].get('truncate_neighbors', False),
-        tokenized_seq_len_cell=model_config['data'].get('tokenized_seq_len_cell', None),)
-
     # Initialize dataloader
-    loader, _ = init_dataloader_and_sampler(
-        cell_dataset=cell_dataset,
+    loader = _init_inference_loader(
+        dataset=dataset,
+        model_config=model_config,
+        vocab_size=vocab_size,
+        pad_special_tokens=pad_spc_tokens,
         batch_size=batch_size,
-        distributed=False,
-        world_size=1,
-        rank=0,
-        collate_fn=mask_collator,
         pin_memory=pin_memory,
-        num_workers=num_workers,
-        drop_last=False,
-        persistent_workers=False,
-        mega_batch_mult_max=model_config['data'].get('mega_batch_mult_max', 1000))
+        num_workers=num_workers)
 
     # Load model checkpoint
     _, _, target_encoder, _, _, start_epoch, _ = load_checkpoint(
@@ -746,51 +799,15 @@ def gene_embed_dataset(dataset: Dataset,
     pad_spc_tokens = resolve_special_token_padding(
         model_config, keep_special_tokens)
 
-    # Create mask collator
-    mask_collator = BlockMaskCollator(
-        n_targets=model_config['mask']['n_targets'],
-        n_contexts=model_config['mask']['n_contexts'],
-        n_segments=model_config['data']['n_segments'],
-        seq_len_cell=model_config['data']['seq_len_cell'],
-        seq_len_neighborhood=model_config['data']['seq_len_neighborhood'],
-        n_special_tokens=n_special_tokens,
-        per_block_mask_ratio=model_config['mask']['per_block_mask_ratio'],
-        sample_segments=False,
-        sample_gene_masks=False,
-        restrict_special_attention=model_config['meta']['restrict_special_attention'],
-        special_token_pad_ratio=1.0 if pad_spc_tokens else 0.0)
-        
-    # Create torch dataset
-    cell_dataset = init_cell_dataset(
-        dataset=dataset,
-        vocab_size=vocab_size,
-        seq_len_cell=model_config['data']['seq_len_cell'],
-        seq_len_neighborhood=model_config['data']['seq_len_neighborhood'],
-        tokenizer_type=model_config['data']['tokenizer_type'],
-        gt_type=model_config['meta']['gt_type'],
-        cell_pos_enc=model_config['meta']['cell_pos_enc'],
-        special_tokens=model_config['meta']['special_tokens'],
-        sampling_strategy=None,
-        n_nonzero_tokens_list=[],
-        include_cell_id=True,
-        sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'],
-        pad_special_tokens=pad_spc_tokens,
-        truncate_neighbors=model_config['data'].get('truncate_neighbors', False),
-        tokenized_seq_len_cell=model_config['data'].get('tokenized_seq_len_cell', None),)
-
     # Initialize dataloader
-    loader, _ = init_dataloader_and_sampler(
-        cell_dataset=cell_dataset,
+    loader = _init_inference_loader(
+        dataset=dataset,
+        model_config=model_config,
+        vocab_size=vocab_size,
+        pad_special_tokens=pad_spc_tokens,
         batch_size=batch_size,
-        distributed=False,
-        world_size=1,
-        rank=0,
-        collate_fn=mask_collator,
         pin_memory=pin_memory,
-        num_workers=num_workers,
-        drop_last=False,
-        persistent_workers=False,
-        mega_batch_mult_max=model_config['data'].get('mega_batch_mult_max', 1000))
+        num_workers=num_workers)
 
     # Load model checkpoint
     _, _, target_encoder, _, _, start_epoch, _ = load_checkpoint(

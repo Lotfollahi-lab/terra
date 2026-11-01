@@ -19,9 +19,7 @@ except ImportError:  # pragma: no cover - optional dependency
 from terra.utils.helper import (init_model_from_config, load_checkpoint,
                                 log_inference_time,
                                 resolve_special_token_padding, sync_cuda)
-from terra.datasets.cell_datasets import init_cell_dataset
-from terra.datasets.dataloaders import init_dataloader_and_sampler
-from terra.masks.block_masking import BlockMaskCollator
+from .embed import _init_inference_loader
 
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
@@ -97,66 +95,6 @@ def _geomloss_distance_pointcloud(
 
     val = loss_fn(tX, tY)
     return float(val.detach().cpu().item())
-
-
-def _init_embed_inference_loader(
-    dataset: Dataset,
-    model_config: dict,
-    vocab_size: int,
-    batch_size: int,
-    pin_memory: bool,
-    num_workers: int,
-    n_special_tokens: int,
-):
-    """
-    Initialize the embedding dataloader used by token-level inference utilities.
-
-    Mirrors the loader-building block in ``embed.py`` (v9), including the
-    ``special_token_pad_ratio`` argument of ``BlockMaskCollator``.
-    """
-    # Special tokens are always padded here; warn if the model never saw
-    # padded special tokens in training
-    resolve_special_token_padding(model_config)
-    mask_collator = BlockMaskCollator(
-        n_targets=model_config['mask']['n_targets'],
-        n_contexts=model_config['mask']['n_contexts'],
-        n_segments=model_config['data']['n_segments'],
-        seq_len_cell=model_config['data']['seq_len_cell'],
-        seq_len_neighborhood=model_config['data']['seq_len_neighborhood'],
-        n_special_tokens=n_special_tokens,
-        per_block_mask_ratio=model_config['mask']['per_block_mask_ratio'],
-        sample_segments=False,
-        sample_gene_masks=False,
-        restrict_special_attention=model_config['meta']['restrict_special_attention'],
-        special_token_pad_ratio=1.0)
-
-    cell_dataset = init_cell_dataset(
-        dataset=dataset,
-        vocab_size=vocab_size,
-        seq_len_cell=model_config['data']['seq_len_cell'],
-        seq_len_neighborhood=model_config['data']['seq_len_neighborhood'],
-        tokenizer_type=model_config['data']['tokenizer_type'],
-        gt_type=model_config['meta']['gt_type'],
-        cell_pos_enc=model_config['meta']['cell_pos_enc'],
-        special_tokens=model_config['meta']['special_tokens'],
-        sampling_strategy=None,
-        n_nonzero_tokens_list=[],
-        include_cell_id=True,
-        sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'])
-
-    loader, _ = init_dataloader_and_sampler(
-        cell_dataset=cell_dataset,
-        batch_size=batch_size,
-        distributed=False,
-        world_size=1,
-        rank=0,
-        collate_fn=mask_collator,
-        pin_memory=pin_memory,
-        num_workers=num_workers,
-        drop_last=False,
-        persistent_workers=False,
-        mega_batch_mult_max=model_config['data'].get('mega_batch_mult_max', 1000))
-    return loader
 
 
 def _resolve_nonpad_token_mask(
@@ -301,23 +239,27 @@ def infer_token_distance(
     else:
         return_layer_emb_fn = target_encoder.backbone.return_layer_emb
 
-    loader_original = _init_embed_inference_loader(
+    # The special tokens are padded (warns if the model never saw padded
+    # special tokens in training); the dataset and collator are set up as for
+    # the embeddings
+    pad_spc_tokens = resolve_special_token_padding(model_config)
+    loader_original = _init_inference_loader(
         dataset=dataset_original,
         model_config=model_config,
         vocab_size=vocab_size,
+        pad_special_tokens=pad_spc_tokens,
         batch_size=batch_size,
         pin_memory=pin_memory,
         num_workers=num_workers,
-        n_special_tokens=n_special_tokens,
     )
-    loader_perturbed = _init_embed_inference_loader(
+    loader_perturbed = _init_inference_loader(
         dataset=dataset_perturbed,
         model_config=model_config,
         vocab_size=vocab_size,
+        pad_special_tokens=pad_spc_tokens,
         batch_size=batch_size,
         pin_memory=pin_memory,
         num_workers=num_workers,
-        n_special_tokens=n_special_tokens,
     )
 
     _, _, target_encoder, _, _, _, _ = load_checkpoint(
