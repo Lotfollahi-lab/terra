@@ -91,3 +91,60 @@ def test_non_integer_counts_raise_instead_of_hanging(
     del adata.layers['counts']
     with pytest.raises(ValueError, match='does not contain raw counts'):
         _harmonize(adata, gene_mapping_dict_file_path)
+
+
+def test_ensembl_id_var_names_are_mapped_directly(
+        gene_mapping_dict_file_path):
+    # var_names that are already Ensembl IDs (e.g. 10x gene_ids, some with a
+    # version suffix) previously matched no gene name and every gene was
+    # dropped
+    by_name = _adata()
+    by_id = _adata()
+    by_id.var_names = [f'ENSG{i + 1:011d}' + ('.3' if i % 2 else '')
+                       for i in range(N_GENES)]
+
+    harmonized_by_name = _harmonize(by_name, gene_mapping_dict_file_path)
+    harmonized_by_id = _harmonize(by_id, gene_mapping_dict_file_path)
+
+    assert list(harmonized_by_id.var_names) == list(by_id.var_names)
+    assert list(harmonized_by_id.var['ensembl_id']) == list(
+        harmonized_by_name.var['ensembl_id'])
+    np.testing.assert_array_equal(harmonized_by_id.X.toarray(),
+                                  harmonized_by_name.X.toarray())
+
+
+def test_ensembl_ids_unknown_to_the_model_are_dropped(
+        gene_mapping_dict_file_path):
+    adata = _adata()
+    names = [f'ENSG{i + 1:011d}' for i in range(N_GENES)]
+    names[:2] = ['ENSG99999999999', 'ENSMUSG00000000001']
+    adata.var_names = names
+    harmonized = _harmonize(adata, gene_mapping_dict_file_path)
+    assert list(harmonized.var_names) == names[2:]
+
+
+def test_gene_names_take_precedence_over_ensembl_ids(
+        gene_mapping_dict_file_path):
+    # Mostly gene names: an Ensembl ID among them is not mapped, as before
+    adata = _adata()
+    names = list(adata.var_names)
+    names[0] = 'ENSG00000000001'
+    adata.var_names = names
+    harmonized = _harmonize(adata, gene_mapping_dict_file_path)
+    assert list(harmonized.var_names) == names[1:]
+
+
+def test_no_mapped_gene_raises(gene_mapping_dict_file_path):
+    adata = _adata()
+    adata.var_names = [f'gene{i}' for i in range(N_GENES)]
+    with pytest.raises(ValueError, match='None of the 25 genes'):
+        _harmonize(adata, gene_mapping_dict_file_path)
+
+
+def test_almost_no_mapped_gene_warns(gene_mapping_dict_file_path, caplog):
+    adata = _adata()
+    adata.var_names = ['GENE0'] + [f'gene{i}' for i in range(1, N_GENES)]
+    harmonized = _harmonize(adata, gene_mapping_dict_file_path)
+    assert harmonized.n_vars == 1
+    assert any(record.getMessage().startswith('Only 1 of 25 genes')
+               for record in caplog.records)

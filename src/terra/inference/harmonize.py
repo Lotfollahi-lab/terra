@@ -2,6 +2,7 @@ import copy
 import logging
 import os
 import pickle
+import re
 import yaml
 from collections import defaultdict
 from pathlib import Path
@@ -40,11 +41,32 @@ from typing import Dict, List
 
 logger = logging.getLogger(__name__)
 
+# Ensembl gene ID with an optional version suffix, e.g. ENSG00000141510.17
+_ENSEMBL_GENE_ID = re.compile(r'(ENS[A-Z]*G\d+)(\.\d+)?')
+
+# Fraction of genes below which harmonization warns that almost no gene maps
+_MIN_MAPPED_GENE_FRACTION = 0.1
+
 
 def _contains_integers(x) -> bool:
     """Return `True` if all (stored) values of a count matrix are integers."""
     data = x.data if issparse(x) else np.asarray(x)
     return np.allclose(data, data.astype(int))
+
+
+def _map_ensembl_ids(gene_names: list[str],
+                     ensembl_ids: set[str],
+                     ) -> dict:
+    """
+    Map gene names that are Ensembl IDs (with or without version suffix) to
+    the Ensembl IDs in `ensembl_ids`.
+    """
+    ensembl_id_map_dict = {}
+    for gene_name in gene_names:
+        match = _ENSEMBL_GENE_ID.fullmatch(gene_name)
+        if match and match.group(1) in ensembl_ids:
+            ensembl_id_map_dict[gene_name] = match.group(1)
+    return ensembl_id_map_dict
 
 
 def harmonize_adata(adata: ad.AnnData,
@@ -66,6 +88,9 @@ def harmonize_adata(adata: ad.AnnData,
     gene_mapping_dict_file_path:
         Path to a pickled gene-name-to-ensembl-ID mapping dictionary. If `None`,
         ensembl IDs are looked up from the specified Ensembl release instead.
+        `adata.var_names` can be gene names (symbols) or Ensembl gene IDs
+        (optionally with version suffix); Ensembl IDs are used directly if
+        they match more genes of the mapping than the gene names do.
     gene_occurrence_count_file_path:
         Path to a pickled dictionary of per-gene pretraining occurrence counts. If
         provided, genes with too few occurrences are filtered out; if `None`, this
@@ -134,6 +159,16 @@ def harmonize_adata(adata: ad.AnnData,
 
     adata_gene_names = [gene_name for gene_name in adata.var_names.tolist()]
 
+    # adata.var_names may be Ensembl IDs instead of gene names (e.g. 10x
+    # gene_ids); these are matched against the Ensembl IDs of the mapping
+    n_matching_gene_names = sum(
+        gene_name in gene_ensembl_map_dict for gene_name in adata_gene_names)
+    ensembl_id_map_dict = _map_ensembl_ids(
+        adata_gene_names, set(gene_ensembl_map_dict.values()))
+    if len(ensembl_id_map_dict) > n_matching_gene_names:
+        logger.info('adata.var_names are Ensembl IDs; using them directly.')
+        gene_ensembl_map_dict = ensembl_id_map_dict
+
     harmonized_gene_names = []
     matching_ensembl_ids = []
     for gene_name in adata_gene_names:
@@ -144,6 +179,19 @@ def harmonize_adata(adata: ad.AnnData,
     logger.warning(f'Number of genes skipped due to non-matching ensembl IDs: {len(adata_gene_names) - len(harmonized_gene_names)}.')
     if len(adata_gene_names) - len(harmonized_gene_names) > 0:
         logger.warning(f'Genes excluded due to non-matching ensembl IDs: {set(adata_gene_names) - set(harmonized_gene_names)}.')
+    if not harmonized_gene_names:
+        raise ValueError(
+            f'None of the {len(adata_gene_names)} genes in adata.var_names '
+            f'(e.g. {adata_gene_names[:3]}) maps to an Ensembl ID of the '
+            'model. adata.var_names must be gene names (symbols) or Ensembl '
+            "gene IDs of the model's species.")
+    if (len(harmonized_gene_names)
+            < _MIN_MAPPED_GENE_FRACTION * len(adata_gene_names)):
+        logger.warning(
+            f'Only {len(harmonized_gene_names)} of {len(adata_gene_names)} '
+            'genes in adata.var_names map to an Ensembl ID of the model; all '
+            'other genes are dropped. Check that adata.var_names are gene '
+            "names (symbols) or Ensembl gene IDs of the model's species.")
 
     # Subset into a new object; the caller's AnnData is never modified
     adata = adata[:, adata.var.index.isin(harmonized_gene_names)].copy()
