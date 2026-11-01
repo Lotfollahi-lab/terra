@@ -657,14 +657,37 @@ def train(args: dict,
         1 for key in token_dict if "cls" in key) + sum(
         1 for key in token_dict if "spt" in key)
 
-    # Define tokenizer-specific params
-    if tokenizer_type == 'cell_neighborhood':
+    # Define tokenizer-specific params: with add_cls, CLS tokens (index cell
+    # and neighborhood for cell_neigh, one per cell for cell_graph) precede
+    # the special tokens. The cell_neigh branch compared with
+    # 'cell_neighborhood', a name the datasets do not accept, so add_cls was
+    # silently ignored for cell_neigh.
+    if tokenizer_type == 'cell_neigh':
         if add_cls:
-            special_tokens = ['cls_0', 'cls_1'] + special_tokens            
+            special_tokens = ['cls_0', 'cls_1'] + special_tokens
     elif tokenizer_type == 'cell_graph':
         if add_cls:
             special_tokens = [
                 f'cls_{i}' for i in range(n_segments)] + special_tokens
+    if add_cls:
+        # The datasets read every special token from per-cell
+        # `<token>_value` (and, except for rank models, `<token>_token`)
+        # columns, which the TERRA tokenizers do not write for CLS tokens
+        required = [
+            f'{token}_{field}' for token in special_tokens
+            if token.startswith('cls_')
+            for field in (('value',) if gt_type == 'rank'
+                          else ('token', 'value'))]
+        for d in (train_dataset if isinstance(train_dataset, list)
+                  else [train_dataset]):
+            columns = getattr(d, 'column_names', None)
+            missing = [c for c in required
+                       if columns is not None and c not in columns]
+            if missing:
+                raise ValueError(
+                    f"meta.add_cls needs the dataset columns {missing}, "
+                    "which the TERRA tokenizers do not write; set "
+                    "add_cls: false.")
 
     # Get token sequence length and number of special tokens
     n_special_tokens = len(special_tokens)

@@ -18,6 +18,11 @@ group.
 * The target encoder (a deep copy of the context encoder) stayed in training
   mode, so with RoPE rotation augmentation its targets were randomly
   rotated.
+* ``add_cls``: the cell-neighborhood branch compared the tokenizer type with
+  'cell_neighborhood' instead of 'cell_neigh', so the option was silently
+  ignored for cell-neighborhood models; with the cell-graph tokenizer it
+  failed in the data loader with a KeyError. Both now ask for the CLS token
+  columns, which the TERRA tokenizers do not write.
 """
 
 import copy
@@ -228,3 +233,17 @@ def test_target_encoder_is_in_eval_mode(run_train):
     (target_encoder,) = result['copies']
     assert not target_encoder.training
     assert not any(m.training for m in target_encoder.modules())
+
+
+@pytest.mark.parametrize('tokenizer_type, cls_tokens', [
+    ('cell_neigh', ['cls_0', 'cls_1']),
+    ('cell_graph', [f'cls_{i}' for i in range(N_SEGMENTS)]),
+])
+def test_add_cls_adds_cls_tokens_for_both_tokenizers(
+        run_train, tokenizer_type, cls_tokens):
+    with pytest.raises(ValueError, match='add_cls') as error:
+        run_train(data={'tokenizer_type': tokenizer_type},
+                  meta={'add_cls': True})
+    assert str(error.value).count('_token') == len(cls_tokens)
+    for token in cls_tokens:
+        assert f"'{token}_token', '{token}_value'" in str(error.value)
