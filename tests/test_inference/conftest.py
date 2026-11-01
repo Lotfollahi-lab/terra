@@ -125,11 +125,12 @@ def tokenize(bundle, cache, adata, include_special_tokens=False):
         adata,
         gene_mapping_dict_file_path=str(bundle / 'ensembl_dictionary.pkl'),
         min_genes_per_cell=0, min_cells_per_gene=0)
-    return tokenize_adata(
+    dataset = tokenize_adata(
         harmonized, model_folder_path=str(bundle),
         cache_directory_path=str(cache), nproc=1,
         processing_mode='sequential',
         include_special_tokens=include_special_tokens)
+    return harmonized, dataset
 
 
 @pytest.fixture(scope='module')
@@ -139,8 +140,9 @@ def tiny(tmp_path_factory):
 
     ``tiny.bundle(name, config)`` writes (once) and returns a model folder;
     ``tiny.dataset(bundle, include_special_tokens=False, seed=0)`` returns the
-    tokenized synthetic data for it; ``tiny.adata(...)`` returns new
-    synthetic data (see ``make_adata``).
+    tokenized synthetic data for it and ``tiny.harmonized(...)`` (same
+    arguments) the harmonized AnnData it was tokenized from;
+    ``tiny.adata(...)`` returns new synthetic data (see ``make_adata``).
     """
     root = tmp_path_factory.mktemp('tiny')
 
@@ -162,8 +164,7 @@ def tiny(tmp_path_factory):
         def adata(n_cells=40, seed=0, uns=None):
             return make_adata(n_cells=n_cells, seed=seed, uns=uns)
 
-        def dataset(self, bundle, include_special_tokens=False, seed=0,
-                    n_cells=40):
+        def _tokenized(self, bundle, include_special_tokens, seed, n_cells):
             key = (str(bundle), include_special_tokens, seed, n_cells)
             if key not in self._datasets:
                 cache = root / f'cache{len(self._datasets)}'
@@ -172,5 +173,15 @@ def tiny(tmp_path_factory):
                     make_adata(n_cells=n_cells, seed=seed, uns=CORPUS_UNS),
                     include_special_tokens=include_special_tokens)
             return self._datasets[key]
+
+        def dataset(self, bundle, include_special_tokens=False, seed=0,
+                    n_cells=40):
+            return self._tokenized(
+                bundle, include_special_tokens, seed, n_cells)[1]
+
+        def harmonized(self, bundle, include_special_tokens=False, seed=0,
+                       n_cells=40):
+            return self._tokenized(
+                bundle, include_special_tokens, seed, n_cells)[0]
 
     return Tiny()

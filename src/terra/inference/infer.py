@@ -272,7 +272,7 @@ def infer(args: dict,
         agg_excluded_tokens = None
 
     # Define tokenizer-specific params
-    if tokenizer_type == 'cell_neighborhood':
+    if tokenizer_type == 'cell_neigh':
         if add_cls:
             special_tokens = ['cls_0', 'cls_1'] + special_tokens  
     elif tokenizer_type == 'cell_graph':
@@ -490,7 +490,7 @@ def infer(args: dict,
             excluded_tokens=agg_excluded_tokens,
             seq_len_cell=seq_len_cell,
             top_k=top_k).cpu()
-        if tokenizer_type == 'cell_neighborhood':
+        if tokenizer_type == 'cell_neigh':
             neighborhood_mask = create_binary_selection_mask(
                 ns_tokens,
                 selection_type="agg_neighborhood",
