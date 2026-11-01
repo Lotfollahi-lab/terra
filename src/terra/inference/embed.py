@@ -627,7 +627,9 @@ def harmonize_tokenize_embed_pipeline(
         Key in `adata.obs` where the sample information is stored.
     batch_key:
         Key in `adata.obs` where the batch identifier in the harmonized AnnData
-        will be stored.    
+        will be stored. With `sample_key`, it is the sample; otherwise
+        `adata.uns['batch']`, an existing `batch_key` column, the file name of
+        `harmonized_adata_save_path` or 'sample', in this order.
     model_folder_path:
         Path to the folder containing the model config, token dictionary, and
         normalization factors.
@@ -802,14 +804,15 @@ def harmonize_tokenize_embed_pipeline(
             species=species,
             min_cells_per_gene=min_cells_per_gene,
             min_genes_per_cell=min_genes_per_cell)
-        if harmonized_adata_save_path:
-            adata.obs[batch_key] = harmonized_adata_save_path.split('.')[0].split('/')[-1]
-        elif 'batch' in adata.uns:
+        if 'batch' in adata.uns:
             adata.obs[batch_key] = adata.uns['batch']
         elif batch_key not in adata.obs:
-            # Single sample with no batch label supplied: use a constant so the
-            # whole AnnData is treated as one batch.
-            adata.obs[batch_key] = 'sample'
+            # Single sample with no batch label supplied: use a constant (the
+            # file name of the harmonized AnnData, if saved) so the whole
+            # AnnData is treated as one batch.
+            adata.obs[batch_key] = (
+                Path(harmonized_adata_save_path).stem
+                if harmonized_adata_save_path else 'sample')
         logger.info(f"Harmonized AnnData.")
         logger.info(f"Tokenizing AnnData.")
         dataset = tokenize_adata(
