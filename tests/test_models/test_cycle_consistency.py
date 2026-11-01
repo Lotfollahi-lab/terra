@@ -6,7 +6,9 @@ import torch
 from terra.models.cycle_consistency import (
     cycle_consistency_loss,
     make_swapped_batch,
+    special_token_positions,
 )
+from terra.utils.helper import init_model
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +154,160 @@ def test_make_swapped_batch_one_legacy_one_metadata_ok():
     )
     assert swapped is not None
     assert changed.shape == (4,)
+
+
+# ---------------------------------------------------------------------------
+# Metadata keys reach the encoder through the special tokens
+# ---------------------------------------------------------------------------
+# The encoder reads a cell's label from its special token (metatoken), not
+# from the metadata field (only AdaLN reads that). Swapping the metadata field
+# alone left the encoder input unchanged, so the cycle loss was always zero.
+
+def test_special_token_positions_maps_keys_to_their_special_token():
+    # The dataset prepends the special tokens one by one: the sequence
+    # starts with [batch, assay, cls_0]
+    assert special_token_positions(
+        ['batch_value', 'assay_value', None, 'tissue_value'],
+        ['cls_0', 'assay', 'batch']) == [0, 1, None, None]
+
+
+@pytest.mark.parametrize('gt_type', ['combined', 'rank'])
+def test_special_token_positions_match_the_dataset_layout(gt_type):
+    from datasets import Dataset
+
+    from terra.datasets.cell_datasets import init_cell_dataset
+    n_cells, seq_len_cell, n_segments = 4, 4, 2
+    rows = {'gene_tokens': [list(range(107, 115))] * n_cells,
+            'gene_expr': [[float(v) for v in range(8, 0, -1)]] * n_cells,
+            'n_nonzero_tokens': [8] * n_cells,
+            'batch_value': [[3 + cell] for cell in range(n_cells)],
+            'assay_value': [[11]] * n_cells}
+    dataset = Dataset.from_dict(rows)
+    dataset.set_format(type='torch', columns=list(rows),
+                       output_all_columns=True)
+    special_tokens = ['batch', 'assay']
+    cell_dataset = init_cell_dataset(
+        tokenizer_type='cell_graph', dataset=dataset, vocab_size=23407,
+        seq_len_cell=seq_len_cell,
+        seq_len_neighborhood=seq_len_cell * (n_segments - 1),
+        gt_type=gt_type, cell_pos_enc='segment',
+        special_tokens=special_tokens, sampling_strategy=None,
+        n_nonzero_tokens_list=None, include_cell_id=False,
+        sep_gene_tokens_neb=False, nz_spc=True)
+    batch = torch.utils.data.default_collate(
+        [cell_dataset[i] for i in range(n_cells)])
+
+    keys = ['batch_value', 'assay_value']
+    positions = special_token_positions(keys, special_tokens)
+    assert positions == [1, 0]
+    for key, position in zip(keys, positions):
+        # Each special token carries the label of its metadata field
+        if gt_type == 'rank':
+            label = batch['tokens'][:, position] - 21957
+        else:
+            label = batch['values'][:, position].long()
+        assert torch.equal(label, batch[key])
+
+    # A swapped batch label lands in the batch token only
+    torch.manual_seed(0)
+    swapped, changed = make_swapped_batch(
+        batch, n_classes_per_key=[16], keys=['batch_value'],
+        sequence_positions=positions[:1], label_in_tokens=gt_type == 'rank')
+    assert changed.any()
+    field = 'tokens' if gt_type == 'rank' else 'values'
+    offset = 21957 if gt_type == 'rank' else 0
+    assert torch.equal(swapped[field][:, 1].long() - offset,
+                       swapped['batch_value'])
+    assert torch.equal(swapped[field][:, 0], batch[field][:, 0])
+
+
+def _sequence_batch(n_cells=6, label=3):
+    """Combined-model batch with one `batch` special token (nz_spc)."""
+    torch.manual_seed(0)
+    genes = torch.randint(10, 100, (n_cells, 8))
+    tokens = torch.cat([torch.full((n_cells, 1), 106), genes], dim=1)
+    values = torch.cat([torch.full((n_cells, 1), float(label)),
+                        torch.randint(1, 20, (n_cells, 8)).float()], dim=1)
+    segments = torch.cat([torch.ones(n_cells, 1, dtype=torch.long),
+                          torch.full((n_cells, 4), 2),
+                          torch.full((n_cells, 4), 3)], dim=1)
+    return {'tokens': tokens, 'values': values, 'segments': segments,
+            'positions': torch.arange(1, 10).repeat(n_cells, 1),
+            'batch_value': torch.full((n_cells,), label)}
+
+
+def test_make_swapped_batch_writes_metadata_label_into_special_token():
+    batch = _sequence_batch()
+    original = {k: v.clone() for k, v in batch.items()}
+    swapped, changed = make_swapped_batch(
+        batch, n_classes_per_key=[16], keys=['batch_value'],
+        sequence_positions=[0])
+    torch.testing.assert_close(swapped['values'][:, 0],
+                               swapped['batch_value'].float())
+    torch.testing.assert_close(swapped['values'][:, 1:],
+                               batch['values'][:, 1:])
+    assert torch.equal(swapped['tokens'], batch['tokens'])
+    assert torch.equal(changed, swapped['batch_value'] != 3)
+    for key, value in original.items():  # input not mutated
+        assert torch.equal(batch[key], value)
+
+
+def test_make_swapped_batch_writes_rank_label_into_token_id():
+    batch = _sequence_batch()
+    batch['tokens'][:, 0] = 3 + 21957  # rank models: label + offset
+    swapped, _ = make_swapped_batch(
+        batch, n_classes_per_key=[16], keys=['batch_value'],
+        sequence_positions=[0], label_in_tokens=True)
+    torch.testing.assert_close(swapped['tokens'][:, 0],
+                               swapped['batch_value'] + 21957)
+    assert torch.equal(swapped['values'], batch['values'])
+
+
+def test_make_swapped_batch_keeps_padded_special_tokens_padded():
+    batch = _sequence_batch()
+    batch['tokens'][:3, 0] = 0
+    batch['values'][:3, 0] = 0.0
+    swapped, _ = make_swapped_batch(
+        batch, n_classes_per_key=[16], keys=['batch_value'],
+        sequence_positions=[0])
+    assert (swapped['values'][:3, 0] == 0).all()
+    torch.testing.assert_close(swapped['values'][3:, 0],
+                               swapped['batch_value'][3:].float())
+
+
+def test_make_swapped_batch_rejects_two_writes_to_one_special_token():
+    batch = _sequence_batch()
+    with pytest.raises(RuntimeError, match="same special token"):
+        make_swapped_batch(
+            batch, n_classes_per_key=[16, 16], keys=[None, 'batch_value'],
+            sequence_positions=[None, 0])
+
+
+def test_metadata_key_swap_changes_encoder_output():
+    torch.manual_seed(0)
+    encoder, _ = init_model(
+        gt_type='combined', count_encoding='value_bins', n_value_bins=20,
+        cell_pos_enc='segment', device='cpu', vocab_size=128, seq_len=9,
+        n_special_tokens=1, n_segments=2, n_special_values=16,
+        enc_emb_dim=16, enc_depth=1, pred_emb_dim=8, pred_depth=1,
+        num_heads=2, nz_spc=True)
+    batch = _sequence_batch()
+    with torch.no_grad():
+        z, _ = encoder(batch=batch)
+        torch.manual_seed(1)
+        metadata_only, changed = make_swapped_batch(
+            batch, n_classes_per_key=[16], keys=['batch_value'])
+        z_metadata_only, _ = encoder(batch=metadata_only)
+        torch.manual_seed(1)
+        swapped, _ = make_swapped_batch(
+            batch, n_classes_per_key=[16], keys=['batch_value'],
+            sequence_positions=[0])
+        z_swapped, _ = encoder(batch=swapped)
+    assert changed.any()
+    # Swapping only the metadata field is a no-op for the encoder ...
+    assert cycle_consistency_loss(z, z_metadata_only, changed) == 0
+    # ... writing the label into the special token is not
+    assert cycle_consistency_loss(z, z_swapped, changed) > 0
 
 
 # ---------------------------------------------------------------------------

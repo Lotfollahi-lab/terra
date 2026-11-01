@@ -28,11 +28,57 @@ Implementation notes
   is symmetric and unbiased. Cells whose original label happens to
   equal the swap target are left as-is for that step (no MSE
   contribution, since the forward would be identical).
+- With metadata keys (``keys=['batch_value', ...]``) the label is
+  read from the per-cell metadata field, which only AdaLN reads; the
+  encoder sees it through the cell's special token. The swapped label
+  is therefore also written into that special token (see
+  ``special_token_positions``), otherwise the swap does not change the
+  encoder input and the loss is zero.
 """
 
 from __future__ import annotations
 
+from typing import Sequence
+
 import torch
+
+
+def special_token_positions(
+        keys: Sequence[str | None],
+        special_tokens: Sequence[str],
+        ) -> list[int | None]:
+    """Sequence position of the special token that carries the label of
+    each metadata key.
+
+    The dataset prepends the entries of ``special_tokens`` one after the
+    other, so they appear in reverse order at the start of the sequence
+    (the last one at position 0); the token ``<name>`` carries the label
+    stored in the metadata field ``<name>_value``.
+
+    Parameters
+    ----------
+    keys:
+        Metadata keys (e.g. ``'batch_value'``); ``None`` for the legacy
+        ``values[:, 0]`` slot.
+    special_tokens:
+        Special tokens of the model (``meta.special_tokens``, with any
+        CLS tokens in front), in configuration order.
+
+    Returns
+    ----------
+    positions:
+        Per key, the position of its special token, or ``None`` if the
+        key is ``None`` or has no special token in the sequence.
+    """
+    special_tokens = list(special_tokens)
+    positions = []
+    for key in keys:
+        name = key[:-len('_value')] if (
+            key is not None and key.endswith('_value')) else key
+        positions.append(
+            len(special_tokens) - 1 - special_tokens.index(name)
+            if name is not None and name in special_tokens else None)
+    return positions
 
 
 def make_swapped_batch(
@@ -41,6 +87,8 @@ def make_swapped_batch(
         keys: str | list[str | None] | None = None,
         offsets: int | list[int] | None = None,
         generator: torch.Generator | None = None,
+        sequence_positions: list[int | None] | None = None,
+        label_in_tokens: bool = False,
         ) -> tuple[dict, torch.Tensor]:
     """Return a shallow-copied batch dict with one or more
     batch-label slots replaced by random labels.
@@ -66,6 +114,17 @@ def make_swapped_batch(
         so the stored encoding round-trips unchanged.
     generator:
         Optional torch.Generator for reproducibility.
+    sequence_positions:
+        Per key, the sequence position of the special token that
+        carries the same label (``special_token_positions()``), or
+        ``None``. A swapped metadata label is also written there, so
+        that the encoder input changes; padded special tokens (token 0)
+        stay padded. ``None`` (default): only the metadata fields are
+        swapped.
+    label_in_tokens:
+        If ``True`` (``gt_type: rank``), the special token carries its
+        label in its token id (label plus a fixed offset) instead of in
+        ``values``.
 
     Returns
     -------
@@ -134,11 +193,31 @@ def make_swapped_batch(
             "slots would cause later swaps to overwrite earlier "
             f"ones. Duplicate(s): {dupes}. keys={keys}.")
 
+    if sequence_positions is None:
+        sequence_positions = [None] * n_slots
+    sequence_positions = list(sequence_positions)
+    if len(sequence_positions) != n_slots:
+        raise RuntimeError(
+            f"make_swapped_batch: sequence_positions length "
+            f"{len(sequence_positions)} does not match n_classes_per_key "
+            f"length {n_slots}.")
+    # Only metadata-key slots write into the sequence (the legacy slot
+    # writes values[:, 0]); each position must be written by one slot
+    written = [p for k, p in zip(keys, sequence_positions)
+               if p is not None and k is not None and k in batch]
+    if legacy_slot_count and not label_in_tokens:
+        written.append(0)
+    if len(set(written)) != len(written):
+        raise RuntimeError(
+            "make_swapped_batch: two slots would write the same special "
+            f"token. keys={keys}, sequence_positions={sequence_positions}.")
+
     swapped_batch = dict(batch)
     # Track per-cell "did ANY key change" using bitwise OR.
     combined_changed = None
 
-    for n_cls, key, offset in zip(n_classes_per_key, keys, offsets):
+    for n_cls, key, offset, position in zip(
+            n_classes_per_key, keys, offsets, sequence_positions):
         if key is not None and key in batch:
             # Metadata-key path.
             raw = batch[key]
@@ -151,6 +230,23 @@ def make_swapped_batch(
             changed = swap != original
             new_raw = (swap + int(offset)).to(raw.dtype)
             swapped_batch[key] = new_raw
+            if position is not None:
+                # The encoder sees the label through the special token:
+                # its value, or for rank models its token id (label plus
+                # a fixed offset). Padded special tokens stay padded.
+                field = 'tokens' if label_in_tokens else 'values'
+                seq = swapped_batch[field]
+                if seq is batch[field]:
+                    seq = seq.clone()
+                if label_in_tokens:
+                    new_label = seq[:, position] + (swap - original).to(
+                        seq.dtype)
+                else:
+                    new_label = (swap + int(offset)).to(seq.dtype)
+                present = batch['tokens'][:, position] != 0
+                seq[:, position] = torch.where(
+                    present, new_label, seq[:, position])
+                swapped_batch[field] = seq
         else:
             # Legacy path: swap values[:, 0]. Guarded above so this
             # branch can only fire for at most one slot per call.
@@ -166,7 +262,7 @@ def make_swapped_batch(
                 low=0, high=int(n_cls), size=(B,),
                 device=device, dtype=torch.long, generator=generator)
             changed = swap != original
-            new_values = values.clone()
+            new_values = swapped_batch['values'].clone()
             new_values[:, 0] = (swap + int(offset)).to(values.dtype)
             swapped_batch['values'] = new_values
 

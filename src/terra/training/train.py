@@ -44,7 +44,7 @@ from terra.utils.helper import (build_batch_classifier_head,
 from terra.models.batch_classifier import (
     grad_reverse, mean_pool_cell_embedding)
 from terra.models.cycle_consistency import (
-    cycle_consistency_loss, make_swapped_batch)
+    cycle_consistency_loss, make_swapped_batch, special_token_positions)
 from terra.models.distribution_alignment import (
     compute_distribution_alignment_loss)
 from terra.datasets.cell_datasets import init_cell_dataset
@@ -654,6 +654,44 @@ def train(args: dict,
     # Get token sequence length and number of special tokens
     n_special_tokens = len(special_tokens)
     seq_len = seq_len_cell + seq_len_neighborhood + n_special_tokens
+
+    # Cycle consistency: the encoder sees a cell's metadata label (e.g.
+    # `batch_value`) through its special token (e.g. `batch`), and through
+    # AdaLN only if the encoder's AdaLN reads the key. Swapping the metadata
+    # field alone therefore left the encoder input unchanged (zero loss), so
+    # the swapped labels are also written into the special tokens.
+    cycle_positions = special_token_positions(cycle_keys, special_tokens)
+    if cycle_kwargs is not None and lambda_cycle > 0:
+        encoder_adaln_keys = (
+            list(adaln_kwargs.get('keys') or [])
+            if adaln_kwargs and adaln_kwargs['scope'] in ('encoder', 'both')
+            else [])
+        unreachable = [
+            key for key, position in zip(cycle_keys, cycle_positions)
+            if key is not None and position is None
+            and key not in encoder_adaln_keys]
+        if unreachable:
+            message = (
+                f"cycle_consistency keys {unreachable} have no special "
+                f"token in the input sequence (special_tokens "
+                f"{special_tokens}) and are not read by the encoder's "
+                "AdaLN, so swapping them cannot change the encoder output.")
+            if len(unreachable) == len(cycle_keys):
+                raise ValueError(message)
+            logger.warning(message)
+        if nz_spc and gt_type != 'rank':
+            # Swapped labels index the special value embedding
+            for key, n_classes, offset, position in zip(
+                    cycle_keys, cycle_n_classes_per_key, cycle_offsets,
+                    cycle_positions):
+                if position is not None and (
+                        offset + n_classes > n_special_values + 2):
+                    raise ValueError(
+                        f"cycle_consistency key {key!r}: swapped labels "
+                        f"reach {offset + n_classes - 1} (offset {offset} "
+                        f"+ n_classes {n_classes} - 1), beyond the "
+                        f"special values of the model (n_special_values "
+                        f"{n_special_values}).")
 
     # Set multiprocessing start method
     try:
@@ -1677,6 +1715,8 @@ def train(args: dict,
                         n_classes_per_key=cycle_n_classes_per_key,
                         keys=cycle_keys,
                         offsets=cycle_offsets,
+                        sequence_positions=cycle_positions,
+                        label_in_tokens=(gt_type == 'rank'),
                     )
                     cycle_n_changed = int(changed_mask.sum().item())
                     if cycle_n_changed > 0:
