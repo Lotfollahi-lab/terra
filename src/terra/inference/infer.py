@@ -38,7 +38,8 @@ from terra.utils.embedding import (create_binary_selection_mask,
                                        compute_sum_and_nonzero_count,
                                        batch_rowwise_distances)
 from terra.utils.logging import CSVLogger
-from .embed import _check_special_token_columns, _restrict_special_attention
+from .embed import (_check_special_token_columns, _restrict_special_attention,
+                    _set_cell_only_seq_len)
 from typing import Dict, List
 
 
@@ -329,6 +330,7 @@ def infer(args: dict,
         mlp_bias=mlp_bias,
         protein_init_kwargs=parse_protein_init_kwargs(args, token_dict),
         **parse_arch_kwargs(args))
+    _set_cell_only_seq_len(target_encoder, args)
 
     if api_version != 'v3':
         return_layer_emb_fn = target_encoder.return_layer_emb

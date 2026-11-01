@@ -28,6 +28,7 @@ from terra.datasets.cell_datasets import CellBaseDataset, init_cell_dataset
 from terra.datasets.dataloaders import init_dataloader_and_sampler
 from terra.masks.block_masking  import BlockMaskCollator
 from terra.masks.cell_masking import CellMaskCollator
+from terra.models.multimask import EncoderMultiMaskWrapper
 from terra.tokenizers import cell_tokenizers
 from terra.utils.embedding import (create_binary_selection_mask,
                                        compute_mean_unmasked_emb,
@@ -128,6 +129,29 @@ def _check_special_token_columns(dataset: Dataset,
             "data with include_special_tokens=True (as "
             "harmonize_tokenize_embed_pipeline(keep_special_tokens=True) "
             "does), or use keep_special_tokens=False.")
+
+
+def _set_cell_only_seq_len(encoder: torch.nn.Module,
+                           model_config: dict,
+                           ) -> None:
+    """
+    Set the number of index-cell tokens of the encoder's cell-only context
+    (cell embeddings) to the configured `seq_len_cell`.
+
+    The encoder derives ``(seq_len - n_special_tokens) // n_segments``, which
+    is the index-cell length of the cell graph layout only (e.g. 11 instead
+    of 64 for a 64/64 cell-neighborhood model with 11 segments).
+
+    Parameters
+    -----------
+    encoder:
+        Trained (target) encoder, wrapped or not.
+    model_config:
+        Model config (``model_config.yaml`` / ``params.yaml``).
+    """
+    backbone = (encoder.backbone
+                if isinstance(encoder, EncoderMultiMaskWrapper) else encoder)
+    backbone.cell_only_seq_len = model_config['data']['seq_len_cell']
 
 
 def _restrict_special_attention(model_config: dict,
@@ -357,6 +381,7 @@ def embed_dataset(dataset: Dataset,
     # Initialize encoder, predictor, and target encoder
     target_encoder, _ = init_model_from_config(
         model_config, token_dict, device)
+    _set_cell_only_seq_len(target_encoder, model_config)
 
     if model_config['meta']['api_version'] != 'v3':
         return_layer_emb_fn = target_encoder.return_layer_emb
@@ -913,6 +938,7 @@ def gene_embed_dataset(dataset: Dataset,
     # Initialize encoder, predictor, and target encoder
     target_encoder, _ = init_model_from_config(
         model_config, token_dict, device)
+    _set_cell_only_seq_len(target_encoder, model_config)
 
     if model_config['meta']['api_version'] != 'v3':
         return_layer_emb_fn = target_encoder.return_layer_emb

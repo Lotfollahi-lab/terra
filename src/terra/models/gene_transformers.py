@@ -144,6 +144,10 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         self.n_segments = n_segments
         self.n_special_tokens = n_special_tokens
         self.seq_len_cell = (seq_len - n_special_tokens)//n_segments
+        # Index-cell tokens of the cell-only context (`return_layer_emb`);
+        # the layout-derived `seq_len_cell` only fits the cell graph layout,
+        # so the inference entry points set it from the data config
+        self.cell_only_seq_len = self.seq_len_cell
         self.cell_pos_enc = cell_pos_enc
         self.embed_dim = embed_dim
         self.num_heads = num_heads
@@ -471,11 +475,11 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                 attn[
                     :,
                     :,
-                    :(self.n_special_tokens+self.seq_len_cell),
-                    (self.n_special_tokens+self.seq_len_cell):] = False
+                    :(self.n_special_tokens+self.cell_only_seq_len),
+                    (self.n_special_tokens+self.cell_only_seq_len):] = False
 
         if cell_only:
-            x[:, (self.n_special_tokens+self.seq_len_cell):, :] = 0
+            x[:, (self.n_special_tokens+self.cell_only_seq_len):, :] = 0
 
             #torch.set_printoptions(profile="full")
 

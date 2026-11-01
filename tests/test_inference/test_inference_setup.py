@@ -80,3 +80,41 @@ def test_restrict_special_attention_is_read_from_mask(tiny):
     output = embed(restricted)
     assert np.isfinite(output).all()
     assert not np.allclose(output, expected)
+
+
+def _cell_neigh_config(tiny):
+    # Equal split (16/16); n_segments kept from a cell-graph config, so the
+    # encoder's layout-derived index-cell length is 32 // 4 = 8
+    return _config('112M', tiny, data={
+        'tokenizer_type': 'cell_neigh', 'model_input_size': 32,
+        'seq_len_cell': 16, 'seq_len_neighborhood': 16, 'n_segments': 4})
+
+
+def _drop_neighborhood(dataset, seq_len_cell):
+    """Pad the neighborhood tokens, keep the index cell."""
+    def edit(example):
+        for key in ('gene_tokens', 'gene_expr'):
+            values = list(example[key])
+            example[key] = (values[:seq_len_cell]
+                            + [0] * (len(values) - seq_len_cell))
+        return example
+
+    edited = dataset.with_format(None).map(edit)
+    edited.set_format(
+        type='torch', output_all_columns=True,
+        columns=[c for c in edited.column_names if c != 'cell_id'])
+    return edited
+
+
+def test_cell_only_context_uses_configured_seq_len_cell(tiny):
+    bundle = tiny.bundle('cell_neigh', _cell_neigh_config(tiny))
+    dataset = tiny.dataset(bundle)
+
+    output = embed_dataset(dataset, str(bundle), **KW)
+    without_neighborhood = embed_dataset(
+        _drop_neighborhood(dataset, 16), str(bundle), **KW)
+    # The cell embedding is computed from the index cell alone
+    np.testing.assert_allclose(without_neighborhood['cell_emb'],
+                               output['cell_emb'], rtol=1e-5, atol=1e-6)
+    assert not np.allclose(without_neighborhood['spatial_cell_emb'],
+                           output['spatial_cell_emb'])
