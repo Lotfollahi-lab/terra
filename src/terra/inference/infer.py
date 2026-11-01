@@ -789,12 +789,6 @@ def infer(args: dict,
    
     # Store cell and neighborhood embeddings of all observations across layers  
     for i, emb_layer in enumerate(emb_layers):
-
-        neigh = torch.cat(all_neighborhood_emb_list[i], dim=0)        # (N, D)
-        spatial = torch.cat(all_spatial_cell_emb_list[i], dim=0)      # (N, D)
-
-        cos = F.cosine_similarity(neigh, spatial, dim=1)              # (N,)
-
         adata.obsm[f"cell_emb_layer_{emb_layer}"] = np.array(torch.cat(
             all_cell_emb_list[i],
             dim=0))

@@ -48,3 +48,15 @@ def test_infer_cell_neigh_model(tiny, tmp_path):
                   dataset=dataset, load_folder_path=str(bundle),
                   include_spatial_cell_emb=True)
     _assert_matches_embed_dataset(adata, dataset, bundle, layer=2)
+
+
+@pytest.mark.parametrize('layout', ['112M', '96M'])
+def test_infer_default_arguments(tiny, tmp_path, layout):
+    # include_spatial_cell_emb=False (the default) raised UnboundLocalError
+    config = tiny.configs[layout]
+    bundle = tiny.bundle(layout)
+    dataset = tiny.dataset(bundle)
+    adata = infer(args=_infer_args(tiny, bundle, config, tmp_path),
+                  dataset=dataset, load_folder_path=str(bundle))
+    assert 'spatial_cell_emb_layer_2' not in adata.obsm
+    _assert_matches_embed_dataset(adata, dataset, bundle, layer=2)
