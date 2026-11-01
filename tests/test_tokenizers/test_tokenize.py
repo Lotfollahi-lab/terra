@@ -71,17 +71,30 @@ class TestRankGeneTokens(unittest.TestCase):
         np.testing.assert_array_equal(ranked, np.array([4, 5, 6]))
         self.assertEqual(ranked.shape, (3,))
 
-    def test_ties_resolved_by_stable_sort(self):
-        # Tokens 10 and 30 tie at 0.5; with stable=True the lower original
-        # index (token 10) comes first. (numpy's default argsort is not
-        # stable in general; it only happens to be for tiny arrays.)
+    def test_ties_resolved_by_token_id(self):
+        # Tokens 30 and 10 tie at 0.5; with stable=True the lower token id
+        # (10) comes first, although it comes last in the input. (numpy's
+        # default argsort orders ties arbitrarily.)
         gene_scores = np.array([0.5, 0.9, 0.5])
-        gene_tokens = np.array([10, 20, 30])
+        gene_tokens = np.array([30, 20, 10])
 
         ranked = rank_gene_tokens(gene_scores, gene_tokens, stable=True)
 
-        # argsort(-[0.5, 0.9, 0.5]) -> [1, 0, 2] -> tokens [20, 10, 30]
         np.testing.assert_array_equal(ranked, np.array([20, 10, 30]))
+
+    def test_stable_ties_do_not_depend_on_input_order(self):
+        # Integer scores with many ties: the stable ranking of a permuted
+        # input is the same, so it does not depend on the gene order
+        rng = np.random.default_rng(2)
+        scores = rng.poisson(0.5, 3000).astype(np.float32)
+        tokens = rng.permutation(3000) + 100
+        perm = rng.permutation(3000)
+
+        ranked = rank_gene_tokens(scores, tokens, n_tokens=256, stable=True)
+        ranked_perm = rank_gene_tokens(scores[perm], tokens[perm],
+                                       n_tokens=256, stable=True)
+
+        np.testing.assert_array_equal(ranked, ranked_perm)
 
 
     def test_stable_ties_match_dense_lexsort(self):
@@ -102,7 +115,7 @@ class TestRankGeneTokens(unittest.TestCase):
 
     def test_stable_ties_do_not_depend_on_sort_algorithm(self):
         # The stable ranking is fully determined by the input: identical to
-        # an explicit (score desc, input position asc) ordering.
+        # an explicit (score desc, token id asc) ordering.
         rng = np.random.default_rng(1)
         scores = rng.integers(0, 4, 2000).astype(np.float64)
         tokens = np.arange(2000)
