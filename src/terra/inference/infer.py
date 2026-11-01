@@ -38,8 +38,9 @@ from terra.utils.embedding import (create_binary_selection_mask,
                                        compute_sum_and_nonzero_count,
                                        batch_rowwise_distances)
 from terra.utils.logging import CSVLogger
-from .embed import (_check_special_token_columns, _restrict_special_attention,
-                    _set_cell_only_seq_len)
+from .embed import (_check_special_token_columns, _encoder_backbone,
+                    _restrict_special_attention, _set_cell_only_seq_len,
+                    _truncation_settings)
 from typing import Dict, List
 
 
@@ -331,11 +332,7 @@ def infer(args: dict,
         protein_init_kwargs=parse_protein_init_kwargs(args, token_dict),
         **parse_arch_kwargs(args))
     _set_cell_only_seq_len(target_encoder, args)
-
-    if api_version != 'v3':
-        return_layer_emb_fn = target_encoder.return_layer_emb
-    else:
-        return_layer_emb_fn = target_encoder.backbone.return_layer_emb
+    return_layer_emb_fn = _encoder_backbone(target_encoder).return_layer_emb
 
     # Pad the special tokens unless asked to keep them (warns if the model
     # never saw padded special tokens in training)
@@ -373,6 +370,8 @@ def infer(args: dict,
             targets_list=targets_list)
 
     # Initialize train and test datasets, dataloaders and samplers
+    truncate_neighbors, tokenized_seq_len_cell = _truncation_settings(
+        dataset, args['data'])
     cell_dataset = init_cell_dataset(
         dataset=dataset,
         vocab_size=vocab_size,
@@ -394,8 +393,8 @@ def infer(args: dict,
         # because the collator below uses special_token_pad_ratio=1.0 and
         # zeroes those positions regardless (unless keep_special_tokens).
         pad_special_tokens=pad_spc_tokens,
-        truncate_neighbors=args['data'].get('truncate_neighbors', False),
-        tokenized_seq_len_cell=args['data'].get('tokenized_seq_len_cell', None))
+        truncate_neighbors=truncate_neighbors,
+        tokenized_seq_len_cell=tokenized_seq_len_cell)
 
     loader, _ = init_dataloader_and_sampler(
         cell_dataset=cell_dataset,

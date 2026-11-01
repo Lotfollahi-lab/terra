@@ -131,6 +131,17 @@ def _check_special_token_columns(dataset: Dataset,
             "does), or use keep_special_tokens=False.")
 
 
+def _encoder_backbone(encoder: torch.nn.Module) -> torch.nn.Module:
+    """
+    Return the gene transformer of an encoder, which ``init_model`` wraps in
+    an ``EncoderMultiMaskWrapper`` for `api_version` v3 and v4 (the
+    training default).
+    """
+    if isinstance(encoder, EncoderMultiMaskWrapper):
+        return encoder.backbone
+    return encoder
+
+
 def _set_cell_only_seq_len(encoder: torch.nn.Module,
                            model_config: dict,
                            ) -> None:
@@ -149,9 +160,46 @@ def _set_cell_only_seq_len(encoder: torch.nn.Module,
     model_config:
         Model config (``model_config.yaml`` / ``params.yaml``).
     """
-    backbone = (encoder.backbone
-                if isinstance(encoder, EncoderMultiMaskWrapper) else encoder)
-    backbone.cell_only_seq_len = model_config['data']['seq_len_cell']
+    _encoder_backbone(encoder).cell_only_seq_len = (
+        model_config['data']['seq_len_cell'])
+
+
+def _truncation_settings(dataset: Dataset,
+                         data_config: dict,
+                         ) -> tuple[bool, int | None]:
+    """
+    Neighbor and gene truncation settings of the cell dataset for `dataset`.
+
+    `truncate_neighbors` and `tokenized_seq_len_cell` describe the layout of
+    the pretraining dataset (e.g. 256 genes per cell, read as the top
+    `seq_len_cell`). Data tokenized for the model with ``tokenize_adata`` is
+    `model_input_size` long with `model_input_size // (n_neighs + 1)` genes
+    per cell instead, so it is read with that stride.
+
+    Parameters
+    -----------
+    dataset:
+        Tokenized Hugging Face dataset.
+    data_config:
+        The `data` section of the model config.
+
+    Returns
+    -----------
+    truncate_neighbors:
+        Value for the cell dataset.
+    tokenized_seq_len_cell:
+        Value for the cell dataset.
+    """
+    truncate_neighbors = data_config.get('truncate_neighbors', False)
+    tokenized_seq_len_cell = data_config.get('tokenized_seq_len_cell', None)
+    model_input_size = data_config.get('model_input_size')
+    n_neighs = data_config.get('n_neighs')
+    if (tokenized_seq_len_cell is not None
+            and data_config['tokenizer_type'] == 'cell_graph'
+            and model_input_size and n_neighs and len(dataset) > 0
+            and len(dataset[0]['gene_tokens']) == model_input_size):
+        tokenized_seq_len_cell = model_input_size // (n_neighs + 1)
+    return truncate_neighbors, tokenized_seq_len_cell
 
 
 def _restrict_special_attention(model_config: dict,
@@ -224,6 +272,8 @@ def _init_inference_loader(dataset: Dataset,
     data = model_config['data']
     if not pad_special_tokens:
         _check_special_token_columns(dataset, meta['special_tokens'])
+    truncate_neighbors, tokenized_seq_len_cell = _truncation_settings(
+        dataset, data)
 
     # Create mask collator
     mask_collator = BlockMaskCollator(
@@ -257,8 +307,8 @@ def _init_inference_loader(dataset: Dataset,
         sep_gene_tokens_neb=data['sep_gene_tokens_neb'],
         nz_spc=data.get('nz_spc', False),
         pad_special_tokens=pad_special_tokens,
-        truncate_neighbors=data.get('truncate_neighbors', False),
-        tokenized_seq_len_cell=data.get('tokenized_seq_len_cell', None),)
+        truncate_neighbors=truncate_neighbors,
+        tokenized_seq_len_cell=tokenized_seq_len_cell,)
 
     # Initialize dataloader
     loader, _ = init_dataloader_and_sampler(
@@ -382,11 +432,7 @@ def embed_dataset(dataset: Dataset,
     target_encoder, _ = init_model_from_config(
         model_config, token_dict, device)
     _set_cell_only_seq_len(target_encoder, model_config)
-
-    if model_config['meta']['api_version'] != 'v3':
-        return_layer_emb_fn = target_encoder.return_layer_emb
-    else:
-        return_layer_emb_fn = target_encoder.backbone.return_layer_emb
+    return_layer_emb_fn = _encoder_backbone(target_encoder).return_layer_emb
 
     # Pad the special tokens unless asked to keep them (warns if the model
     # never saw padded special tokens in training)
@@ -939,11 +985,7 @@ def gene_embed_dataset(dataset: Dataset,
     target_encoder, _ = init_model_from_config(
         model_config, token_dict, device)
     _set_cell_only_seq_len(target_encoder, model_config)
-
-    if model_config['meta']['api_version'] != 'v3':
-        return_layer_emb_fn = target_encoder.return_layer_emb
-    else:
-        return_layer_emb_fn = target_encoder.backbone.return_layer_emb
+    return_layer_emb_fn = _encoder_backbone(target_encoder).return_layer_emb
 
     # Pad the special tokens unless asked to keep them (warns if the model
     # never saw padded special tokens in training)

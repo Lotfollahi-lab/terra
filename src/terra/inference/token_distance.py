@@ -19,7 +19,8 @@ except ImportError:  # pragma: no cover - optional dependency
 from terra.utils.helper import (init_model_from_config, load_checkpoint,
                                 log_inference_time,
                                 resolve_special_token_padding, sync_cuda)
-from .embed import _init_inference_loader, _set_cell_only_seq_len
+from .embed import (_encoder_backbone, _init_inference_loader,
+                    _set_cell_only_seq_len)
 
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
@@ -239,11 +240,7 @@ def infer_token_distance(
     target_encoder, _ = init_model_from_config(
         model_config, token_dict, inference_device)
     _set_cell_only_seq_len(target_encoder, model_config)
-
-    if model_config['meta']['api_version'] != 'v3':
-        return_layer_emb_fn = target_encoder.return_layer_emb
-    else:
-        return_layer_emb_fn = target_encoder.backbone.return_layer_emb
+    return_layer_emb_fn = _encoder_backbone(target_encoder).return_layer_emb
 
     # Pad the special tokens unless asked to keep them (warns if the model
     # never saw padded special tokens in training); the dataset and collator

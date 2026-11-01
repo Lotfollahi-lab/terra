@@ -118,3 +118,59 @@ def test_cell_only_context_uses_configured_seq_len_cell(tiny):
                                output['cell_emb'], rtol=1e-5, atol=1e-6)
     assert not np.allclose(without_neighborhood['spatial_cell_emb'],
                            output['spatial_cell_emb'])
+
+
+@pytest.mark.parametrize('api_version', ['v4', None])
+def test_api_version_v4_or_missing(tiny, api_version):
+    # Training builds the model with api_version v4 unless set; v3 and v4
+    # are the same wrapped model
+    config = _config('96M', tiny)
+    if api_version is None:
+        config['meta'].pop('api_version')
+    else:
+        config['meta']['api_version'] = api_version
+    bundle = tiny.bundle(f'96M_{api_version}', config)
+    reference = tiny.bundle('96M')
+    dataset = tiny.dataset(reference)
+
+    expected = embed_dataset(dataset, str(reference), **KW)
+    output = embed_dataset(dataset, str(bundle), **KW)
+    for key, value in expected.items():
+        np.testing.assert_array_equal(output[key], value)
+
+
+def _truncating_config(tiny, tokenized_seq_len_cell):
+    # The model reads the top seq_len_cell (16) genes of each cell of a
+    # pretraining dataset tokenized with tokenized_seq_len_cell genes per cell
+    return _config('112M', tiny, data={
+        'truncate_neighbors': True,
+        'tokenized_seq_len_cell': tokenized_seq_len_cell})
+
+
+def test_truncation_config_on_data_tokenized_for_the_model(tiny):
+    # tokenize_adata tokenizes model_input_size // (n_neighs + 1) = 16 genes
+    # per cell; reading them with the pretraining stride 32 raised
+    bundle = tiny.bundle('112M_truncating', _truncating_config(tiny, 32))
+    reference = tiny.bundle('112M')
+    dataset = tiny.dataset(reference)
+
+    expected = embed_dataset(dataset, str(reference), **KW)
+    output = embed_dataset(dataset, str(bundle), **KW)
+    for key, value in expected.items():
+        np.testing.assert_array_equal(output[key], value)
+
+
+def test_truncation_config_on_pretraining_layout(tiny):
+    # Data tokenized with 32 genes per cell, as the pretraining dataset
+    wide = tiny.bundle('112M_wide_tokenizer', _config(
+        '112M', tiny, data={'model_input_size': 128}))
+    wide_dataset = tiny.dataset(wide)
+    assert len(wide_dataset[0]['gene_tokens']) == 128
+
+    bundle = tiny.bundle('112M_truncating', _truncating_config(tiny, 32))
+    reference = tiny.bundle('112M')
+    expected = embed_dataset(tiny.dataset(reference), str(reference), **KW)
+    output = embed_dataset(wide_dataset, str(bundle), **KW)
+    # The top 16 of 32 genes per cell are the top 16 genes
+    for key, value in expected.items():
+        np.testing.assert_allclose(output[key], value, rtol=1e-5, atol=1e-6)
