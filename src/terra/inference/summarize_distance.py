@@ -173,6 +173,7 @@ def summarize_w1_by_label(
     backend="tensorized",
     device=None,
     threshold=None,
+    random_state=0,
 ):
     """
     W1 (Sinkhorn, ``p=1``) between point-cloud distributions per label.
@@ -222,6 +223,12 @@ def summarize_w1_by_label(
         If set and a group has more than ``threshold`` cells, both clouds are
         randomly subsampled to ``threshold`` rows (same indices) before the
         distance is computed.
+    random_state:
+        Seed of the subsampling (``threshold``), so that the result does not
+        depend on numpy's global random state; ``None`` uses numpy's global
+        generator. With the default ``0`` the subsamples are those that
+        earlier versions drew in the first call of a session (importing
+        TERRA seeded the global generator with 0).
 
     Returns
     -------
@@ -240,7 +247,7 @@ def summarize_w1_by_label(
     return _summarize_pointcloud_by_label(
         adata, label_key, labels, pairs, agg, sort_by, ascending, eps,
         ignore_zeros, blur, backend, device, threshold,
-        loss="sinkhorn", p=1,
+        loss="sinkhorn", p=1, random_state=random_state,
     )
 
 
@@ -258,6 +265,7 @@ def summarize_w2_by_label(
     backend="tensorized",
     device=None,
     threshold=None,
+    random_state=0,
 ):
     """
     W2 (Sinkhorn, ``p=2``) between point-cloud distributions per label.
@@ -283,7 +291,7 @@ def summarize_w2_by_label(
     return _summarize_pointcloud_by_label(
         adata, label_key, labels, pairs, agg, sort_by, ascending, eps,
         ignore_zeros, blur, backend, device, threshold,
-        loss="sinkhorn", p=2,
+        loss="sinkhorn", p=2, random_state=random_state,
     )
 
 
@@ -301,6 +309,7 @@ def summarize_energy_by_label(
     backend="tensorized",
     device=None,
     threshold=None,
+    random_state=0,
 ):
     """
     Energy distance (GeomLoss ``'energy'``) between point-cloud distributions
@@ -327,7 +336,7 @@ def summarize_energy_by_label(
     return _summarize_pointcloud_by_label(
         adata, label_key, labels, pairs, agg, sort_by, ascending, eps,
         ignore_zeros, blur, backend, device, threshold,
-        loss="energy", p=None,
+        loss="energy", p=None, random_state=random_state,
     )
 
 
@@ -345,6 +354,7 @@ def summarize_mmd_by_label(
     backend="tensorized",
     device=None,
     threshold=None,
+    random_state=0,
 ):
     """
     Gaussian MMD-like loss (GeomLoss ``'gaussian'``) between point-cloud
@@ -371,7 +381,7 @@ def summarize_mmd_by_label(
     return _summarize_pointcloud_by_label(
         adata, label_key, labels, pairs, agg, sort_by, ascending, eps,
         ignore_zeros, blur, backend, device, threshold,
-        loss="gaussian", p=None,
+        loss="gaussian", p=None, random_state=random_state,
     )
 
 
@@ -391,12 +401,17 @@ def _summarize_pointcloud_by_label(
     threshold,
     loss,
     p,
+    random_state=0,
 ):
     """Shared driver for the point-cloud (Sinkhorn/energy/gaussian) summaries."""
     if labels is None:
         labels = sorted(pd.unique(adata.obs[label_key]))
 
     agg_fn = _agg_fn_from_name(agg)
+
+    # One generator per call for the subsampling (a legacy RandomState, whose
+    # stream for seed 0 is the one of the global generator seeded with 0)
+    rng = np.random if random_state is None else np.random.RandomState(random_state)
 
     rows = []
     for label in labels:
@@ -408,7 +423,7 @@ def _summarize_pointcloud_by_label(
             XB = _l2_normalize_rows(np.asarray(adata_sub.obsm[B_key]), eps=eps)
 
             if threshold is not None and XA.shape[0] > threshold:
-                idx = np.random.choice(XA.shape[0], size=int(threshold), replace=False)
+                idx = rng.choice(XA.shape[0], size=int(threshold), replace=False)
                 XA = XA[idx]
                 XB = XB[idx]
 

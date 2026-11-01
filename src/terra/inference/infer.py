@@ -44,9 +44,6 @@ from .embed import (_check_special_token_columns, _encoder_backbone,
 from typing import Dict, List
 
 
-_GLOBAL_SEED = 0
-np.random.seed(_GLOBAL_SEED)
-torch.manual_seed(_GLOBAL_SEED)
 torch.backends.cudnn.benchmark = True
 
 
