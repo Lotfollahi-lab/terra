@@ -13,6 +13,8 @@ group.
   zeroed.
 * Fractional warmup: clipping was skipped for the first warmup * ipe
   iterations of every epoch, not only of the run.
+* ``ipe_scale < 1``: training stopped with StopIteration once the EMA
+  momentum schedule ran out.
 """
 
 import copy
@@ -206,3 +208,11 @@ def test_fractional_warmup_clips_every_step_after_warmup(
     assert result['clip_steps'] == [
         step for step in range(first_clipped_step, 2 * ITERATIONS_PER_EPOCH)
         for _ in ('encoder', 'predictor')]
+
+
+def test_ipe_scale_below_one_trains_every_step(run_train):
+    result = run_train(optimization={'ipe_scale': 0.5})
+    assert len(result['logged']) == 2 * ITERATIONS_PER_EPOCH
+    # The learning rate stays at final_lr after the end of the schedule
+    for payload in result['logged'][ITERATIONS_PER_EPOCH:]:
+        assert payload['lr'] == pytest.approx(1e-6)

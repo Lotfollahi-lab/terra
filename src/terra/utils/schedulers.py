@@ -14,6 +14,7 @@ import torch
 __all__ = [
     "WarmupCosineSchedule",
     "CosineWDSchedule",
+    "ema_momentum_schedule",
     "schedule_values_at_step",
 ]
 
@@ -61,9 +62,10 @@ class WarmupCosineSchedule(object):
             progress = float(self._step) / float(max(1, self.warmup_steps))
             new_lr = self.start_lr + progress * (self.ref_lr - self.start_lr)
         else:
-            # -- progress after warmup
-            progress = float(self._step - self.warmup_steps) / float(
-                max(1, self.T_max))
+            # -- progress after warmup (held at the end of the schedule,
+            # which training passes if ipe_scale < 1)
+            progress = min(1.0, float(self._step - self.warmup_steps) / float(
+                max(1, self.T_max)))
             new_lr = max(self.final_lr,
                          self.final_lr + (
                             self.ref_lr - self.final_lr) * 0.5 * (
@@ -103,7 +105,8 @@ class CosineWDSchedule(object):
 
     def step(self):
         self._step += 1
-        progress = self._step / self.T_max
+        # Held at the end of the schedule (passed if ipe_scale < 1)
+        progress = min(1.0, self._step / self.T_max)
         new_wd = self.final_wd + (self.ref_wd - self.final_wd) * 0.5 * (
             1. + math.cos(math.pi * progress))
 
@@ -116,6 +119,23 @@ class CosineWDSchedule(object):
             if ('WD_exclude' not in group) or not group['WD_exclude']:
                 group['weight_decay'] = new_wd
         return new_wd
+
+
+def ema_momentum_schedule(ema: tuple[float, float],
+                          iterations_per_epoch: int,
+                          num_epochs: int,
+                          ipe_scale: float):
+    """
+    EMA momentum of the target encoder, one value per optimizer step: linear
+    from ``ema[0]`` to ``ema[1]`` over ``ipe_scale * num_epochs`` epochs, then
+    ``ema[1]`` for the rest of training (``ipe_scale < 1``).
+
+    Yields at least ``iterations_per_epoch * num_epochs + 1`` values.
+    """
+    n_steps = iterations_per_epoch * num_epochs * ipe_scale
+    for i in range(max(int(n_steps), iterations_per_epoch * num_epochs) + 1):
+        yield (ema[0] + i * (ema[1] - ema[0]) / n_steps if i <= n_steps
+               else ema[1])
 
 
 class _NoOptimizer:
@@ -141,7 +161,8 @@ def schedule_values_at_step(step: int,
 
     The schedules span ``ipe_scale * num_epochs`` epochs while training stops
     after `num_epochs`, so with ``ipe_scale > 1`` they never reach `final_lr`,
-    `final_wd` and ``ema[1]``; with ``ipe_scale = 1`` they end at those values.
+    `final_wd` and ``ema[1]``; with ``ipe_scale = 1`` they end at those values,
+    and with ``ipe_scale < 1`` they stay at them after the end of the schedule.
 
     Returns
     ----------
@@ -163,8 +184,9 @@ def schedule_values_at_step(step: int,
         T_max=t_max)
     lr_schedule._step = wd_schedule._step = step - 1
     # Training draws momentum i (0-based) at the i-th optimizer step
-    ema_momentum = ema[0] + (step - 1) * (ema[1] - ema[0]) / (
-        iterations_per_epoch * num_epochs * ipe_scale)
+    n_steps = iterations_per_epoch * num_epochs * ipe_scale
+    ema_momentum = (ema[0] + (step - 1) * (ema[1] - ema[0]) / n_steps
+                    if step - 1 <= n_steps else ema[1])
     return {'lr': lr_schedule.step(),
             'weight_decay': wd_schedule.step(),
             'ema_momentum': ema_momentum}

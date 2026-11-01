@@ -54,7 +54,8 @@ from terra.masks.cell_masking import CellMaskCollator
 from terra.masks.utils import apply_masks, padding_key_masks
 from terra.models.utils import repeat_interleave_batch
 from terra.utils.distributed import init_distributed
-from terra.utils.schedulers import schedule_values_at_step
+from terra.utils.schedulers import (ema_momentum_schedule,
+                                    schedule_values_at_step)
 from terra.utils.logging import (AverageMeter,
                                      CSVLogger,
                                      grad_logger)
@@ -1131,10 +1132,11 @@ def train(args: dict,
             gradient_as_bucket_view=True,
             broadcast_buffers=False)
 
-    # Define momentum schedule
-    momentum_scheduler = (
-        ema[0] + i*(ema[1]-ema[0])/(ipe*num_epochs*ipe_scale)
-        for i in range(int(ipe*num_epochs*ipe_scale)+1))
+    # Define momentum schedule (with ipe_scale < 1 it stays at ema[1] after
+    # its end; the generator used to run out and stop training)
+    momentum_scheduler = ema_momentum_schedule(
+        ema, iterations_per_epoch=ipe, num_epochs=num_epochs,
+        ipe_scale=ipe_scale)
 
     # The schedules span ipe_scale * epochs; log where training actually ends
     # them (ipe_scale > 1: before final_lr / final_weight_decay / ema[1])
