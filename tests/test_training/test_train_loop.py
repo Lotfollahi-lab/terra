@@ -15,6 +15,9 @@ group.
   iterations of every epoch, not only of the run.
 * ``ipe_scale < 1``: training stopped with StopIteration once the EMA
   momentum schedule ran out.
+* The target encoder (a deep copy of the context encoder) stayed in training
+  mode, so with RoPE rotation augmentation its targets were randomly
+  rotated.
 """
 
 import copy
@@ -29,6 +32,8 @@ import torch
 import torch.distributed as dist
 from datasets import Dataset
 from torch.nn.parallel import DistributedDataParallel
+
+from terra.models.multimask import EncoderMultiMaskWrapper
 
 # The module (terra.training re-exports the `train` function under its name)
 T = importlib.import_module('terra.training.train')
@@ -153,7 +158,7 @@ def run_train(tmp_path, monkeypatch):
 
         def record_deepcopy(obj, *args, **kwargs):
             out = deepcopy(obj, *args, **kwargs)
-            if isinstance(out, torch.nn.Module):
+            if isinstance(out, EncoderMultiMaskWrapper):
                 result['copies'].append(out)
             return out
         monkeypatch.setattr(T.copy, 'deepcopy', record_deepcopy)
@@ -216,3 +221,10 @@ def test_ipe_scale_below_one_trains_every_step(run_train):
     # The learning rate stays at final_lr after the end of the schedule
     for payload in result['logged'][ITERATIONS_PER_EPOCH:]:
         assert payload['lr'] == pytest.approx(1e-6)
+
+
+def test_target_encoder_is_in_eval_mode(run_train):
+    result = run_train(optimization={'epochs': 1})
+    (target_encoder,) = result['copies']
+    assert not target_encoder.training
+    assert not any(m.training for m in target_encoder.modules())

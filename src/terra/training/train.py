@@ -293,7 +293,9 @@ def train(args: dict,
     # Optional RoPE 2D hyperparameters. Only consumed when
     # cell_pos_enc == 'rope'. ``rope_freq_scale`` defaults to math.pi
     # (in init_model) which gives ~one full oscillation per neighborhood
-    # if coords are normalized to [-1, 1] -- tune to your tissue scale.
+    # if coords are normalized to [-1, 1] -- tune to your tissue scale:
+    # the tokenizers give micrometres, for which about pi / (largest
+    # neighbor distance in um) avoids aliasing (warned about otherwise).
     rope_freq_scale = args['meta'].get('rope_freq_scale', None)
     rope_rotation_augment = bool(
         args['meta'].get('rope_rotation_augment', True))
@@ -900,7 +902,10 @@ def train(args: dict,
     # disabled, so default training is unchanged).
     batch_classifier = build_batch_classifier_head(
         adv_classifier_kwargs, embed_dim=enc_emb_dim, device=device)
-    target_encoder = copy.deepcopy(encoder)
+    # The target encoder only computes targets: eval mode (with RoPE
+    # rotation augmentation it otherwise drew random rotations; no other
+    # module behaves differently, all dropout rates are 0)
+    target_encoder = copy.deepcopy(encoder).eval()
 
     if pad_masks_to_batch_max:
         # Padded mask entries are only excluded from attention and from the

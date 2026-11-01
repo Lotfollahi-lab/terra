@@ -648,6 +648,80 @@ def test_rope_neginf_coords_get_sanitized_in_attention():
     assert torch.isfinite(y).all()
 
 
+def _rope_batch(B=3, L=12, scale=1.0):
+    torch.manual_seed(0)
+    return {
+        "tokens": torch.randint(1, 16, (B, L)),
+        "positions": torch.arange(1, L + 1).repeat(B, 1),
+        "segments": torch.zeros(B, L, dtype=torch.long),
+        "rel_x_coords": torch.randn(B, L) * scale,
+        "rel_y_coords": torch.randn(B, L) * scale,
+    }
+
+
+def test_rope_rotation_is_drawn_once_per_forward_pass(monkeypatch):
+    """With rotation augmentation every attention layer of a forward pass
+    must see the same rotated coordinates: the training output equals the
+    eval output for coordinates rotated by the drawn angle. (Each layer
+    used to draw its own rotation.)"""
+    import terra.models.rope2d as rope2d
+    from terra.models.gene_transformers import GeneTransformerRankEncoder
+    torch.manual_seed(0)
+    enc = GeneTransformerRankEncoder(
+        vocab_size=16, seq_len=12, n_special_tokens=2, n_segments=2,
+        cell_pos_enc="rope", embed_dim=32, depth=3, num_heads=4,
+        use_flash_attention=False)
+    batch = _rope_batch()
+
+    thetas = []
+    rand = torch.rand
+
+    def spy_rand(*args, **kwargs):
+        out = rand(*args, **kwargs)
+        thetas.append(out * 2.0 * math.pi)
+        return out
+    monkeypatch.setattr(rope2d.torch, "rand", spy_rand)
+    enc.train()
+    with torch.no_grad():
+        h_train, _ = enc(batch=batch)
+    assert len(thetas) == 1
+    theta = thetas[0]
+
+    c, s = theta.cos()[:, None], theta.sin()[:, None]
+    x, y = batch["rel_x_coords"], batch["rel_y_coords"]
+    rotated = dict(batch, rel_x_coords=c * x - s * y,
+                   rel_y_coords=s * x + c * y)
+    enc.eval()
+    with torch.no_grad():
+        h_eval, _ = enc(batch=rotated)
+    torch.testing.assert_close(h_train, h_eval, atol=1e-5, rtol=1e-5)
+
+
+def test_rope_warns_once_when_frequencies_alias(monkeypatch, caplog):
+    """Micrometre-scale coordinates with the default frequency scale (pi)
+    wrap the high frequencies many times between neighbouring cells."""
+    import logging
+    from terra.models.rope2d import RoPE2D
+    monkeypatch.setattr(RoPE2D, "_aliasing_checked", False)
+    rope = RoPE2D(head_dim=16, rotation_augment=False)
+    with caplog.at_level(logging.WARNING, logger="terra.models.rope2d"):
+        rope.prepare_coords(torch.rand(2, 5, 2) * 2 - 1)  # in [-1, 1]
+        assert not caplog.records
+        monkeypatch.setattr(RoPE2D, "_aliasing_checked", False)
+        coords = torch.zeros(2, 5, 2)
+        coords[0, 1] = torch.tensor([30.0, -45.0])  # um
+        rope.prepare_coords(coords)
+        rope.prepare_coords(coords)
+    assert len(caplog.records) == 1
+    assert "rope_freq_scale" in caplog.records[0].getMessage()
+    # A frequency scale for ~100 um neighbourhoods does not alias
+    monkeypatch.setattr(RoPE2D, "_aliasing_checked", False)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="terra.models.rope2d"):
+        RoPE2D(head_dim=16, freq_scale=math.pi / 100).prepare_coords(coords)
+    assert not caplog.records
+
+
 def test_laplacian_pe_pad_tokens_zeroed():
     """Pad tokens within a cell block (token == 0) get zero PE."""
     enc = _make_rank_encoder("laplacian", embed_dim=32)

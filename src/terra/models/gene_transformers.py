@@ -609,14 +609,15 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         """Build a ``(B, L, 2)`` per-token coordinate tensor for RoPE.
         Returns ``None`` if the encoder is not in RoPE mode, so the
         forward can pass the result through unconditionally.
-        Sentinel ``-inf`` values for special tokens / pad are kept;
-        Attention sanitizes them to ``(0, 0)`` (identity rotation)
-        before applying RoPE.
+        Sentinel ``-inf`` values for special tokens / pad become
+        ``(0, 0)`` (identity rotation). During training with rotation
+        augmentation each sample is rotated here, once per forward pass,
+        so that every attention layer sees the same rotation.
         """
         if self.cell_pos_enc != 'rope':
             return None
-        return torch.stack(
-            [batch['rel_x_coords'], batch['rel_y_coords']], dim=-1)
+        return self.rope.prepare_coords(torch.stack(
+            [batch['rel_x_coords'], batch['rel_y_coords']], dim=-1))
 
     def _apply_rda(self,
                    x: torch.Tensor,
@@ -1602,11 +1603,13 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
                       ) -> torch.Tensor | None:
         """``(B, L, 2)`` per-token coordinate tensor for RoPE in the
         predictor. Returns ``None`` unless ``cell_pos_enc == 'rope'``.
+        As in the encoder, sentinels become ``(0, 0)`` and during
+        training each sample is rotated once per forward pass.
         """
         if self.cell_pos_enc != 'rope':
             return None
-        return torch.stack(
-            [batch['rel_x_coords'], batch['rel_y_coords']], dim=-1)
+        return self.rope.prepare_coords(torch.stack(
+            [batch['rel_x_coords'], batch['rel_y_coords']], dim=-1))
 
     def _apply_special_token_moe(self,
                                  z: torch.Tensor,

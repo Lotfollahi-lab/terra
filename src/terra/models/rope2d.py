@@ -20,17 +20,26 @@ Properties
   same cell share the same (x, y), and identical rotations cancel in
   q @ k^T.
 - Rotation invariance is achieved statistically via rotation_augment=True
-  during training (applies a random SO(2) rotation to coords per sample).
+  during training (applies a random SO(2) rotation to coords per sample,
+  once per forward pass of the encoder / predictor, see `prepare_coords`).
 - Special tokens / padding receive coord (0, 0) (rotation = identity),
   so they do not interfere with the spatial bias.
+- The frequencies assume coordinates of order 1 (``freq_scale``). The TERRA
+  tokenizers give displacements in micrometres; with the default
+  ``freq_scale`` (pi) the high frequencies then wrap many times between
+  neighbouring cells, so set ``freq_scale`` to about pi / (largest neighbour
+  distance in micrometres). A warning is logged once if they wrap.
 """
 
 from __future__ import annotations
 
+import logging
 import math
 
 import torch
 import torch.nn as nn
+
+logger = logging.getLogger(__name__)
 
 
 class RoPE2D(nn.Module):
@@ -49,12 +58,20 @@ class RoPE2D(nn.Module):
         Multiplicative scale applied to the frequencies. With coordinates
         normalized so typical neighbor displacement lies in [-1, 1],
         freq_scale ~= pi gives roughly one full oscillation across the
-        neighborhood at the highest frequency channel. Tune this.
+        neighborhood at the highest frequency channel. Tune this: for
+        displacements in micrometres use about pi / (largest neighbor
+        distance), e.g. 0.03 for 100 um.
     rotation_augment:
         If True, at training time each sample's (x, y) is rotated by a
-        uniformly random angle before RoPE is applied. This yields
-        statistical rotation invariance with no loss of capacity.
+        uniformly random angle before RoPE is applied (`prepare_coords`,
+        once per forward pass, so all attention layers see the same
+        rotation). This yields statistical rotation invariance with no
+        loss of capacity.
     """
+
+    # Whether the coordinate range was checked against the frequencies
+    # (once per process, see `_check_aliasing`)
+    _aliasing_checked = False
 
     def __init__(self,
                  head_dim: int,
@@ -68,6 +85,7 @@ class RoPE2D(nn.Module):
                 f"head_dim must be divisible by 4 for 2D RoPE, got {head_dim}"
             )
         self.head_dim = head_dim
+        self.freq_scale = freq_scale
         self.rotation_augment = rotation_augment
 
         half = head_dim // 2  # dims allocated to each axis
@@ -76,6 +94,47 @@ class RoPE2D(nn.Module):
         exponent = torch.arange(0, half, 2, dtype=torch.float32) / half
         freqs = (1.0 / (base ** exponent)) * freq_scale
         self.register_buffer("freqs", freqs, persistent=False)
+
+    def prepare_coords(self, coords: torch.Tensor) -> torch.Tensor:
+        """
+        Coordinates for one forward pass of an encoder or predictor:
+        non-finite sentinels (special tokens, padding) set to (0, 0), and
+        during training with `rotation_augment` each sample rotated by one
+        random angle. All attention layers of the pass use the result
+        (`forward` no longer rotates, which drew a new angle in every
+        layer, also for the target encoder).
+
+        coords: (B, N, 2)
+        """
+        coords = torch.nan_to_num(coords, nan=0.0, posinf=0.0, neginf=0.0)
+        self._check_aliasing(coords)
+        return self._maybe_rotate_coords(coords)
+
+    def _check_aliasing(self, coords: torch.Tensor) -> None:
+        """
+        Warn once per process if the highest frequencies turn by more than
+        half a period over the coordinate range, so that they cannot
+        resolve positions unambiguously (e.g. micrometre coordinates with
+        the default `freq_scale`).
+        """
+        if RoPE2D._aliasing_checked:
+            return
+        extent = float(coords.detach().abs().max()) if coords.numel() else 0.
+        if extent == 0.:
+            return
+        RoPE2D._aliasing_checked = True
+        n_aliased = int((self.freqs * extent > math.pi).sum())
+        if n_aliased:
+            logger.warning(
+                f"RoPE: coordinates reach {extent:.3g}, and with "
+                f"rope_freq_scale {self.freq_scale:.3g} {n_aliased} of the "
+                f"{len(self.freqs)} frequencies per axis turn by more than "
+                f"half a period over that distance (shortest period "
+                f"{2 * math.pi / float(self.freqs.max()):.3g}), so they do "
+                "not resolve positions unambiguously. For coordinates in "
+                "micrometres (TERRA tokenizers), set meta.rope_freq_scale "
+                "to about pi / (largest neighbor distance), e.g. 0.03 for "
+                "100 um.")
 
     def _maybe_rotate_coords(self, coords: torch.Tensor) -> torch.Tensor:
         """
@@ -101,7 +160,6 @@ class RoPE2D(nn.Module):
         coords: (B, N, 2)
         Returns cos, sin of shape (B, N, head_dim / 2).
         """
-        coords = self._maybe_rotate_coords(coords)
         x = coords[..., 0]  # (B, N)
         y = coords[..., 1]
 
@@ -119,7 +177,8 @@ class RoPE2D(nn.Module):
                 ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         q, k:   (B, H, N, head_dim)
-        coords: (B, N, 2) -- normalized (x, y). Special / padding tokens
+        coords: (B, N, 2) -- normalized (x, y), from `prepare_coords`
+                (rotated there during training). Special / padding tokens
                 should carry (0, 0).
 
         Returns q_rot, k_rot with the same shapes as inputs.
