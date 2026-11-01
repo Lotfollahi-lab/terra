@@ -593,6 +593,7 @@ class CellBaseTokenizer(ABC):
 
 class CellGraphTokenizer(CellBaseTokenizer):
     def __init__(self,
+                 pad_empty_neighbors: bool = False,
                  **base_tokenizer_kwargs,
                  ):
         """
@@ -600,6 +601,16 @@ class CellGraphTokenizer(CellBaseTokenizer):
 
         Parameters
         -----------
+        pad_empty_neighbors:
+            If `True`, a neighbor without any expressed vocabulary gene keeps
+            its segment as an all-padding segment, so every cell gets
+            `n_neighs` neighbor segments of `model_input_size /
+            (n_neighs + 1)` tokens, as on the dense ranking path. Default
+            `False` keeps the previous sparse-path layout: with k such
+            neighbors, a cell gets `n_neighs - k` neighbor segments of
+            `model_input_size / (n_neighs + 1 - k)` tokens (its k farthest
+            neighbors are dropped), so its segments no longer start where
+            the cell datasets read them.
         **base_tokenizer_kwargs:
             Keyword arguments for the initialization of the
             CellBaseTokenizer.
@@ -607,6 +618,7 @@ class CellGraphTokenizer(CellBaseTokenizer):
         super().__init__(**base_tokenizer_kwargs)
 
         self.seq_len_cell = int(self.model_input_size / (self.n_neighs + 1))
+        self.pad_empty_neighbors = pad_empty_neighbors
 
     def _tokenize_adata(self,
                         adata_file_path: Path | str | None = None,
@@ -1070,6 +1082,14 @@ class CellGraphTokenizer(CellBaseTokenizer):
         gene_tokens_cell_neigh = adata_dict['gene_tokens_cell_neigh']
         gene_expr_cell_neigh = adata_dict['gene_expr_cell_neigh']
 
+        # Cells without an expressed vocabulary gene have an empty token list
+        # on the sparse ranking path (the dense path stores their panel with
+        # all tokens masked to 0)
+        pad_token = self.token_dict.get('<pad>', 0)
+        n_empty_cells = sum(1 for tokens in gene_tokens_cell_neigh
+                            if np.count_nonzero(tokens) == 0)
+        n_shifted_cells = 0
+
         # Loop through all cells to add neighbor cell gene tokens based on
         # position of neighbor cell compared to index cell. Gene tokens of cells
         # that are closer to the index cell will be added first.
@@ -1107,6 +1127,11 @@ class CellGraphTokenizer(CellBaseTokenizer):
             # instead of (n_neighbors x model_input_size).
             n_nonempty = sum(1 for k in ordered_neighbors
                              if len(gene_tokens_cell_neigh[k]) > 0)
+            if self.pad_empty_neighbors:
+                # Every neighbor keeps its segment (empty ones as padding)
+                n_nonempty = len(ordered_neighbors)
+            elif n_nonempty < len(ordered_neighbors):
+                n_shifted_cells += 1
             seg_length = self.model_input_size // (1 + n_nonempty)
             # Guard: if the per-segment length rounds to 0 (pathologically high
             # degree), store the full arrays so the stored segment set -- and
@@ -1123,6 +1148,11 @@ class CellGraphTokenizer(CellBaseTokenizer):
             for j, k in enumerate(ordered_neighbors):
                 neigh_tokens = gene_tokens_cell_neigh[k]
                 neigh_expr = gene_expr_cell_neigh[k]
+                if self.pad_empty_neighbors and len(neigh_tokens) == 0:
+                    # One pad token labels the neighbor's segment, which
+                    # _format_examples then pads to its full length
+                    neigh_tokens = [pad_token]
+                    neigh_expr = [0.0]
                 if cap is not None:
                     neigh_tokens = neigh_tokens[:cap]
                     neigh_expr = neigh_expr[:cap]
@@ -1149,6 +1179,24 @@ class CellGraphTokenizer(CellBaseTokenizer):
 
         del adata_dict['gene_tokens_cell_neigh']
         del adata_dict['gene_expr_cell_neigh']
+
+        if n_empty_cells > 0:
+            message = (
+                f'{n_empty_cells} of {n_cells} cells have no expressed gene '
+                'of the model vocabulary, so their own segment holds only '
+                'padding and their cell embeddings are empty.')
+            if n_shifted_cells > 0:
+                message += (
+                    ' As neighbors they do not count as segments, which '
+                    f'lengthens the segments of {n_shifted_cells} cells, moves '
+                    'them away from the positions the model expects and drops '
+                    'their farthest neighbors (set `pad_empty_neighbors=True`, '
+                    'model config key `data.pad_empty_neighbors`, to keep an '
+                    'all-padding segment for them instead).')
+            logger.warning(
+                message + ' Remove such cells before tokenization, e.g. with '
+                '`min_genes_per_cell >= 1` in `harmonize_adata` or '
+                '`harmonize_tokenize_embed_pipeline`.')
 
         # Add cell IDs for collecting metadata at inference time
         adata_dict['cell_id'] = adata.obs['cell_id'].values.tolist() 

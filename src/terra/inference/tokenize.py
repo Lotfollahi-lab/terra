@@ -165,6 +165,9 @@ def tokenize_adata(adata: ad.AnnData,
                 model_config['data']['aggregate_own_neighbors'])
     elif model_config['data']['tokenizer_type'] == 'cell_graph':
         Tokenizer = cell_tokenizers.CellGraphTokenizer
+        if 'pad_empty_neighbors' in model_config['data']:
+            tokenizer_kwargs['pad_empty_neighbors'] = (
+                model_config['data']['pad_empty_neighbors'])
     tk = Tokenizer(
         nproc=nproc,
         processing_mode=processing_mode,
