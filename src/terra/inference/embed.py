@@ -464,17 +464,16 @@ def embed_dataset(dataset: Dataset,
                 spatial_cell_emb = compute_mean_unmasked_emb(n_emb, cell_mask)
             neighborhood_emb = compute_mean_unmasked_emb(n_emb, neighborhood_mask)
         elif agg_type == 'softmax':
+            # Weights: softmax of the count values over the selected genes
+            # (applied once, in compute_softmax_weighted_mean_emb)
             values = udata['values'][:, n_special_tokens:].detach().cpu()
-            cell_values = values.masked_fill(~cell_mask, float('-inf'))
-            cell_weights = torch.softmax(cell_values, dim=1)
-            cell_emb = compute_softmax_weighted_mean_emb(c_emb, cell_weights)
+            cell_emb = compute_softmax_weighted_mean_emb(
+                c_emb, values, mask=cell_mask)
             if include_spatial_cell_emb:
-                spatial_cell_emb = compute_softmax_weighted_mean_emb(n_emb, cell_weights)
-            neighborhood_values = values.masked_fill(~neighborhood_mask, float('-inf'))
-            neighborhood_weights = torch.softmax(neighborhood_values, dim=1)
-            torch.set_printoptions(threshold=float('inf'))
-            #raise ValueError
-            neighborhood_emb = compute_softmax_weighted_mean_emb(n_emb, neighborhood_weights)            
+                spatial_cell_emb = compute_softmax_weighted_mean_emb(
+                    n_emb, values, mask=cell_mask)
+            neighborhood_emb = compute_softmax_weighted_mean_emb(
+                n_emb, values, mask=neighborhood_mask)
 
         all_cell_emb_list.append(cell_emb)
         if include_spatial_cell_emb:
