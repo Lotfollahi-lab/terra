@@ -220,16 +220,7 @@ def test_n_nonzero_tokens_counts_expressed_genes_on_dense_path(
     assert results[0] == results[1]
 
 
-def test_gcrd_constants_are_configurable(token_dictionary_file_path,
-                                        monkeypatch):
-    # With recent scipy, sparse / dense-matrix division returns a COO matrix,
-    # which recent anndata refuses as a layer; convert (unrelated to the
-    # constants under test).
-    from terra.tokenizers import cell_tokenizers
-    gcrd_fn = cell_tokenizers.normalize_by_gene_corrected_read_depth
-    monkeypatch.setattr(
-        cell_tokenizers, 'normalize_by_gene_corrected_read_depth',
-        lambda x, **kwargs: sp.csr_matrix(gcrd_fn(x, **kwargs)))
+def test_gcrd_constants_are_configurable(token_dictionary_file_path):
     gcrd = dict(rank_cell_norm_method='gene_corrected_read_depth',
                 count_cell_norm_method='gene_corrected_read_depth',
                 count_count_norm_method=None)
