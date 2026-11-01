@@ -1311,10 +1311,11 @@ def get_gene_embed(
     emb_layer:
         Layer for which to retrieve the embedding.
     cell_gene_ensembl_id:
-        List with gene IDs for which cell gene embeddings will be retrieved.
+        List with gene IDs for which cell gene embeddings will be retrieved
+        (a gene listed more than once is returned once).
     neighborhood_gene_ensembl_id:
         List with gene IDs for which neighborhood gene embeddings will be
-        retrieved.
+        retrieved (a gene listed more than once is returned once).
     batch_size:
         Dataloader param.
     pin_memory:
@@ -1335,8 +1336,11 @@ def get_gene_embed(
     with open(token_dictionary_file_path, 'rb') as f:
         token_dict = pickle.load(f)
 
-    neighborhood_gene_ids = [token_dict[ensg] for ensg in neighborhood_gene_ensembl_id]
-    cell_gene_ids         = [token_dict[ensg] for ensg in cell_gene_ensembl_id]
+    # A gene listed more than once is embedded (and returned) once
+    neighborhood_gene_ids = [
+        token_dict[ensg] for ensg in dict.fromkeys(neighborhood_gene_ensembl_id)]
+    cell_gene_ids = [
+        token_dict[ensg] for ensg in dict.fromkeys(cell_gene_ensembl_id)]
 
     # Create reverse mapping from token id to ensembl id
     id_to_ensembl = {v: k for k, v in token_dict.items()}

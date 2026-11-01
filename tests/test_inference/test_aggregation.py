@@ -8,7 +8,7 @@ import pickle
 import numpy as np
 import torch
 
-from terra import embed_dataset
+from terra import embed_dataset, get_gene_embed
 from terra.datasets.cell_datasets import init_cell_dataset
 from terra.utils.embedding import compute_softmax_weighted_mean_emb
 
@@ -66,3 +66,19 @@ def test_embed_softmax_aggregation_applies_softmax_once(tiny):
                     * weights[:, None]).sum(0)
         np.testing.assert_allclose(output['spatial_cell_emb'][i], expected,
                                    rtol=1e-4, atol=1e-5)
+
+
+def test_get_gene_embed_with_duplicate_genes(tiny):
+    # A gene listed twice raised KeyError; it is returned once
+    bundle = tiny.bundle('112M')
+    dataset = tiny.dataset(bundle)
+    genes = [f'ENSG{i + 1:011d}' for i in range(3)]
+    kwargs = dict(include_spatial_cell_emb=True, **KW)
+    expected = get_gene_embed(dataset, str(bundle), cell_gene_ensembl_id=genes,
+                              neighborhood_gene_ensembl_id=genes[1:], **kwargs)
+    output = get_gene_embed(
+        dataset, str(bundle), cell_gene_ensembl_id=genes + genes[:1],
+        neighborhood_gene_ensembl_id=genes[1:] + genes[1:], **kwargs)
+    assert list(output) == list(expected)
+    for key, value in expected.items():
+        np.testing.assert_array_equal(output[key], value)
