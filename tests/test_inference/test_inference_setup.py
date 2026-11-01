@@ -82,12 +82,20 @@ def test_restrict_special_attention_is_read_from_mask(tiny):
     assert not np.allclose(output, expected)
 
 
-def _cell_neigh_config(tiny):
-    # Equal split (16/16); n_segments kept from a cell-graph config, so the
-    # encoder's layout-derived index-cell length is 32 // 4 = 8
+def _cell_neigh_config(tiny, split):
+    if split == 'equal':
+        # Equal split (16/16); n_segments kept from a cell-graph config, so
+        # the encoder's layout-derived index-cell length is 32 // 4 = 8
+        data = {'model_input_size': 32, 'seq_len_neighborhood': 16,
+                'n_segments': 4}
+    else:
+        # Split model_input_size / (n_neighs + 1) (16/48) with 2 segments,
+        # as in the cell-neighborhood configs of terra-reproducibility: the
+        # layout-derived index-cell length is 64 // 2 = 32
+        data = {'model_input_size': 64, 'seq_len_neighborhood': 48,
+                'n_segments': 2}
     return _config('112M', tiny, data={
-        'tokenizer_type': 'cell_neigh', 'model_input_size': 32,
-        'seq_len_cell': 16, 'seq_len_neighborhood': 16, 'n_segments': 4})
+        'tokenizer_type': 'cell_neigh', 'seq_len_cell': 16, **data})
 
 
 def _drop_neighborhood(dataset, seq_len_cell):
@@ -106,8 +114,10 @@ def _drop_neighborhood(dataset, seq_len_cell):
     return edited
 
 
-def test_cell_only_context_uses_configured_seq_len_cell(tiny):
-    bundle = tiny.bundle('cell_neigh', _cell_neigh_config(tiny))
+@pytest.mark.parametrize('split', ['equal', 'unequal'])
+def test_cell_only_context_uses_configured_seq_len_cell(tiny, split):
+    bundle = tiny.bundle(f'cell_neigh_{split}',
+                         _cell_neigh_config(tiny, split))
     dataset = tiny.dataset(bundle)
 
     output = embed_dataset(dataset, str(bundle), **KW)
