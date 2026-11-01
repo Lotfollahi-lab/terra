@@ -83,10 +83,21 @@ class DepthConditioning(nn.Module):
         # exactly zero at construction. Mark these as no-weight-decay
         # so the optimizer's L2 regularization doesn't drag them off
         # zero before any gradient has flowed through them.
-        nn.init.zeros_(self.mlp[-1].weight)
-        nn.init.zeros_(self.mlp[-1].bias)
+        self.reset_output_to_zero()
         for p in self.mlp[-1].parameters():
             setattr(p, "_no_weight_decay", True)
+
+    def reset_output_to_zero(self) -> None:
+        """Re-initialize the output projection to zeros, so that the
+        depth embedding is exactly zero.
+
+        Call this after any global re-initialization pass that visits
+        every ``nn.Linear`` (the encoder's ``self.apply(_init_weights)``
+        and the second ``init_weights`` pass in ``init_model``), which
+        would otherwise overwrite the zero-init with random weights.
+        """
+        nn.init.zeros_(self.mlp[-1].weight)
+        nn.init.zeros_(self.mlp[-1].bias)
 
     def forward(self,
                 depth: torch.Tensor,
@@ -121,6 +132,18 @@ class DepthConditioning(nn.Module):
         else:
             x = log_t                                     # (B, c, 1)
         return self.mlp(x.to(self.mlp[0].weight.dtype))   # (B, c, D)
+
+
+def zero_init_rda_outputs(module: nn.Module) -> int:
+    """Re-zero the output projection of every ``DepthConditioning`` in
+    ``module`` (see ``DepthConditioning.reset_output_to_zero``). Returns
+    the number of modules that were re-initialized."""
+    n = 0
+    for m in module.modules():
+        if isinstance(m, DepthConditioning):
+            m.reset_output_to_zero()
+            n += 1
+    return n
 
 
 def compute_per_cell_depth(

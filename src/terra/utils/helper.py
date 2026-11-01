@@ -882,6 +882,10 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
     from terra.models.adaln import zero_init_adaln_modulations
     zero_init_adaln_modulations(encoder)
     zero_init_adaln_modulations(predictor)
+    # Likewise for the zero-init output head of RDA (encoder only), so
+    # that RDA-at-step-0 is a no-op. No-op when RDA is disabled.
+    from terra.models.rda import zero_init_rda_outputs
+    zero_init_rda_outputs(encoder)
 
     encoder.to(device)
     predictor.to(device)

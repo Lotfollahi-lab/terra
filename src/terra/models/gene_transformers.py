@@ -366,6 +366,9 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         # AdaLN-at-step-0 == LayerNorm invariant. Restore it here.
         # No-op when AdaLN is disabled (no AdaLN modules to find).
         zero_init_adaln_modulations(self)
+        # Same for the zero-init output head of RDA (step-0 no-op)
+        if self.rda_module is not None:
+            self.rda_module.reset_output_to_zero()
 
         # Compute omega for coord-based positional sincos: 1 / 10000^{2i/dim}
         # Used by 'coord' (sincos of rel_x, rel_y), 'polar' (sincos of

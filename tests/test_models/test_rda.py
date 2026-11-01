@@ -3,11 +3,13 @@
 import pytest
 import torch
 
+from terra.models.gene_transformers import init_gt_encoder
 from terra.models.rda import (
     DepthConditioning,
     build_depth_embedding,
     compute_per_cell_depth,
 )
+from terra.utils.helper import init_model
 
 
 # ---------------------------------------------------------------------------
@@ -166,3 +168,43 @@ def test_build_depth_embedding_is_zero_at_init():
         n_special_tokens=n_special, n_cells=n_cells,
         seq_len_cell=seq_len_cell, seq_len=seq_len)
     assert torch.allclose(out, torch.zeros_like(out), atol=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Zero-init survives the encoder's and init_model's weight-init passes
+# ---------------------------------------------------------------------------
+# Both passes re-initialize every nn.Linear with trunc_normal_(0.02); they
+# used to overwrite the zero-init output head, so RDA was not a no-op at
+# step 0 (AdaLN's zero-init was restored, RDA's was not).
+
+_RDA_ENCODER_KWARGS = dict(
+    n_special_values=16, count_encoding='value_bins', n_value_bins=20,
+    cell_pos_enc='segment', vocab_size=64, seq_len=13, n_special_tokens=1,
+    n_segments=3, nz_spc=True, rda_kwargs={'enabled': True, 'hidden_dim': 8})
+
+
+def _assert_rda_is_noop(encoder):
+    head = encoder.rda_module.mlp[-1]
+    assert torch.count_nonzero(head.weight) == 0
+    assert torch.count_nonzero(head.bias) == 0
+    x = torch.randn(2, 13, encoder.embed_dim)
+    batch = {'values': torch.randint(0, 100, (2, 13)).float()}
+    with torch.no_grad():
+        assert torch.equal(encoder._apply_rda(x, batch), x)
+
+
+def test_encoder_keeps_rda_output_head_zero():
+    torch.manual_seed(0)
+    encoder = init_gt_encoder(
+        encoder_type='combined', embed_dim=16, depth=1, num_heads=2,
+        **_RDA_ENCODER_KWARGS)
+    _assert_rda_is_noop(encoder)
+
+
+def test_init_model_keeps_rda_output_head_zero():
+    kwargs = dict(_RDA_ENCODER_KWARGS)
+    torch.manual_seed(0)
+    encoder, _ = init_model(
+        gt_type='combined', device='cpu', enc_emb_dim=16, enc_depth=1,
+        pred_emb_dim=8, pred_depth=1, num_heads=2, **kwargs)
+    _assert_rda_is_noop(encoder.backbone)
