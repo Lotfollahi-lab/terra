@@ -1692,13 +1692,15 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
             coords: torch.Tensor,
             masks_enc: list[torch.Tensor],
             masks_pred: list[torch.Tensor],
+            pad_special_tokens: bool = False,
             ) -> torch.Tensor:
         """Mirror the context / target concatenation applied to ``z``
         for the coordinate tensor, so RoPE sees the correct per-token
         ``(x, y)`` of every token the predictor blocks see.
 
         Layout (matches the existing predictor forward concat):
-          ``new_spc=False`` : ``[ coords_pred ; coords_ctx_repeated ]``
+          ``new_spc=False`` or padded special tokens :
+                              ``[ coords_pred ; coords_ctx_repeated ]``
           ``new_spc=True``  : ``[ coords_ctx[:, :n_spc] ;
                                    coords_pred[:, n_spc:] ;
                                    coords_ctx[:, n_spc:] ]``
@@ -1706,7 +1708,7 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
         coords_ctx = apply_masks(coords, masks_enc)
         coords_pred = apply_masks(coords, masks_pred)
         coords_ctx = coords_ctx.repeat(len(masks_pred), 1, 1)
-        if self.new_spc:
+        if self.new_spc and not pad_special_tokens:
             return torch.cat([
                 coords_ctx[:, :self.n_special_tokens, :],
                 coords_pred[:, self.n_special_tokens:, :],
@@ -2634,6 +2636,7 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
                 masks_enc: list[torch.Tensor] | torch.Tensor,
                 masks_pred: list[torch.Tensor] | torch.Tensor,
                 masks_attention: torch.Tensor | None = None,
+                pad_special_tokens: bool = False,
                 ) -> torch.Tensor:
             """
             Run predictor forward pass for a batch of input tokens.
@@ -2662,6 +2665,11 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
             masks_attention:
                 An attention mask that controls how different tokens
                 attend to each other within a sequence.
+            pad_special_tokens:
+                If `True`, the special tokens of this batch are padded
+                and not part of the context and target masks, so mask
+                tokens and context embeddings are concatenated as with
+                `new_spc=False`.
 
             Returns
             -----------
@@ -2716,7 +2724,10 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
             # Repeat context embeddings for all target masks
             z = z.repeat(len(masks_pred), 1, 1)
 
-            if self.new_spc:
+            # The new_spc layout assumes that both masks start with the
+            # special tokens; in batches with padded special tokens the
+            # first entries are gene tokens
+            if self.new_spc and not pad_special_tokens:
                 # Concatenate mask tokens and context embeddings of gene tokens
                 z = torch.cat([
                     z[:, :self.n_special_tokens, :],
@@ -2737,7 +2748,8 @@ class GeneTransformerRankPredictor(GeneTransformerBasePredictor):
             coords_full = self._build_coords(batch)
             if coords_full is not None:
                 pred_coords = self._compose_predictor_coords(
-                    coords_full, masks_enc, masks_pred)
+                    coords_full, masks_enc, masks_pred,
+                    pad_special_tokens=pad_special_tokens)
             else:
                 pred_coords = None
 
@@ -2789,6 +2801,7 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
         masks_enc: list[torch.Tensor] | torch.Tensor,
         masks_pred: list[torch.Tensor] | torch.Tensor,
         masks_attention: torch.Tensor | None = None,
+        pad_special_tokens: bool = False,
         ) -> torch.Tensor:
         """
         Run predictor forward pass for a batch of input tokens.
@@ -2815,6 +2828,10 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
         masks_attention:
             An attention mask that controls how different tokens attend
             to each other within a sequence.
+        pad_special_tokens:
+            If `True`, the special tokens of this batch are padded and
+            not part of the context and target masks, so mask tokens and
+            context embeddings are concatenated as with `new_spc=False`.
 
         Returns
         -----------
@@ -2869,7 +2886,10 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
         # Repeat context embeddings for all target masks
         z = z.repeat(len(masks_pred), 1, 1)
 
-        if self.new_spc:
+        # The new_spc layout assumes that both masks start with the special
+        # tokens; in batches with padded special tokens the first entries
+        # are gene tokens
+        if self.new_spc and not pad_special_tokens:
             # Concatenate mask tokens and context embeddings of gene tokens
             z = torch.cat([
                 z[:, :self.n_special_tokens, :],
@@ -2890,7 +2910,8 @@ class GeneTransformerCountPredictor(GeneTransformerBasePredictor):
         coords_full = self._build_coords(batch)
         if coords_full is not None:
             pred_coords = self._compose_predictor_coords(
-                coords_full, masks_enc, masks_pred)
+                coords_full, masks_enc, masks_pred,
+                pad_special_tokens=pad_special_tokens)
         else:
             pred_coords = None
 
@@ -2972,6 +2993,7 @@ class GeneTransformerCombinedPredictor(GeneTransformerBasePredictor):
         masks_enc: list[torch.Tensor] | torch.Tensor,
         masks_pred: list[torch.Tensor] | torch.Tensor,
         masks_attention: torch.Tensor | None = None,
+        pad_special_tokens: bool = False,
         ) -> torch.Tensor:
         """
         Run predictor forward pass for a batch of input tokens.
@@ -3000,6 +3022,10 @@ class GeneTransformerCombinedPredictor(GeneTransformerBasePredictor):
         masks_attention:
             An attention mask that controls how different tokens attend
             to each other within a sequence.
+        pad_special_tokens:
+            If `True`, the special tokens of this batch are padded and
+            not part of the context and target masks, so mask tokens and
+            context embeddings are concatenated as with `new_spc=False`.
 
         Returns
         -----------
@@ -3069,7 +3095,10 @@ class GeneTransformerCombinedPredictor(GeneTransformerBasePredictor):
         # Repeat context embeddings for all target masks
         z = z.repeat(len(masks_pred), 1, 1)
 
-        if self.new_spc:
+        # The new_spc layout assumes that both masks start with the special
+        # tokens; in batches with padded special tokens the first entries
+        # are gene tokens
+        if self.new_spc and not pad_special_tokens:
             # Concatenate mask tokens and context embeddings of gene tokens
             z = torch.cat([
                 z[:, :self.n_special_tokens, :],
@@ -3090,7 +3119,8 @@ class GeneTransformerCombinedPredictor(GeneTransformerBasePredictor):
         coords_full = self._build_coords(batch)
         if coords_full is not None:
             pred_coords = self._compose_predictor_coords(
-                coords_full, masks_enc, masks_pred)
+                coords_full, masks_enc, masks_pred,
+                pad_special_tokens=pad_special_tokens)
         else:
             pred_coords = None
 

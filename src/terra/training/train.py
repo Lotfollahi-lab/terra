@@ -1267,7 +1267,8 @@ def train(args: dict,
                         padding_key_masks(
                             masks_enc_valid[0], masks_pred_valid[0],
                             n_special_tokens=n_special_tokens,
-                            new_spc=new_spc)
+                            new_spc=new_spc,
+                            pad_special_tokens=pad_special_tokens)
 
                 # Forward pass of context encoder
                 z, token_emb = encoder(
@@ -1282,14 +1283,16 @@ def train(args: dict,
                 # adversarial loss is computed.
                 z_encoder_output = z
 
-                # Forward pass of predictor
+                # Forward pass of predictor (its input layout depends on
+                # whether the special tokens of this batch are padded)
                 z = predictor(
                     z=z,
                     token_emb=token_emb,
                     batch=udata,
                     masks_enc=masks_enc,
                     masks_pred=masks_pred,
-                    masks_attention=pred_masks_attention)
+                    masks_attention=pred_masks_attention,
+                    pad_special_tokens=pad_special_tokens)
 
                 # Compute loss
                 loss_exp = 1.0

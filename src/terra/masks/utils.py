@@ -44,6 +44,7 @@ def padding_key_masks(masks_enc_valid: torch.Tensor,
                       masks_pred_valid: torch.Tensor,
                       n_special_tokens: int,
                       new_spc: bool,
+                      pad_special_tokens: bool = False,
                       ) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Attention key masks for context and target masks padded by
@@ -60,6 +61,9 @@ def padding_key_masks(masks_enc_valid: torch.Tensor,
     new_spc:
         The predictor's `new_spc` setting, which determines the layout of
         its input sequence.
+    pad_special_tokens:
+        If `True`, the special tokens of the batch are padded (not in the
+        masks), and the predictor uses the `new_spc=False` layout.
 
     Returns
     ----------
@@ -69,9 +73,10 @@ def padding_key_masks(masks_enc_valid: torch.Tensor,
         Key mask for the predictor, shape (B, 1, 1, L_ctx + L_tgt), in the
         order of the predictor's input sequence: ``[context special tokens,
         target tokens without special tokens, context gene tokens]`` if
-        `new_spc`, else ``[target tokens, context tokens]``.
+        `new_spc` (and the special tokens are not padded), else ``[target
+        tokens, context tokens]``.
     """
-    if new_spc:
+    if new_spc and not pad_special_tokens:
         pred_valid = torch.cat([
             masks_enc_valid[:, :n_special_tokens],
             masks_pred_valid[:, n_special_tokens:],

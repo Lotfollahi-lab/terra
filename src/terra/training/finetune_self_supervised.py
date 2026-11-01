@@ -406,17 +406,19 @@ def finetune_self_supervised(
         return model(batch=batch, masks=masks, masks_attention=masks_attention)
 
     def call_predictor(model, z, token_emb, batch, masks_enc, masks_pred,
-                       masks_attention=None):
+                       masks_attention=None, pad_special_tokens=False):
         """Call predictor, handling the PEFT wrapper if present."""
         if use_peft:
             return model.base_model.model(
                 z=z, token_emb=token_emb, batch=batch,
                 masks_enc=masks_enc, masks_pred=masks_pred,
-                masks_attention=masks_attention)
+                masks_attention=masks_attention,
+                pad_special_tokens=pad_special_tokens)
         return model(
             z=z, token_emb=token_emb, batch=batch,
             masks_enc=masks_enc, masks_pred=masks_pred,
-            masks_attention=masks_attention)
+            masks_attention=masks_attention,
+            pad_special_tokens=pad_special_tokens)
 
     # -- Training loop --------------------------------------------------------
     logger.info("Starting I-JEPA self-supervised fine-tuning...")
@@ -455,10 +457,12 @@ def finetune_self_supervised(
                 z, token_emb = call_encoder(
                     encoder, batch=udata, masks=masks_enc, masks_attention=None)
 
-                # Predictor forward pass
+                # Predictor forward pass (its input layout depends on whether
+                # the special tokens of this batch are padded)
                 z = call_predictor(
                     predictor, z=z, token_emb=token_emb, batch=udata,
-                    masks_enc=masks_enc, masks_pred=masks_pred, masks_attention=None)
+                    masks_enc=masks_enc, masks_pred=masks_pred, masks_attention=None,
+                    pad_special_tokens=pad_special_tokens)
 
                 # Loss
                 loss = 0.

@@ -69,7 +69,8 @@ class PredictorMultiMaskWrapper(nn.Module):
                 batch: dict[torch.Tensor],
                 masks_enc: torch.Tensor | list,
                 masks_pred: torch.Tensor | list,
-                masks_attention: torch.Tensor
+                masks_attention: torch.Tensor,
+                pad_special_tokens: bool = False,
                 ) -> list[torch.Tensor]:
         if type(z) is not list:
             z = [z]
@@ -86,5 +87,6 @@ class PredictorMultiMaskWrapper(nn.Module):
                               batch=batch,
                               masks_enc=masks_enc[0],
                               masks_pred=mp,
-                              masks_attention=masks_attention)]
+                              masks_attention=masks_attention,
+                              pad_special_tokens=pad_special_tokens)]
         return outs
