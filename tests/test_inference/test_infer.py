@@ -15,7 +15,7 @@ KW = dict(batch_size=8, num_workers=0)
 def _infer_args(tiny, bundle, config, tmp_path):
     """Training-style args for `bundle`, with the metadata AnnData folder."""
     raw = tmp_path / 'raw'
-    raw.mkdir()
+    raw.mkdir(parents=True)
     tiny.harmonized(bundle).write_h5ad(raw / 'S1.h5ad')
     args = copy.deepcopy(config)
     args['data'].update({
@@ -60,3 +60,37 @@ def test_infer_default_arguments(tiny, tmp_path, layout):
                   dataset=dataset, load_folder_path=str(bundle))
     assert 'spatial_cell_emb_layer_2' not in adata.obsm
     _assert_matches_embed_dataset(adata, dataset, bundle, layer=2)
+
+
+def test_infer_weighted_avg(tiny, tmp_path):
+    # agg_type='weighted_avg' raised NameError; it is the mean of the gene
+    # embeddings weighted by gene rank (weights summing to 1)
+    import torch
+
+    from terra.utils.embedding import compute_unmasked_rank_based_weights
+
+    config = tiny.configs['112M']
+    bundle = tiny.bundle('112M')
+    dataset = tiny.dataset(bundle)
+    adata = infer(args=_infer_args(tiny, bundle, config, tmp_path),
+                  dataset=dataset, load_folder_path=str(bundle),
+                  agg_type='weighted_avg', include_spatial_cell_emb=True)
+
+    token_emb = torch.from_numpy(embed_dataset(
+        dataset, str(bundle), return_token_embeddings=True, **KW)['token_emb'])
+    tokens = torch.stack([
+        torch.as_tensor(tokens) for tokens in dataset['gene_tokens']])
+    selected = tokens != 0
+    cell_selected = selected.clone()
+    cell_selected[:, config['data']['seq_len_cell']:] = False
+    for mask, key in ((cell_selected, 'spatial_cell_emb_layer_2'),
+                      (selected, 'neighborhood_emb_layer_2')):
+        weights = compute_unmasked_rank_based_weights(tokens, mask)
+        torch.testing.assert_close(weights.sum(1), torch.ones(len(tokens)))
+        expected = (token_emb * weights[..., None]).sum(1).numpy()
+        np.testing.assert_allclose(adata.obsm[key], expected,
+                                   rtol=1e-4, atol=1e-5)
+
+    with pytest.raises(ValueError, match="agg_type"):
+        infer(args=_infer_args(tiny, bundle, config, tmp_path / 'cls'),
+              dataset=dataset, load_folder_path=str(bundle), agg_type='cls')

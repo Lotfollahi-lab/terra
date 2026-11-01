@@ -63,8 +63,7 @@ def infer(args: dict,
           emb_layers: list | None = None,
           cell_gene_ids: list = [],
           neighborhood_gene_ids: list = [],
-          agg_type: Literal['cls',
-                            'avg',
+          agg_type: Literal['avg',
                             'weighted_avg'] = 'avg',
           masked_tokens: list[int] | None = None,
           agg_excluded_genes: list[int] | None = None,
@@ -111,7 +110,10 @@ def infer(args: dict,
         be retrived.
     agg_type:
         Specifies how (aggregated) cell and neighborhood embeddings are
-        computed from individual gene embeddings.
+        computed from individual gene embeddings: `'avg'` for an unweighted
+        mean, `'weighted_avg'` for a mean weighted by gene rank (the weights
+        decrease linearly with the rank of the gene among the aggregated
+        genes and sum to 1).
     masked_tokens:
         List of tokens to be masked by the attention mask during
         inference.
@@ -151,6 +153,10 @@ def infer(args: dict,
     adata : anndata.AnnData
         An AnnData object with the stored embeddings and labels.
     """
+    if agg_type not in ('avg', 'weighted_avg'):
+        raise ValueError(
+            f"agg_type must be 'avg' or 'weighted_avg', got {agg_type!r}.")
+
     # Set device
     if not torch.cuda.is_available():
         device = torch.device('cpu')
@@ -602,22 +608,17 @@ def infer(args: dict,
 
                     #raise ValueError
             elif agg_type == "weighted_avg":
+                # Rank-based weights of the aggregated genes (sum to 1)
                 cell_weights = compute_unmasked_rank_based_weights(
-                    tokens, cell_mask)
-                cell_emb = compute_mean_unmasked_emb(
-                    c_emb * cell_weights.unsqueeze(-1),
-                    cell_mask)
+                    ns_tokens.cpu(), cell_mask)
+                cell_emb = (c_emb * cell_weights.unsqueeze(-1)).sum(1)
                 if include_spatial_cell_emb:
-                    spatial_cell_weights = compute_unmasked_rank_based_weights(
-                        tokens, cell_mask)
-                    spatial_cell_emb = compute_mean_unmasked_emb(
-                        n_emb * cell_weights.unsqueeze(-1),
-                        cell_mask)
+                    spatial_cell_emb = (
+                        n_emb * cell_weights.unsqueeze(-1)).sum(1)
                 neighborhood_weights = compute_unmasked_rank_based_weights(
-                    tokens, neighborhood_mask)
-                neighborhood_emb = compute_mean_unmasked_emb(
-                    n_emb * neighborhood_weights.unsqueeze(-1),
-                    neighborhood_mask)
+                    ns_tokens.cpu(), neighborhood_mask)
+                neighborhood_emb = (
+                    n_emb * neighborhood_weights.unsqueeze(-1)).sum(1)
 
             # Concat layer-specific embeddings across batches
             if itr == 0:
