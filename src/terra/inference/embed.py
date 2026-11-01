@@ -108,7 +108,8 @@ def _init_inference_loader(dataset: Dataset,
         restrict_special_attention=meta['restrict_special_attention'],
         special_token_pad_ratio=1.0 if pad_special_tokens else 0.0)
 
-    # Create torch dataset
+    # Create torch dataset (the special token segments follow the model's
+    # `nz_spc`, which defaults to False as in training)
     cell_dataset = init_cell_dataset(
         dataset=dataset,
         vocab_size=vocab_size,
@@ -122,6 +123,7 @@ def _init_inference_loader(dataset: Dataset,
         n_nonzero_tokens_list=[],
         include_cell_id=True,
         sep_gene_tokens_neb=data['sep_gene_tokens_neb'],
+        nz_spc=data.get('nz_spc', False),
         pad_special_tokens=pad_special_tokens,
         truncate_neighbors=data.get('truncate_neighbors', False),
         tokenized_seq_len_cell=data.get('tokenized_seq_len_cell', None),)
