@@ -225,9 +225,15 @@ def harmonize_adata(adata: ad.AnnData,
             gene_occurrence_count_dict = pickle.load(f)
 
         all_ensembl_ids = adata.var['ensembl_id'].tolist()
+        # A gene missing from the count dictionary did not occur in
+        # pretraining
+        n_missing = sum(ensembl_id not in gene_occurrence_count_dict
+                        for ensembl_id in all_ensembl_ids)
+        if n_missing > 0:
+            logger.info(f'Number of genes without pretraining occurrence count (treated as 0): {n_missing}.')
         keep_ensembl_ids = [
-            ensembl_id for ensembl_id in all_ensembl_ids if gene_occurrence_count_dict[
-                    ensembl_id] > gene_occurrence_count_filter_value]
+            ensembl_id for ensembl_id in all_ensembl_ids if gene_occurrence_count_dict.get(
+                    ensembl_id, 0) > gene_occurrence_count_filter_value]
 
         logger.warning(f'Number of genes skipped due to not enough pretraining occurrences: {len(all_ensembl_ids) - len(keep_ensembl_ids)}.')
         if len(all_ensembl_ids) - len(keep_ensembl_ids) > 0:

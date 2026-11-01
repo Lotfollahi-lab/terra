@@ -176,3 +176,24 @@ def test_duplicated_unmapped_names_are_dropped(gene_mapping_dict_file_path):
     adata.var_names = names
     harmonized = _harmonize(adata, gene_mapping_dict_file_path)
     assert list(harmonized.var_names) == names[2:]
+
+
+@pytest.mark.parametrize('filter_value', [10, -1])
+def test_occurrence_filter_drops_genes_missing_from_the_counts(
+        gene_mapping_dict_file_path, tmp_path, filter_value):
+    # Genes without an occurrence count previously raised a KeyError; they
+    # did not occur in pretraining and are filtered like a count of 0
+    counts = {f'ENSG{i + 1:011d}': 100 for i in range(N_GENES - 3)}
+    counts['ENSG00000000001'] = 5
+    path = tmp_path / 'gene_count_dictionary.pkl'
+    with open(path, 'wb') as f:
+        pickle.dump(counts, f)
+    harmonized = _harmonize(
+        _adata(), gene_mapping_dict_file_path,
+        gene_occurrence_count_file_path=str(path),
+        gene_occurrence_count_filter_value=filter_value)
+    names = [f'GENE{i}' for i in range(N_GENES)]
+    if filter_value == 10:
+        assert list(harmonized.var_names) == names[1:N_GENES - 3]
+    else:
+        assert list(harmonized.var_names) == names
