@@ -53,6 +53,34 @@ torch.backends.cudnn.benchmark = True
 logger = logging.getLogger(__name__)
 
 
+def _restrict_special_attention(model_config: dict,
+                                pad_special_tokens: bool,
+                                ) -> bool:
+    """
+    Whether the special tokens attend only to themselves at inference.
+
+    The option is read from the `mask` section of the config, as in training.
+    It only applies if the special tokens are kept: a padded special token
+    has no key left to attend to (NaN outputs without flash attention), and
+    the gene tokens never attend to padded special tokens.
+
+    Parameters
+    -----------
+    model_config:
+        Model config (``model_config.yaml`` / ``params.yaml``).
+    pad_special_tokens:
+        `True` if the special tokens are padded.
+
+    Returns
+    -----------
+    restrict_special_attention:
+        Value for the mask collator.
+    """
+    restrict = (model_config.get('mask') or {}).get(
+        'restrict_special_attention', False)
+    return bool(restrict) and not pad_special_tokens
+
+
 def _init_inference_loader(dataset: Dataset,
                            model_config: dict,
                            vocab_size: int,
@@ -105,7 +133,8 @@ def _init_inference_loader(dataset: Dataset,
         per_block_mask_ratio=model_config['mask']['per_block_mask_ratio'],
         sample_segments=False,
         sample_gene_masks=False,
-        restrict_special_attention=meta['restrict_special_attention'],
+        restrict_special_attention=_restrict_special_attention(
+            model_config, pad_special_tokens),
         special_token_pad_ratio=1.0 if pad_special_tokens else 0.0)
 
     # Create torch dataset (the special token segments follow the model's

@@ -36,3 +36,47 @@ def test_config_without_nz_spc(tiny):
         compute_cosine_with_list=['neighborhood'], neighborhood_gene_ids=[110],
         **KW)
     assert np.isfinite(gene_emb[0][110][0].numpy()).all()
+
+
+def _eager(tiny, name, restrict_meta=False, restrict_mask=False):
+    # Without flash attention, a query row without keys gives NaN
+    config = _config(
+        '112M', tiny,
+        meta={'use_flash_attention': False,
+              'restrict_special_attention': restrict_meta},
+        mask={'restrict_special_attention': restrict_mask})
+    return tiny.bundle(name, config)
+
+
+def test_restrict_special_attention_with_padded_special_tokens(tiny):
+    reference = _eager(tiny, 'eager')
+    restricted = _eager(tiny, 'eager_restricted', restrict_meta=True,
+                        restrict_mask=True)
+    dataset = tiny.dataset(reference)
+
+    expected = embed_dataset(dataset, str(reference), **KW)
+    output = embed_dataset(dataset, str(restricted), **KW)
+    # The padded metatoken is not restricted (it has nothing to attend to,
+    # and no gene token attends to it): finite and equal embeddings
+    for key, value in expected.items():
+        assert np.isfinite(output[key]).all(), key
+        np.testing.assert_array_equal(output[key], value)
+
+
+def test_restrict_special_attention_is_read_from_mask(tiny):
+    reference = _eager(tiny, 'eager')
+    # As in training, the `meta` value is ignored
+    meta_only = _eager(tiny, 'eager_meta_restricted', restrict_meta=True)
+    restricted = _eager(tiny, 'eager_mask_restricted', restrict_mask=True)
+    dataset = tiny.dataset(reference, include_special_tokens=True)
+
+    def embed(bundle):
+        return embed_dataset(dataset, str(bundle), keep_special_tokens=True,
+                             **KW)['cell_emb']
+
+    expected = embed(reference)
+    np.testing.assert_array_equal(embed(meta_only), expected)
+    # With the metatoken kept, it attends only to itself as in training
+    output = embed(restricted)
+    assert np.isfinite(output).all()
+    assert not np.allclose(output, expected)

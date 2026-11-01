@@ -38,6 +38,7 @@ from terra.utils.embedding import (create_binary_selection_mask,
                                        compute_sum_and_nonzero_count,
                                        batch_rowwise_distances)
 from terra.utils.logging import CSVLogger
+from .embed import _restrict_special_attention
 from typing import Dict, List
 
 
@@ -241,10 +242,6 @@ def infer(args: dict,
     context_mask_size = args['mask']['context_mask_size']
     target_mask_size = args['mask']['target_mask_size']
     per_block_mask_ratio = args['mask']['per_block_mask_ratio']
-    if 'restrict_special_attention' in args['meta'].keys():
-        restrict_special_attention = args['meta']['restrict_special_attention']
-    else:
-        restrict_special_attention = False
     if 'targets_list' in args['mask'].keys():
         targets_list = args['mask']['targets_list']
     else:
@@ -340,6 +337,10 @@ def infer(args: dict,
     # Pad the special tokens unless asked to keep them (warns if the model
     # never saw padded special tokens in training)
     pad_spc_tokens = resolve_special_token_padding(args, keep_special_tokens)
+    # Special tokens attend only to themselves if trained so (`mask` section,
+    # as in training) and kept
+    restrict_special_attention = _restrict_special_attention(
+        args, pad_spc_tokens)
 
     # Initialize mask collator
     if block_masking:
