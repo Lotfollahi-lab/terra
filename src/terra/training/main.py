@@ -37,14 +37,11 @@ def get_distributed_info():
     tuple
         (WORLD_RANK, LOCAL_RANK, WORLD_SIZE)
     """
-    if "SLURM_PROCID" in os.environ:
-        WORLD_RANK = int(os.environ["SLURM_PROCID"])
-        WORLD_SIZE = int(os.environ["WORLD_SIZE"])
-        GPUS_PER_NODE = int(os.environ["SLURM_GPUS_ON_NODE"])
-        assert GPUS_PER_NODE == torch.cuda.device_count()
-        logger.info(f"Hello from rank {WORLD_RANK} of {WORLD_SIZE} on {gethostname()} where there are" \
-            f" {GPUS_PER_NODE} allocated GPUs per node.")
-        LOCAL_RANK = WORLD_RANK - GPUS_PER_NODE * (WORLD_RANK // GPUS_PER_NODE)
+    # One chain, most specific launcher first. The SLURM branch used to come
+    # first as a separate `if`: with plain srun (no torchrun/mpirun) it fell
+    # through to sys.exit below, and under mpirun in a SLURM allocation it
+    # required WORLD_SIZE. torchrun under srun sets SLURM_PROCID per node,
+    # so torchrun's variables take precedence (as before).
     if "LOCAL_RANK" in os.environ:
         # Environment variables set by torch.distributed.launch or
         # torchrun
@@ -56,6 +53,16 @@ def get_distributed_info():
         LOCAL_RANK = int(os.environ["OMPI_COMM_WORLD_LOCAL_RANK"])
         WORLD_SIZE = int(os.environ["OMPI_COMM_WORLD_SIZE"])
         WORLD_RANK = int(os.environ["OMPI_COMM_WORLD_RANK"])
+    elif "SLURM_PROCID" in os.environ:
+        # One srun task per process (srun sets SLURM_NTASKS, not WORLD_SIZE)
+        WORLD_RANK = int(os.environ["SLURM_PROCID"])
+        WORLD_SIZE = int(os.environ.get("WORLD_SIZE",
+                                        os.environ["SLURM_NTASKS"]))
+        GPUS_PER_NODE = int(os.environ["SLURM_GPUS_ON_NODE"])
+        assert GPUS_PER_NODE == torch.cuda.device_count()
+        logger.info(f"Hello from rank {WORLD_RANK} of {WORLD_SIZE} on {gethostname()} where there are" \
+            f" {GPUS_PER_NODE} allocated GPUs per node.")
+        LOCAL_RANK = WORLD_RANK - GPUS_PER_NODE * (WORLD_RANK // GPUS_PER_NODE)
     else:
         import sys
         sys.exit("Can't find the environment variables for local rank")
@@ -181,9 +188,10 @@ if __name__ == "__main__":
     logger.debug(f"CUDA_VISIBLE_DEVICES: {os.environ.get('CUDA_VISIBLE_DEVICES')}")
     logger.debug(f"torch.cuda.device_count(): {torch.cuda.device_count()}")
 
-    # Set additional environment variables
+    # Set additional environment variables. TORCH_DISTRIBUTED_DEBUG=DETAIL
+    # (consistency checks on every collective, slow) is opt-in: set it in the
+    # job environment; it was forced here, overriding any value given.
     os.environ["TORCH_CPP_LOG_LEVEL"] = "INFO"
-    os.environ["TORCH_DISTRIBUTED_DEBUG"] = "DETAIL"
 
     # Start the main function
     main()
