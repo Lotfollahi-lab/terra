@@ -10,6 +10,10 @@ padded batches it put the first context gene token into the first target's
 slot and dropped that target's mask token. The predictor now takes
 ``pad_special_tokens`` and uses the plain ``[target tokens, context tokens]``
 concatenation for padded batches; batches with special tokens are unchanged.
+
+With ``restrict_special_attention`` a padded special token had no key left,
+which gave NaN outputs without SDPA that spread to every token; it now
+attends to itself.
 """
 
 import pytest
@@ -160,3 +164,33 @@ def test_padding_key_masks_follow_the_padded_layout():
     _, new_spc_mask = padding_key_masks(
         ctx_valid, tgt_valid, n_special_tokens=1, new_spc=True)
     assert not torch.equal(new_spc_mask, plain_mask)
+
+
+@pytest.mark.parametrize('use_flash_attention', [False, True])
+def test_restricted_attention_of_padded_special_token_is_finite(
+        use_flash_attention):
+    udata, _, _, masks_attention, pad_special_tokens = _batch(
+        'combined', special_token_pad_ratio=1.0,
+        restrict_special_attention=True)
+    assert pad_special_tokens
+    # The padded special token only attends to itself
+    assert masks_attention[:, 0, 0].sum(-1).eq(1).all()
+    assert masks_attention[:, 0, 0, 0].all()
+    encoder, _ = _model('combined', new_spc=True,
+                        use_flash_attention=use_flash_attention)
+    with torch.no_grad():
+        h, _ = encoder(batch=udata, masks_attention=masks_attention)
+    assert torch.isfinite(h).all()
+
+
+def test_restricted_attention_unchanged_with_special_tokens():
+    tokens = _batch('combined', special_token_pad_ratio=0.0)[0]['tokens']
+    masks_attention = _batch(
+        'combined', special_token_pad_ratio=0.0,
+        restrict_special_attention=True)[3]
+    # Special token rows: only the token itself; other rows: every
+    # non-padding token
+    expected = (tokens != 0)[:, None, None, :].expand(
+        -1, 1, tokens.shape[1], -1).clone()
+    expected[:, :, 0, 1:] = False
+    torch.testing.assert_close(masks_attention, expected)

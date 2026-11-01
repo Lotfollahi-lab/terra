@@ -305,6 +305,14 @@ class BlockMaskCollator:
                     :,
                     i,
                     (i+1):] = 0
+                # A padded special token (token 0) would have no key left,
+                # which gives NaN attention outputs without SDPA that spread
+                # to all tokens; let it attend to itself (no-op otherwise)
+                masks_attention[
+                    :,
+                    :,
+                    i,
+                    i] = True
 
         if self.sample_gene_masks:
             # Retrieve target and context masks per cell
