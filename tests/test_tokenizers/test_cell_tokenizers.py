@@ -263,7 +263,7 @@ def test_inference_tokenizer_reads_optional_settings(tmp_path, monkeypatch):
                 count_gene_norm_method=None,
                 count_count_norm_method='shifted_log',
                 stable_rank_ties=True, gcrd_basis_target_read_depth=151.0,
-                pad_empty_neighbors=True)
+                pad_empty_neighbors=True, eliminate_stored_zeros=True)
     with open(tmp_path / 'model_config.yaml', 'w') as f:
         yaml.safe_dump({'data': data}, f)
 
@@ -274,6 +274,7 @@ def test_inference_tokenizer_reads_optional_settings(tmp_path, monkeypatch):
     assert captured['stable_rank_ties'] is True
     assert captured['gcrd_basis_target_read_depth'] == 151.0
     assert captured['pad_empty_neighbors'] is True
+    assert captured['eliminate_stored_zeros'] is True
     assert 'zero_expr_from_raw_counts' not in captured
     assert 'gcrd_target_read_depth_per_gene' not in captured
 

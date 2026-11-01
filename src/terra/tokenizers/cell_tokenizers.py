@@ -189,6 +189,13 @@ class CellBaseTokenizer(ABC):
         LOESS span of the 'seurat_v3' gene normalization. Seurat v3 and scanpy
         use 0.3; the default 0.75 reproduces how existing data were tokenized
         (the intended 0.3 was not applied, see `normalize_by_seurat`).
+    eliminate_stored_zeros:
+        If `True`, zeros stored explicitly in a sparse count matrix are
+        removed before tokenization (from a copy of the AnnData). On the
+        sparse ranking path they otherwise become gene tokens with value 0,
+        so the same counts stored with and without them tokenize differently.
+        Default `False` keeps them, as existing data were tokenized, and logs
+        a warning when they are present.
     stream_per_file:
         If `True`, assemble the output dataset by building and formatting
         one HF dataset PER input file and concatenating them, instead of
@@ -251,6 +258,7 @@ class CellBaseTokenizer(ABC):
             gcrd_basis_target_read_depth: float = 153.4768,
             gcrd_target_read_depth_per_gene: float = 0.0487,
             seurat_loess_span: float = 0.75,
+            eliminate_stored_zeros: bool = False,
             ):
         self.nproc = nproc
         self.processing_mode = processing_mode
@@ -278,6 +286,7 @@ class CellBaseTokenizer(ABC):
             basis_target_read_depth=gcrd_basis_target_read_depth,
             target_read_depth_per_gene=gcrd_target_read_depth_per_gene)
         self.seurat_loess_span = seurat_loess_span
+        self.eliminate_stored_zeros = eliminate_stored_zeros
 
         # Make the PFlog1pPF target source explicit (frozen-corpus vs per-file)
         # so a missing path can never silently mismatch a frozen-trained model.
@@ -350,6 +359,33 @@ class CellBaseTokenizer(ABC):
             key for key in list(self.vocab) if 'ENS' in key]
         self.coding_miRNA_dict = dict(
             zip(self.coding_miRNA_ids, [True] * len(self.vocab)))
+
+    def _handle_stored_zeros(self,
+                             adata: ad.AnnData,
+                             ) -> ad.AnnData:
+        """
+        Remove (with `eliminate_stored_zeros`) or report the zeros stored
+        explicitly in a sparse `adata.X`. The input AnnData is not modified.
+        """
+        if not sp.issparse(adata.X):
+            return adata
+        n_stored_zeros = int(np.count_nonzero(adata.X.data == 0))
+        if n_stored_zeros == 0:
+            return adata
+        if self.eliminate_stored_zeros:
+            logger.info(
+                f'Removing {n_stored_zeros} zeros stored explicitly in adata.X.')
+            adata = adata.copy()
+            adata.X.eliminate_zeros()
+        elif not self.rank_differs_from_count:
+            logger.warning(
+                f'adata.X stores {n_stored_zeros} explicit zeros. The sparse '
+                'ranking path tokenizes them as genes with value 0, so the same '
+                'counts stored without them tokenize differently. Remove them '
+                'with adata.X.eliminate_zeros() or set '
+                '`eliminate_stored_zeros=True` (model config key '
+                '`data.eliminate_stored_zeros`).')
+        return adata
 
     def _load_pf_targets(self) -> tuple[float | None, float | None]:
         """Load the frozen corpus-wide PFlog1pPF targets (s1, s2).
@@ -688,6 +724,7 @@ class CellGraphTokenizer(CellBaseTokenizer):
         logger.info('Filtering cells...')
         # Filter cells based on adata.obs['filter_pass']
         adata = filter_cells(adata)
+        adata = self._handle_stored_zeros(adata)
 
         adata_neigh = adata
 
@@ -1482,6 +1519,7 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
         logger.info('Filtering cells.')
         # Filter to remove poor quality cells
         adata = filter_cells(adata)
+        adata = self._handle_stored_zeros(adata)
 
         logger.info('Computing spatial neighborhood graph and aggregating counts.')
         # Aggregate neighborhood cell gene expression
