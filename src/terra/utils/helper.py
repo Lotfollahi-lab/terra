@@ -8,6 +8,7 @@ https://github.com/facebookresearch/ijepa/blob/main/src/helper.py
 
 import logging
 import math
+import warnings
 from typing import Literal
 
 import torch
@@ -476,7 +477,8 @@ def resolve_special_token_padding(model_config: dict,
     ``mask.special_token_pad_ratio`` 0 (the default; also every model trained
     before the option existed, e.g. TERRA-112M) has never seen a sequence
     without its special tokens, so its embeddings with padded special tokens
-    are out of the training distribution. This is logged as a warning.
+    are out of the training distribution. This issues a ``UserWarning`` (shown
+    once per call site; logging is not needed to see it).
     ``keep_special_tokens=True`` keeps the special tokens instead; the data
     must then be tokenized with ``include_special_tokens=True``, i.e. its
     batch (and assay, ...) values must exist in the model's token dictionary.
@@ -499,13 +501,15 @@ def resolve_special_token_padding(model_config: dict,
     if keep_special_tokens:
         return False
     if not (model_config.get('mask') or {}).get('special_token_pad_ratio', 0.0):
-        logger.warning(
+        warnings.warn(
             f"The model was trained with its special tokens {special_tokens} "
             "in every sequence (mask.special_token_pad_ratio 0), but they are "
             "padded at inference, so embeddings are computed out of the "
             "training distribution. Use keep_special_tokens=True with data "
-            "tokenized with include_special_tokens=True to keep them, or "
-            "train with mask.special_token_pad_ratio > 0.")
+            "tokenized with include_special_tokens=True to keep them (the "
+            "data's batch must then be one the model was trained on), or "
+            "train with mask.special_token_pad_ratio > 0.",
+            UserWarning, stacklevel=2)
     return True
 
 

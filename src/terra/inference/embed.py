@@ -28,6 +28,7 @@ from terra.datasets.cell_datasets import CellBaseDataset, init_cell_dataset
 from terra.datasets.dataloaders import init_dataloader_and_sampler
 from terra.masks.block_masking  import BlockMaskCollator
 from terra.masks.cell_masking import CellMaskCollator
+from terra.models.multimask import EncoderMultiMaskWrapper
 from terra.tokenizers import cell_tokenizers
 from terra.utils.embedding import (create_binary_selection_mask,
                                        compute_mean_unmasked_emb,
@@ -44,13 +45,282 @@ from .tokenize import tokenize_adata
 from typing import Dict, List
 
 
-_GLOBAL_SEED = 0
-np.random.seed(_GLOBAL_SEED)
-torch.manual_seed(_GLOBAL_SEED)
 torch.backends.cudnn.benchmark = True
 
 
 logger = logging.getLogger(__name__)
+
+# Keys of `adata.uns` from which the tokenizer reads the special token values
+# (include_special_tokens=True)
+SPECIAL_TOKEN_UNS_KEYS = ('dataset_id', 'batch', 'assay', 'species', 'tissue')
+
+
+def _check_special_token_metadata(adata: ad.AnnData,
+                                  token_dict: dict,
+                                  ) -> None:
+    """
+    Check that `adata` has the special token values the tokenizer reads.
+
+    With ``include_special_tokens=True`` the tokenizer reads the batch from
+    ``adata.uns['dataset_id']`` and ``adata.uns['batch']`` (token
+    ``spv_<dataset_id>_<batch>``) and the assay, species and tissue from
+    ``adata.uns`` (tokens ``spv_<value>``). Their tokens exist only for values
+    seen in training: there is no metatoken for a batch the model was not
+    trained on.
+
+    Parameters
+    -----------
+    adata:
+        AnnData object to be tokenized with its special tokens.
+    token_dict:
+        Token dictionary of the model.
+
+    Raises
+    -----------
+    ValueError:
+        If a key is missing from ``adata.uns`` or a value has no token.
+    """
+    missing = [key for key in SPECIAL_TOKEN_UNS_KEYS if key not in adata.uns]
+    if missing:
+        raise ValueError(
+            "keep_special_tokens=True reads the special token values from "
+            "adata.uns, which has no "
+            f"{', '.join(repr(key) for key in missing)} (required: "
+            f"{', '.join(repr(key) for key in SPECIAL_TOKEN_UNS_KEYS)}; the "
+            "batch token is spv_<dataset_id>_<batch>). Set them to the values "
+            "of the training data, or use keep_special_tokens=False.")
+    tokens = {
+        'batch': f"spv_{adata.uns['dataset_id']}_{adata.uns['batch']}",
+        'assay': f"spv_{adata.uns['assay']}",
+        'species': f"spv_{adata.uns['species']}",
+        'tissue': f"spv_{adata.uns['tissue']}"}
+    unknown = [f'{name} ({token})' for name, token in tokens.items()
+               if token not in token_dict]
+    if unknown:
+        raise ValueError(
+            "keep_special_tokens=True needs special token values the model "
+            "was trained with, but its token dictionary has no "
+            f"{', '.join(unknown)}. Data from a batch the model was not "
+            "trained on has no metatoken: use keep_special_tokens=False "
+            "(special tokens padded).")
+
+
+def _check_special_token_columns(dataset: Dataset,
+                                 special_tokens: list[str],
+                                 ) -> None:
+    """
+    Check that a tokenized dataset holds the values of the special tokens
+    (columns ``<special token>_value``), which are kept at inference.
+
+    Raises
+    -----------
+    ValueError:
+        If a column is missing.
+    """
+    missing = [f'{token}_value' for token in special_tokens
+               if f'{token}_value' not in dataset.column_names]
+    if missing:
+        raise ValueError(
+            "keep_special_tokens=True needs the special token values, but "
+            f"the dataset has no column {', '.join(missing)}. Tokenize the "
+            "data with include_special_tokens=True (as "
+            "harmonize_tokenize_embed_pipeline(keep_special_tokens=True) "
+            "does), or use keep_special_tokens=False.")
+
+
+def _encoder_backbone(encoder: torch.nn.Module) -> torch.nn.Module:
+    """
+    Return the gene transformer of an encoder, which ``init_model`` wraps in
+    an ``EncoderMultiMaskWrapper`` for `api_version` v3 and v4 (the
+    training default).
+    """
+    if isinstance(encoder, EncoderMultiMaskWrapper):
+        return encoder.backbone
+    return encoder
+
+
+def _set_cell_only_seq_len(encoder: torch.nn.Module,
+                           model_config: dict,
+                           ) -> None:
+    """
+    Set the number of index-cell tokens of the encoder's cell-only context
+    (cell embeddings) to the configured `seq_len_cell`.
+
+    The encoder derives ``(seq_len - n_special_tokens) // n_segments``, which
+    is the index-cell length of the cell graph layout only (e.g. 11 instead
+    of 64 for a 64/64 cell-neighborhood model with 11 segments).
+
+    Parameters
+    -----------
+    encoder:
+        Trained (target) encoder, wrapped or not.
+    model_config:
+        Model config (``model_config.yaml`` / ``params.yaml``).
+    """
+    _encoder_backbone(encoder).cell_only_seq_len = (
+        model_config['data']['seq_len_cell'])
+
+
+def _truncation_settings(dataset: Dataset,
+                         data_config: dict,
+                         ) -> tuple[bool, int | None]:
+    """
+    Neighbor and gene truncation settings of the cell dataset for `dataset`.
+
+    `truncate_neighbors` and `tokenized_seq_len_cell` describe the layout of
+    the pretraining dataset (e.g. 256 genes per cell, read as the top
+    `seq_len_cell`). Data tokenized for the model with ``tokenize_adata`` is
+    `model_input_size` long with `model_input_size // (n_neighs + 1)` genes
+    per cell instead, so it is read with that stride.
+
+    Parameters
+    -----------
+    dataset:
+        Tokenized Hugging Face dataset.
+    data_config:
+        The `data` section of the model config.
+
+    Returns
+    -----------
+    truncate_neighbors:
+        Value for the cell dataset.
+    tokenized_seq_len_cell:
+        Value for the cell dataset.
+    """
+    truncate_neighbors = data_config.get('truncate_neighbors', False)
+    tokenized_seq_len_cell = data_config.get('tokenized_seq_len_cell', None)
+    model_input_size = data_config.get('model_input_size')
+    n_neighs = data_config.get('n_neighs')
+    if (tokenized_seq_len_cell is not None
+            and data_config['tokenizer_type'] == 'cell_graph'
+            and model_input_size and n_neighs and len(dataset) > 0
+            and len(dataset[0]['gene_tokens']) == model_input_size):
+        tokenized_seq_len_cell = model_input_size // (n_neighs + 1)
+    return truncate_neighbors, tokenized_seq_len_cell
+
+
+def _restrict_special_attention(model_config: dict,
+                                pad_special_tokens: bool,
+                                ) -> bool:
+    """
+    Whether the special tokens attend only to themselves at inference.
+
+    The option is read from the `mask` section of the config, as in training.
+    It only applies if the special tokens are kept: a padded special token
+    has no key left to attend to (NaN outputs without flash attention), and
+    the gene tokens never attend to padded special tokens.
+
+    Parameters
+    -----------
+    model_config:
+        Model config (``model_config.yaml`` / ``params.yaml``).
+    pad_special_tokens:
+        `True` if the special tokens are padded.
+
+    Returns
+    -----------
+    restrict_special_attention:
+        Value for the mask collator.
+    """
+    restrict = (model_config.get('mask') or {}).get(
+        'restrict_special_attention', False)
+    return bool(restrict) and not pad_special_tokens
+
+
+def _init_inference_loader(dataset: Dataset,
+                           model_config: dict,
+                           vocab_size: int,
+                           pad_special_tokens: bool,
+                           batch_size: int,
+                           pin_memory: bool,
+                           num_workers: int,
+                           ) -> torch.utils.data.DataLoader:
+    """
+    Initialize the dataloader of the inference entry points.
+
+    The cell dataset and the mask collator are set up from the model config,
+    so that every entry point (embeddings, gene embeddings, token distances)
+    feeds the model the same input.
+
+    Parameters
+    -----------
+    dataset:
+        Tokenized Hugging Face dataset.
+    model_config:
+        Model config (``model_config.yaml`` of the model folder).
+    vocab_size:
+        Size of the model's token dictionary.
+    pad_special_tokens:
+        If `True`, pad the special tokens (metatokens), as returned by
+        ``resolve_special_token_padding``.
+    batch_size:
+        Dataloader param.
+    pin_memory:
+        Dataloader param.
+    num_workers:
+        Number of workers used.
+
+    Returns
+    -----------
+    loader:
+        Torch dataloader yielding collated batches and attention masks.
+    """
+    meta = model_config['meta']
+    data = model_config['data']
+    if not pad_special_tokens:
+        _check_special_token_columns(dataset, meta['special_tokens'])
+    truncate_neighbors, tokenized_seq_len_cell = _truncation_settings(
+        dataset, data)
+
+    # Create mask collator
+    mask_collator = BlockMaskCollator(
+        n_targets=model_config['mask']['n_targets'],
+        n_contexts=model_config['mask']['n_contexts'],
+        n_segments=data['n_segments'],
+        seq_len_cell=data['seq_len_cell'],
+        seq_len_neighborhood=data['seq_len_neighborhood'],
+        n_special_tokens=len(meta['special_tokens']),
+        per_block_mask_ratio=model_config['mask']['per_block_mask_ratio'],
+        sample_segments=False,
+        sample_gene_masks=False,
+        restrict_special_attention=_restrict_special_attention(
+            model_config, pad_special_tokens),
+        special_token_pad_ratio=1.0 if pad_special_tokens else 0.0)
+
+    # Create torch dataset (the special token segments follow the model's
+    # `nz_spc`, which defaults to False as in training)
+    cell_dataset = init_cell_dataset(
+        dataset=dataset,
+        vocab_size=vocab_size,
+        seq_len_cell=data['seq_len_cell'],
+        seq_len_neighborhood=data['seq_len_neighborhood'],
+        tokenizer_type=data['tokenizer_type'],
+        gt_type=meta['gt_type'],
+        cell_pos_enc=meta['cell_pos_enc'],
+        special_tokens=meta['special_tokens'],
+        sampling_strategy=None,
+        n_nonzero_tokens_list=[],
+        include_cell_id=True,
+        sep_gene_tokens_neb=data['sep_gene_tokens_neb'],
+        nz_spc=data.get('nz_spc', False),
+        pad_special_tokens=pad_special_tokens,
+        truncate_neighbors=truncate_neighbors,
+        tokenized_seq_len_cell=tokenized_seq_len_cell,)
+
+    # Initialize dataloader
+    loader, _ = init_dataloader_and_sampler(
+        cell_dataset=cell_dataset,
+        batch_size=batch_size,
+        distributed=False,
+        world_size=1,
+        rank=0,
+        collate_fn=mask_collator,
+        pin_memory=pin_memory,
+        num_workers=num_workers,
+        drop_last=False,
+        persistent_workers=False,
+        mega_batch_mult_max=data.get('mega_batch_mult_max', 1000))
+    return loader
 
 
 @torch.inference_mode()
@@ -82,7 +352,9 @@ def embed_dataset(dataset: Dataset,
     emb_layer:
         Layer for which to retrieve the embedding.
     agg_excluded_genes:
-        List of gene ensembl IDs to be excluded from the aggregation.
+        Ensembl IDs of genes whose embeddings are left out when the gene
+        embeddings are aggregated into cell and neighborhood embeddings (in
+        every segment). The genes remain part of the model input.
     top_k:
         Include only top_k genes in aggregation.
     batch_size:
@@ -105,8 +377,9 @@ def embed_dataset(dataset: Dataset,
         count-softmax-weighted mean).
     keep_special_tokens:
         If `True`, keep the special tokens (metatokens) instead of padding
-        them. Requires a dataset tokenized with `include_special_tokens=True`.
-        Default `False` (padded, as before).
+        them. Requires a dataset tokenized with `include_special_tokens=True`
+        (a `ValueError` names the missing columns otherwise). Default `False`
+        (padded, as before).
 
     Returns
     -----------
@@ -157,62 +430,23 @@ def embed_dataset(dataset: Dataset,
     # Initialize encoder, predictor, and target encoder
     target_encoder, _ = init_model_from_config(
         model_config, token_dict, device)
-
-    if model_config['meta']['api_version'] != 'v3':
-        return_layer_emb_fn = target_encoder.return_layer_emb
-    else:
-        return_layer_emb_fn = target_encoder.backbone.return_layer_emb
+    _set_cell_only_seq_len(target_encoder, model_config)
+    return_layer_emb_fn = _encoder_backbone(target_encoder).return_layer_emb
 
     # Pad the special tokens unless asked to keep them (warns if the model
     # never saw padded special tokens in training)
     pad_spc_tokens = resolve_special_token_padding(
         model_config, keep_special_tokens)
 
-    # Create mask collator
-    mask_collator = BlockMaskCollator(
-        n_targets=model_config['mask']['n_targets'],
-        n_contexts=model_config['mask']['n_contexts'],
-        n_segments=model_config['data']['n_segments'],
-        seq_len_cell=model_config['data']['seq_len_cell'],
-        seq_len_neighborhood=model_config['data']['seq_len_neighborhood'],
-        n_special_tokens=n_special_tokens,
-        per_block_mask_ratio=model_config['mask']['per_block_mask_ratio'],
-        sample_segments=False,
-        sample_gene_masks=False,
-        restrict_special_attention=model_config['meta']['restrict_special_attention'],
-        special_token_pad_ratio=1.0 if pad_spc_tokens else 0.0)
-        
-    # Create torch dataset
-    cell_dataset = init_cell_dataset(
-        dataset=dataset,
-        vocab_size=vocab_size,
-        seq_len_cell=model_config['data']['seq_len_cell'],
-        seq_len_neighborhood=model_config['data']['seq_len_neighborhood'],
-        tokenizer_type=model_config['data']['tokenizer_type'],
-        gt_type=model_config['meta']['gt_type'],
-        cell_pos_enc=model_config['meta']['cell_pos_enc'],
-        special_tokens=model_config['meta']['special_tokens'],
-        sampling_strategy=None,
-        n_nonzero_tokens_list=[],
-        include_cell_id=True,
-        sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'],
-        pad_special_tokens=pad_spc_tokens,
-        truncate_neighbors=model_config['data'].get('truncate_neighbors', False),
-        tokenized_seq_len_cell=model_config['data'].get('tokenized_seq_len_cell', None),)
-
     # Initialize dataloader
-    loader, _ = init_dataloader_and_sampler(
-        cell_dataset=cell_dataset,
+    loader = _init_inference_loader(
+        dataset=dataset,
+        model_config=model_config,
+        vocab_size=vocab_size,
+        pad_special_tokens=pad_spc_tokens,
         batch_size=batch_size,
-        distributed=False,
-        world_size=1,
-        rank=0,
-        collate_fn=mask_collator,
         pin_memory=pin_memory,
-        num_workers=num_workers,
-        drop_last=False,
-        persistent_workers=False,
-        mega_batch_mult_max=model_config['data'].get('mega_batch_mult_max', 1000))
+        num_workers=num_workers)
 
     # Load model checkpoint
     _, _, target_encoder, _, _, start_epoch, _ = load_checkpoint(
@@ -300,17 +534,16 @@ def embed_dataset(dataset: Dataset,
                 spatial_cell_emb = compute_mean_unmasked_emb(n_emb, cell_mask)
             neighborhood_emb = compute_mean_unmasked_emb(n_emb, neighborhood_mask)
         elif agg_type == 'softmax':
+            # Weights: softmax of the count values over the selected genes
+            # (applied once, in compute_softmax_weighted_mean_emb)
             values = udata['values'][:, n_special_tokens:].detach().cpu()
-            cell_values = values.masked_fill(~cell_mask, float('-inf'))
-            cell_weights = torch.softmax(cell_values, dim=1)
-            cell_emb = compute_softmax_weighted_mean_emb(c_emb, cell_weights)
+            cell_emb = compute_softmax_weighted_mean_emb(
+                c_emb, values, mask=cell_mask)
             if include_spatial_cell_emb:
-                spatial_cell_emb = compute_softmax_weighted_mean_emb(n_emb, cell_weights)
-            neighborhood_values = values.masked_fill(~neighborhood_mask, float('-inf'))
-            neighborhood_weights = torch.softmax(neighborhood_values, dim=1)
-            torch.set_printoptions(threshold=float('inf'))
-            #raise ValueError
-            neighborhood_emb = compute_softmax_weighted_mean_emb(n_emb, neighborhood_weights)            
+                spatial_cell_emb = compute_softmax_weighted_mean_emb(
+                    n_emb, values, mask=cell_mask)
+            neighborhood_emb = compute_softmax_weighted_mean_emb(
+                n_emb, values, mask=neighborhood_mask)
 
         all_cell_emb_list.append(cell_emb)
         if include_spatial_cell_emb:
@@ -370,7 +603,7 @@ def harmonize_tokenize_embed_pipeline(
         save_dataset_path: Path | str | None = None,
         num_shards: int = 32,
         emb_layer: int | None = None,
-        agg_excluded_genes: list[int] | None = None,
+        agg_excluded_genes: list[str] | None = None,
         top_k: int | None = None,
         batch_size: int = 128,
         pin_memory: bool = False,
@@ -393,7 +626,9 @@ def harmonize_tokenize_embed_pipeline(
         Key in `adata.obs` where the sample information is stored.
     batch_key:
         Key in `adata.obs` where the batch identifier in the harmonized AnnData
-        will be stored.    
+        will be stored. With `sample_key`, it is the sample; otherwise
+        `adata.uns['batch']`, an existing `batch_key` column, the file name of
+        `harmonized_adata_save_path` or 'sample', in this order.
     model_folder_path:
         Path to the folder containing the model config, token dictionary, and
         normalization factors.
@@ -448,7 +683,9 @@ def harmonize_tokenize_embed_pipeline(
     emb_layer:
         Layer for which to retrieve the embedding.
     agg_excluded_genes:
-        List of tokens to be excluded from the aggregation.
+        Ensembl IDs of genes whose embeddings are left out when the gene
+        embeddings are aggregated into cell and neighborhood embeddings (in
+        every segment). The genes remain part of the model input.
     top_k:
         Include only top_k genes in aggregation.
     batch_size:
@@ -469,8 +706,12 @@ def harmonize_tokenize_embed_pipeline(
         embeddings (`'avg'` or `'softmax'`).
     keep_special_tokens:
         If `True`, tokenize with special tokens and keep them at inference
-        instead of padding them. The batches (and assays, ...) of `adata` must
-        then exist in the model's token dictionary. Default `False`.
+        instead of padding them. The special token values are read from
+        `adata.uns` (keys 'dataset_id', 'batch', 'assay', 'species' and
+        'tissue'; one set of values for the whole AnnData) and must exist in
+        the model's token dictionary, i.e. the batch must be one the model was
+        trained on; otherwise a `ValueError` names what is missing. Has no
+        effect for models without special tokens. Default `False`.
 
     Returns
     -----------
@@ -490,6 +731,16 @@ def harmonize_tokenize_embed_pipeline(
         _ref = Path(model_folder_path) / 'gene_count_dictionary.pkl'
         if _ref.is_file():
             gene_occurrence_count_file_path = str(_ref)
+    # Special tokens are only tokenized for models that have them; check
+    # their values before any processing
+    include_special_tokens = False
+    if keep_special_tokens:
+        with open(Path(model_folder_path) / 'model_config.yaml', 'r') as file:
+            include_special_tokens = bool(
+                yaml.safe_load(file)['meta']['special_tokens'])
+    if include_special_tokens:
+        with open(Path(model_folder_path) / 'token_dictionary.pkl', 'rb') as file:
+            _check_special_token_metadata(adata, pickle.load(file))
     datasets = []
     adata.obs_names_make_unique()
     if sample_key:
@@ -548,7 +799,7 @@ def harmonize_tokenize_embed_pipeline(
                 nproc=nproc,
                 processing_mode=processing_mode,
                 add_neigh_cell_ids=add_neigh_cell_ids,
-                include_special_tokens=keep_special_tokens)
+                include_special_tokens=include_special_tokens)
             datasets.append(dataset_sample)
             logger.info(f"Tokenized sample {sample}.")
 
@@ -573,14 +824,15 @@ def harmonize_tokenize_embed_pipeline(
             species=species,
             min_cells_per_gene=min_cells_per_gene,
             min_genes_per_cell=min_genes_per_cell)
-        if harmonized_adata_save_path:
-            adata.obs[batch_key] = harmonized_adata_save_path.split('.')[0].split('/')[-1]
-        elif 'batch' in adata.uns:
+        if 'batch' in adata.uns:
             adata.obs[batch_key] = adata.uns['batch']
         elif batch_key not in adata.obs:
-            # Single sample with no batch label supplied: use a constant so the
-            # whole AnnData is treated as one batch.
-            adata.obs[batch_key] = 'sample'
+            # Single sample with no batch label supplied: use a constant (the
+            # file name of the harmonized AnnData, if saved) so the whole
+            # AnnData is treated as one batch.
+            adata.obs[batch_key] = (
+                Path(harmonized_adata_save_path).stem
+                if harmonized_adata_save_path else 'sample')
         logger.info(f"Harmonized AnnData.")
         logger.info(f"Tokenizing AnnData.")
         dataset = tokenize_adata(
@@ -591,7 +843,7 @@ def harmonize_tokenize_embed_pipeline(
             processing_mode=processing_mode,
             add_neigh_cell_ids=add_neigh_cell_ids,
             use_generator=use_generator,
-            include_special_tokens=keep_special_tokens)
+            include_special_tokens=include_special_tokens)
 
     if harmonized_adata_save_path:
         logger.info(f"Saving harmonized data...")
@@ -695,8 +947,9 @@ def gene_embed_dataset(dataset: Dataset,
         Whether to ignore special tokens when retrieving layer embeddings.
     keep_special_tokens:
         If `True`, keep the special tokens (metatokens) instead of padding
-        them. Requires a dataset tokenized with `include_special_tokens=True`.
-        Default `False` (padded, as before).
+        them. Requires a dataset tokenized with `include_special_tokens=True`
+        (a `ValueError` names the missing columns otherwise). Default `False`
+        (padded, as before).
 
     Returns
     -----------
@@ -754,62 +1007,23 @@ def gene_embed_dataset(dataset: Dataset,
     # Initialize encoder, predictor, and target encoder
     target_encoder, _ = init_model_from_config(
         model_config, token_dict, device)
-
-    if model_config['meta']['api_version'] != 'v3':
-        return_layer_emb_fn = target_encoder.return_layer_emb
-    else:
-        return_layer_emb_fn = target_encoder.backbone.return_layer_emb
+    _set_cell_only_seq_len(target_encoder, model_config)
+    return_layer_emb_fn = _encoder_backbone(target_encoder).return_layer_emb
 
     # Pad the special tokens unless asked to keep them (warns if the model
     # never saw padded special tokens in training)
     pad_spc_tokens = resolve_special_token_padding(
         model_config, keep_special_tokens)
 
-    # Create mask collator
-    mask_collator = BlockMaskCollator(
-        n_targets=model_config['mask']['n_targets'],
-        n_contexts=model_config['mask']['n_contexts'],
-        n_segments=model_config['data']['n_segments'],
-        seq_len_cell=model_config['data']['seq_len_cell'],
-        seq_len_neighborhood=model_config['data']['seq_len_neighborhood'],
-        n_special_tokens=n_special_tokens,
-        per_block_mask_ratio=model_config['mask']['per_block_mask_ratio'],
-        sample_segments=False,
-        sample_gene_masks=False,
-        restrict_special_attention=model_config['meta']['restrict_special_attention'],
-        special_token_pad_ratio=1.0 if pad_spc_tokens else 0.0)
-        
-    # Create torch dataset
-    cell_dataset = init_cell_dataset(
-        dataset=dataset,
-        vocab_size=vocab_size,
-        seq_len_cell=model_config['data']['seq_len_cell'],
-        seq_len_neighborhood=model_config['data']['seq_len_neighborhood'],
-        tokenizer_type=model_config['data']['tokenizer_type'],
-        gt_type=model_config['meta']['gt_type'],
-        cell_pos_enc=model_config['meta']['cell_pos_enc'],
-        special_tokens=model_config['meta']['special_tokens'],
-        sampling_strategy=None,
-        n_nonzero_tokens_list=[],
-        include_cell_id=True,
-        sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'],
-        pad_special_tokens=pad_spc_tokens,
-        truncate_neighbors=model_config['data'].get('truncate_neighbors', False),
-        tokenized_seq_len_cell=model_config['data'].get('tokenized_seq_len_cell', None),)
-
     # Initialize dataloader
-    loader, _ = init_dataloader_and_sampler(
-        cell_dataset=cell_dataset,
+    loader = _init_inference_loader(
+        dataset=dataset,
+        model_config=model_config,
+        vocab_size=vocab_size,
+        pad_special_tokens=pad_spc_tokens,
         batch_size=batch_size,
-        distributed=False,
-        world_size=1,
-        rank=0,
-        collate_fn=mask_collator,
         pin_memory=pin_memory,
-        num_workers=num_workers,
-        drop_last=False,
-        persistent_workers=False,
-        mega_batch_mult_max=model_config['data'].get('mega_batch_mult_max', 1000))
+        num_workers=num_workers)
 
     # Load model checkpoint
     _, _, target_encoder, _, _, start_epoch, _ = load_checkpoint(
@@ -1113,10 +1327,11 @@ def get_gene_embed(
     emb_layer:
         Layer for which to retrieve the embedding.
     cell_gene_ensembl_id:
-        List with gene IDs for which cell gene embeddings will be retrieved.
+        List with gene IDs for which cell gene embeddings will be retrieved
+        (a gene listed more than once is returned once).
     neighborhood_gene_ensembl_id:
         List with gene IDs for which neighborhood gene embeddings will be
-        retrieved.
+        retrieved (a gene listed more than once is returned once).
     batch_size:
         Dataloader param.
     pin_memory:
@@ -1137,8 +1352,11 @@ def get_gene_embed(
     with open(token_dictionary_file_path, 'rb') as f:
         token_dict = pickle.load(f)
 
-    neighborhood_gene_ids = [token_dict[ensg] for ensg in neighborhood_gene_ensembl_id]
-    cell_gene_ids         = [token_dict[ensg] for ensg in cell_gene_ensembl_id]
+    # A gene listed more than once is embedded (and returned) once
+    neighborhood_gene_ids = [
+        token_dict[ensg] for ensg in dict.fromkeys(neighborhood_gene_ensembl_id)]
+    cell_gene_ids = [
+        token_dict[ensg] for ensg in dict.fromkeys(cell_gene_ensembl_id)]
 
     # Create reverse mapping from token id to ensembl id
     id_to_ensembl = {v: k for k, v in token_dict.items()}

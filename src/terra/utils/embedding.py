@@ -168,6 +168,7 @@ def compute_mean_unmasked_emb(emb: torch.Tensor,
 def compute_softmax_weighted_mean_emb(
     emb: torch.Tensor,
     weights: torch.Tensor,
+    mask: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """
     Compute a softmax-weighted mean of embeddings.
@@ -177,7 +178,12 @@ def compute_softmax_weighted_mean_emb(
     emb:
         (BATCH, SEQ_LEN, EMB_DIM)
     weights:
-        (BATCH, SEQ_LEN) — can be any real values (logits)
+        (BATCH, SEQ_LEN) — can be any real values (logits); the softmax is
+        applied here, so they must not be normalized already.
+    mask:
+        Optional boolean (BATCH, SEQ_LEN) mask of the positions the mean is
+        computed over (softmax over the selected positions only). Rows
+        without any selected position give a zero embedding.
 
     Returns
     -----------
@@ -190,8 +196,14 @@ def compute_softmax_weighted_mean_emb(
     if weights.shape != emb.shape[:2]:
         raise ValueError("weights must match (BATCH, SEQ_LEN)")
 
+    if mask is not None:
+        weights = weights.masked_fill(~mask, float('-inf'))
+
     # Convert to attention weights
     attn = torch.softmax(weights, dim=1)  # (B, S)
+    if mask is not None:
+        # Rows without selected positions (all -inf) give NaN weights
+        attn = torch.nan_to_num(attn, nan=0.0)
 
     # Weighted sum
     mean_emb = (emb * attn.unsqueeze(-1)).sum(dim=1)

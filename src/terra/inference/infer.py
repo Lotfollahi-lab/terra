@@ -38,12 +38,12 @@ from terra.utils.embedding import (create_binary_selection_mask,
                                        compute_sum_and_nonzero_count,
                                        batch_rowwise_distances)
 from terra.utils.logging import CSVLogger
+from .embed import (_check_special_token_columns, _encoder_backbone,
+                    _restrict_special_attention, _set_cell_only_seq_len,
+                    _truncation_settings)
 from typing import Dict, List
 
 
-_GLOBAL_SEED = 0
-np.random.seed(_GLOBAL_SEED)
-torch.manual_seed(_GLOBAL_SEED)
 torch.backends.cudnn.benchmark = True
 
 
@@ -60,11 +60,10 @@ def infer(args: dict,
           emb_layers: list | None = None,
           cell_gene_ids: list = [],
           neighborhood_gene_ids: list = [],
-          agg_type: Literal['cls',
-                            'avg',
+          agg_type: Literal['avg',
                             'weighted_avg'] = 'avg',
           masked_tokens: list[int] | None = None,
-          agg_excluded_genes: list[int] | None = None,
+          agg_excluded_genes: list[str] | None = None,
           top_k: int | None = None,
           return_gene: bool=True,
           return_cosine_sim: bool=False,
@@ -108,12 +107,17 @@ def infer(args: dict,
         be retrived.
     agg_type:
         Specifies how (aggregated) cell and neighborhood embeddings are
-        computed from individual gene embeddings.
+        computed from individual gene embeddings: `'avg'` for an unweighted
+        mean, `'weighted_avg'` for a mean weighted by gene rank (the weights
+        decrease linearly with the rank of the gene among the aggregated
+        genes and sum to 1).
     masked_tokens:
         List of tokens to be masked by the attention mask during
         inference.
     agg_excluded_genes:
-        List of tokens to be excluded from the aggregation.
+        Ensembl IDs of genes whose embeddings are left out when the gene
+        embeddings are aggregated into cell and neighborhood embeddings (in
+        every segment). The genes remain part of the model input.
     top_k:
         Include only top_k genes in aggregation.
     return_gene:
@@ -139,14 +143,19 @@ def infer(args: dict,
         masks during inference.
     keep_special_tokens:
         If `True`, keep the special tokens (metatokens) instead of padding
-        them. Requires a dataset tokenized with `include_special_tokens=True`.
-        Default `False` (padded, as before).
+        them. Requires a dataset tokenized with `include_special_tokens=True`
+        (a `ValueError` names the missing columns otherwise). Default `False`
+        (padded, as before).
 
     Returns
     -----------
     adata : anndata.AnnData
         An AnnData object with the stored embeddings and labels.
     """
+    if agg_type not in ('avg', 'weighted_avg'):
+        raise ValueError(
+            f"agg_type must be 'avg' or 'weighted_avg', got {agg_type!r}.")
+
     # Set device
     if not torch.cuda.is_available():
         device = torch.device('cpu')
@@ -241,10 +250,6 @@ def infer(args: dict,
     context_mask_size = args['mask']['context_mask_size']
     target_mask_size = args['mask']['target_mask_size']
     per_block_mask_ratio = args['mask']['per_block_mask_ratio']
-    if 'restrict_special_attention' in args['meta'].keys():
-        restrict_special_attention = args['meta']['restrict_special_attention']
-    else:
-        restrict_special_attention = False
     if 'targets_list' in args['mask'].keys():
         targets_list = args['mask']['targets_list']
     else:
@@ -272,7 +277,7 @@ def infer(args: dict,
         agg_excluded_tokens = None
 
     # Define tokenizer-specific params
-    if tokenizer_type == 'cell_neighborhood':
+    if tokenizer_type == 'cell_neigh':
         if add_cls:
             special_tokens = ['cls_0', 'cls_1'] + special_tokens  
     elif tokenizer_type == 'cell_graph':
@@ -331,15 +336,18 @@ def infer(args: dict,
         mlp_bias=mlp_bias,
         protein_init_kwargs=parse_protein_init_kwargs(args, token_dict),
         **parse_arch_kwargs(args))
-
-    if api_version != 'v3':
-        return_layer_emb_fn = target_encoder.return_layer_emb
-    else:
-        return_layer_emb_fn = target_encoder.backbone.return_layer_emb
+    _set_cell_only_seq_len(target_encoder, args)
+    return_layer_emb_fn = _encoder_backbone(target_encoder).return_layer_emb
 
     # Pad the special tokens unless asked to keep them (warns if the model
     # never saw padded special tokens in training)
     pad_spc_tokens = resolve_special_token_padding(args, keep_special_tokens)
+    # Special tokens attend only to themselves if trained so (`mask` section,
+    # as in training) and kept
+    restrict_special_attention = _restrict_special_attention(
+        args, pad_spc_tokens)
+    if not pad_spc_tokens:
+        _check_special_token_columns(dataset, special_tokens)
 
     # Initialize mask collator
     if block_masking:
@@ -367,6 +375,8 @@ def infer(args: dict,
             targets_list=targets_list)
 
     # Initialize train and test datasets, dataloaders and samplers
+    truncate_neighbors, tokenized_seq_len_cell = _truncation_settings(
+        dataset, args['data'])
     cell_dataset = init_cell_dataset(
         dataset=dataset,
         vocab_size=vocab_size,
@@ -388,8 +398,8 @@ def infer(args: dict,
         # because the collator below uses special_token_pad_ratio=1.0 and
         # zeroes those positions regardless (unless keep_special_tokens).
         pad_special_tokens=pad_spc_tokens,
-        truncate_neighbors=args['data'].get('truncate_neighbors', False),
-        tokenized_seq_len_cell=args['data'].get('tokenized_seq_len_cell', None))
+        truncate_neighbors=truncate_neighbors,
+        tokenized_seq_len_cell=tokenized_seq_len_cell)
 
     loader, _ = init_dataloader_and_sampler(
         cell_dataset=cell_dataset,
@@ -485,7 +495,7 @@ def infer(args: dict,
             excluded_tokens=agg_excluded_tokens,
             seq_len_cell=seq_len_cell,
             top_k=top_k).cpu()
-        if tokenizer_type == 'cell_neighborhood':
+        if tokenizer_type == 'cell_neigh':
             neighborhood_mask = create_binary_selection_mask(
                 ns_tokens,
                 selection_type="agg_neighborhood",
@@ -597,22 +607,17 @@ def infer(args: dict,
 
                     #raise ValueError
             elif agg_type == "weighted_avg":
+                # Rank-based weights of the aggregated genes (sum to 1)
                 cell_weights = compute_unmasked_rank_based_weights(
-                    tokens, cell_mask)
-                cell_emb = compute_mean_unmasked_emb(
-                    c_emb * cell_weights.unsqueeze(-1),
-                    cell_mask)
+                    ns_tokens.cpu(), cell_mask)
+                cell_emb = (c_emb * cell_weights.unsqueeze(-1)).sum(1)
                 if include_spatial_cell_emb:
-                    spatial_cell_weights = compute_unmasked_rank_based_weights(
-                        tokens, cell_mask)
-                    spatial_cell_emb = compute_mean_unmasked_emb(
-                        n_emb * cell_weights.unsqueeze(-1),
-                        cell_mask)
+                    spatial_cell_emb = (
+                        n_emb * cell_weights.unsqueeze(-1)).sum(1)
                 neighborhood_weights = compute_unmasked_rank_based_weights(
-                    tokens, neighborhood_mask)
-                neighborhood_emb = compute_mean_unmasked_emb(
-                    n_emb * neighborhood_weights.unsqueeze(-1),
-                    neighborhood_mask)
+                    ns_tokens.cpu(), neighborhood_mask)
+                neighborhood_emb = (
+                    n_emb * neighborhood_weights.unsqueeze(-1)).sum(1)
 
             # Concat layer-specific embeddings across batches
             if itr == 0:
@@ -784,12 +789,6 @@ def infer(args: dict,
    
     # Store cell and neighborhood embeddings of all observations across layers  
     for i, emb_layer in enumerate(emb_layers):
-
-        neigh = torch.cat(all_neighborhood_emb_list[i], dim=0)        # (N, D)
-        spatial = torch.cat(all_spatial_cell_emb_list[i], dim=0)      # (N, D)
-
-        cos = F.cosine_similarity(neigh, spatial, dim=1)              # (N,)
-
         adata.obsm[f"cell_emb_layer_{emb_layer}"] = np.array(torch.cat(
             all_cell_emb_list[i],
             dim=0))
