@@ -3,6 +3,7 @@ import logging
 import os
 import pickle
 import re
+import warnings
 import yaml
 from collections import defaultdict
 from pathlib import Path
@@ -47,6 +48,9 @@ _ENSEMBL_GENE_ID = re.compile(r'(ENS[A-Z]*G\d+)(\.\d+)?')
 # Fraction of genes below which harmonization warns that almost no gene maps
 _MIN_MAPPED_GENE_FRACTION = 0.1
 
+# Number of duplicated genes named in the warning about them
+_MAX_LISTED_GENES = 10
+
 
 def _contains_integers(x) -> bool:
     """Return `True` if all (stored) values of a count matrix are integers."""
@@ -90,7 +94,9 @@ def harmonize_adata(adata: ad.AnnData,
         ensembl IDs are looked up from the specified Ensembl release instead.
         `adata.var_names` can be gene names (symbols) or Ensembl gene IDs
         (optionally with version suffix); Ensembl IDs are used directly if
-        they match more genes of the mapping than the gene names do.
+        they match more genes of the mapping than the gene names do. A gene
+        in more than one column (e.g. duplicated `var_names`) is kept in
+        every column, with a warning.
     gene_occurrence_count_file_path:
         Path to a pickled dictionary of per-gene pretraining occurrence counts. If
         provided, genes with too few occurrences are filtered out; if `None`, this
@@ -193,8 +199,10 @@ def harmonize_adata(adata: ad.AnnData,
             'other genes are dropped. Check that adata.var_names are gene '
             "names (symbols) or Ensembl gene IDs of the model's species.")
 
-    # A gene in several columns (e.g. duplicated var_names) would occur
-    # several times in the token sequence of a cell
+    # A gene in several columns (e.g. duplicated var_names) occurs several
+    # times in the token sequence of a cell. The columns are kept, which
+    # reproduces existing results, with a warning (shown without logging
+    # configuration)
     ensembl_id_gene_names = defaultdict(list)
     for gene_name, ensembl_id in zip(harmonized_gene_names,
                                      matching_ensembl_ids):
@@ -203,13 +211,18 @@ def harmonize_adata(adata: ad.AnnData,
                   in ensembl_id_gene_names.items() if len(gene_names) > 1}
     if duplicated:
         examples = '; '.join(
-            f'{ensembl_id}: {gene_names}' for ensembl_id, gene_names
-            in list(duplicated.items())[:5])
-        raise ValueError(
+            f"{ensembl_id}: {', '.join(gene_names)}" for ensembl_id, gene_names
+            in list(duplicated.items())[:_MAX_LISTED_GENES])
+        if len(duplicated) > _MAX_LISTED_GENES:
+            examples += '; ...'
+        warnings.warn(
             f'{len(duplicated)} genes occur in more than one column of adata '
-            f'({examples}). Each gene must occur once: make adata.var_names '
-            'unique (e.g. with adata.var_names_make_unique()) or sum the '
-            'counts of the duplicated columns before harmonization.')
+            f'({examples}). Every column is kept, so these genes occur more '
+            'than once in the token sequence of a cell. To keep each gene '
+            'once, make adata.var_names unique (e.g. with '
+            'adata.var_names_make_unique()) or sum the counts of the '
+            'duplicated columns before harmonization.',
+            UserWarning, stacklevel=2)
 
     # Subset into a new object; the caller's AnnData is never modified
     adata = adata[:, adata.var.index.isin(harmonized_gene_names)].copy()

@@ -1,6 +1,7 @@
 """
 Tests for ``harmonize_tokenize_embed_pipeline`` on input with cells without
-genes, on a tiny, randomly initialized model bundle (CPU only, no downloads).
+genes or with duplicated genes, on a tiny, randomly initialized model bundle
+(CPU only, no downloads).
 
 Cells without any expressed gene have no tokens of their own: their cell
 embeddings are all-zero (NaN with softmax aggregation; e.g. the TERRA-112M
@@ -165,3 +166,32 @@ def test_data_with_genes_in_every_cell_is_identical_either_way(
     assert list(default.obs_names) == list(filtered.obs_names)
     for key in EMBEDDINGS:
         np.testing.assert_array_equal(default.obsm[key], filtered.obsm[key])
+
+
+def _adata_with_duplicated_gene():
+    adata = _adata()
+    names = list(adata.var_names)
+    names[1] = names[0]
+    adata.var_names = names
+    return adata
+
+
+def test_duplicated_genes_raise_with_sample_key(bundle, tmp_path):
+    # Previously an InvalidIndexError after every sample was tokenized
+    with pytest.raises(ValueError, match=r'1 genes .*\(GENE0\)'):
+        _embed(_adata_with_duplicated_gene(), bundle, tmp_path,
+               sample_key='sample')
+
+
+def test_duplicated_genes_are_kept_with_a_warning_without_sample_key(
+        bundle, tmp_path):
+    # As before, both columns are tokenized (the gene occurs twice in the
+    # token sequence of a cell); a warning names the gene
+    result, messages = _embed(_adata_with_duplicated_gene(), bundle,
+                              tmp_path, sample_key=None)
+    assert any('more than one column' in message and 'GENE0' in message
+               for message in messages)
+    assert list(result.var_names).count('GENE0') == 2
+    assert result.n_vars == N_GENES
+    for key in EMBEDDINGS:
+        assert np.all(np.isfinite(result.obsm[key])), key

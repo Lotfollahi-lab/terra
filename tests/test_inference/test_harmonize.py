@@ -4,6 +4,7 @@ Tests for ``harmonize_adata``: count validation, gene mapping and filtering.
 
 import pickle
 import threading
+import warnings
 
 import anndata as ad
 import numpy as np
@@ -150,23 +151,41 @@ def test_almost_no_mapped_gene_warns(gene_mapping_dict_file_path, caplog):
                for record in caplog.records)
 
 
-def test_duplicated_genes_raise(gene_mapping_dict_file_path):
-    # Previously both columns were kept: the gene occurred twice in the
-    # token sequence of a cell, and the multi-sample pipeline failed with an
-    # InvalidIndexError
+def _duplicated_gene_warnings(records):
+    return [str(record.message) for record in records
+            if record.category is UserWarning
+            and 'more than one column' in str(record.message)]
+
+
+def test_duplicated_genes_are_kept_with_a_warning(
+        gene_mapping_dict_file_path):
+    # As before, every column is kept (the gene occurs twice in the token
+    # sequence of a cell); a warning names the gene
     adata = _adata()
     names = list(adata.var_names)
     names[1] = names[0]
     adata.var_names = names
-    with pytest.raises(ValueError, match=r'ENSG00000000001: \[.GENE0., '
-                                         r'.GENE0.\]'):
-        _harmonize(adata, gene_mapping_dict_file_path)
+    with warnings.catch_warnings(record=True) as records:
+        warnings.simplefilter('always')
+        harmonized = _harmonize(adata, gene_mapping_dict_file_path)
+    messages = _duplicated_gene_warnings(records)
+    assert len(messages) == 1
+    assert messages[0].startswith(
+        '1 genes occur in more than one column of adata '
+        '(ENSG00000000001: GENE0, GENE0)')
+    assert 'var_names_make_unique()' in messages[0]
+    assert list(harmonized.var_names) == names
+    assert list(harmonized.var['ensembl_id'][:2]) == ['ENSG00000000001'] * 2
+    np.testing.assert_array_equal(harmonized.X.toarray(), adata.X.toarray())
 
     # The same gene twice, as Ensembl IDs with different version suffixes
     adata.var_names = (['ENSG00000000001.1', 'ENSG00000000001.2']
                        + [f'ENSG{i + 1:011d}' for i in range(2, N_GENES)])
-    with pytest.raises(ValueError, match='more than one column'):
-        _harmonize(adata, gene_mapping_dict_file_path)
+    with warnings.catch_warnings(record=True) as records:
+        warnings.simplefilter('always')
+        harmonized = _harmonize(adata, gene_mapping_dict_file_path)
+    assert len(_duplicated_gene_warnings(records)) == 1
+    assert harmonized.n_vars == N_GENES
 
 
 def test_duplicated_unmapped_names_are_dropped(gene_mapping_dict_file_path):
@@ -174,7 +193,10 @@ def test_duplicated_unmapped_names_are_dropped(gene_mapping_dict_file_path):
     names = list(adata.var_names)
     names[:2] = ['NegControlProbe', 'NegControlProbe']
     adata.var_names = names
-    harmonized = _harmonize(adata, gene_mapping_dict_file_path)
+    with warnings.catch_warnings(record=True) as records:
+        warnings.simplefilter('always')
+        harmonized = _harmonize(adata, gene_mapping_dict_file_path)
+    assert not _duplicated_gene_warnings(records)
     assert list(harmonized.var_names) == names[2:]
 
 
