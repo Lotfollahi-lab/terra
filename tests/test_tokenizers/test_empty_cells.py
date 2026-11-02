@@ -11,8 +11,8 @@ the multiples of ``seq_len_cell`` where the cell datasets read them.
 dense ranking path does.
 """
 
-import logging
 import pickle
+import warnings
 
 import anndata as ad
 import numpy as np
@@ -168,25 +168,31 @@ def test_pad_empty_neighbors_matches_dense_path(token_dictionary_file_path):
         assert s['n_nonzero_tokens'] == d['n_nonzero_tokens']
 
 
+def _empty_cell_warnings(token_dictionary_file_path, adata, **kwargs):
+    with warnings.catch_warnings(record=True) as records:
+        warnings.simplefilter('always')
+        _tokenize(token_dictionary_file_path, adata, **kwargs)
+    return [str(record.message) for record in records
+            if record.category is UserWarning
+            and 'no expressed gene' in str(record.message)]
+
+
 @pytest.mark.parametrize('pad_empty_neighbors', [False, True])
-def test_empty_cells_are_reported(token_dictionary_file_path, caplog,
+def test_empty_cells_are_reported(token_dictionary_file_path,
                                   pad_empty_neighbors):
+    # A UserWarning, so that it is shown without logging configuration
     adata = _make_adata()
     n_shifted = sum(bool(set(row) & set(EMPTY_CELLS))
                     for row in _nearest_neighbors(adata).tolist())
-    with caplog.at_level(logging.WARNING):
-        _tokenize(token_dictionary_file_path, adata,
-                  pad_empty_neighbors=pad_empty_neighbors)
-    messages = [r.getMessage() for r in caplog.records
-                if 'no expressed gene' in r.getMessage()]
+    messages = _empty_cell_warnings(token_dictionary_file_path, adata,
+                                    pad_empty_neighbors=pad_empty_neighbors)
     assert len(messages) == 1
     assert messages[0].startswith(f'{len(EMPTY_CELLS)} of {N_CELLS} cells')
     assert 'min_genes_per_cell >= 1' in messages[0]
+    # The opt-in is recommended where it has an effect
     assert (f'lengthens the segments of {n_shifted} cells' in messages[0]) != (
         pad_empty_neighbors)
+    assert ('pad_empty_neighbors=True' in messages[0]) != pad_empty_neighbors
 
-    caplog.clear()
-    with caplog.at_level(logging.WARNING):
-        _tokenize(token_dictionary_file_path, _make_adata(empty_cells=()))
-    assert not any('no expressed gene' in r.getMessage()
-                   for r in caplog.records)
+    assert not _empty_cell_warnings(token_dictionary_file_path,
+                                    _make_adata(empty_cells=()))

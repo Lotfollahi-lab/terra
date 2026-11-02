@@ -649,7 +649,8 @@ class CellGraphTokenizer(CellBaseTokenizer):
             neighbors, a cell gets `n_neighs - k` neighbor segments of
             `model_input_size / (n_neighs + 1 - k)` tokens (its k farthest
             neighbors are dropped), so its segments no longer start where
-            the cell datasets read them.
+            the cell datasets read them. A `UserWarning` reports such cells
+            in the data either way.
         **base_tokenizer_kwargs:
             Keyword arguments for the initialization of the
             CellBaseTokenizer.
@@ -1237,6 +1238,8 @@ class CellGraphTokenizer(CellBaseTokenizer):
         del adata_dict['gene_expr_cell_neigh']
 
         if n_empty_cells > 0:
+            # A warning (not only a log record), so that it is shown without
+            # logging configuration
             message = (
                 f'{n_empty_cells} of {n_cells} cells have no expressed gene '
                 'of the model vocabulary, so their own segment holds only '
@@ -1246,13 +1249,17 @@ class CellGraphTokenizer(CellBaseTokenizer):
                     ' As neighbors they do not count as segments, which '
                     f'lengthens the segments of {n_shifted_cells} cells, moves '
                     'them away from the positions the model expects and drops '
-                    'their farthest neighbors (set `pad_empty_neighbors=True`, '
-                    'model config key `data.pad_empty_neighbors`, to keep an '
-                    'all-padding segment for them instead).')
-            logger.warning(
-                message + ' Remove such cells before tokenization, e.g. with '
+                    'their farthest neighbors.')
+            message += (
+                ' Remove such cells before tokenization, e.g. with '
                 '`min_genes_per_cell >= 1` in `harmonize_adata` or '
-                '`harmonize_tokenize_embed_pipeline`.')
+                '`harmonize_tokenize_embed_pipeline`')
+            if n_shifted_cells > 0:
+                message += (
+                    ', or keep an all-padding segment for them as neighbors '
+                    'with `pad_empty_neighbors=True` (model config key '
+                    '`data.pad_empty_neighbors`)')
+            warnings.warn(message + '.', UserWarning, stacklevel=2)
 
         # Add cell IDs for collecting metadata at inference time
         adata_dict['cell_id'] = adata.obs['cell_id'].values.tolist() 

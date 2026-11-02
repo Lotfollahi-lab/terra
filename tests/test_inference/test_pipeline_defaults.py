@@ -1,16 +1,18 @@
 """
-Tests for the defaults of ``harmonize_tokenize_embed_pipeline`` on a tiny,
-randomly initialized model bundle (CPU only, no downloads).
+Tests for ``harmonize_tokenize_embed_pipeline`` on input with cells without
+genes, on a tiny, randomly initialized model bundle (CPU only, no downloads).
 
-Cells without any expressed gene have no tokens of their own. With the
-previous default ``min_genes_per_cell=0`` they were kept: their cell
-embeddings were all-zero (NaN with softmax aggregation; e.g. the TERRA-112M
-quickstart printed a NaN cell embedding cosine similarity), and they shifted
-the neighbor segments of the cells around them. The pipeline now removes them
-by default; data without such cells is embedded exactly as before.
+Cells without any expressed gene have no tokens of their own: their cell
+embeddings are all-zero (NaN with softmax aggregation; e.g. the TERRA-112M
+quickstart printed a NaN cell embedding cosine similarity), and they shift the
+neighbor segments of the cells around them. The default
+``min_genes_per_cell=0`` keeps them, which reproduces existing results, and
+the tokenizer warns; ``min_genes_per_cell=1`` removes them. Data without such
+cells is embedded identically either way.
 """
 
 import pickle
+import warnings
 
 import anndata as ad
 import numpy as np
@@ -23,7 +25,8 @@ from terra.utils.helper import init_model_from_config
 
 N_GENES = 40
 N_CELLS = 48
-EMPTY_CELLS = (5, 30)
+EMPTY_CELLS = (5, 30)  # one in each sample
+EMBEDDINGS = ('cell_emb', 'spatial_cell_emb', 'neighborhood_emb')
 
 # TERRA-112M layout (cell graph, segment encoding, batch metatoken), scaled
 # down
@@ -97,41 +100,68 @@ def _adata(empty_cells=()):
 
 
 def _embed(adata, bundle, cache, **kwargs):
-    return harmonize_tokenize_embed_pipeline(
-        adata=adata, batch_key='batch', model_folder_path=str(bundle),
-        cache_directory_path=str(cache), nproc=1,
-        processing_mode='sequential', num_workers=0, batch_size=16, **kwargs)
+    """Run the pipeline; return its result and the messages of its
+    UserWarnings."""
+    with warnings.catch_warnings(record=True) as records:
+        warnings.simplefilter('always')
+        result = harmonize_tokenize_embed_pipeline(
+            adata=adata, batch_key='batch', model_folder_path=str(bundle),
+            cache_directory_path=str(cache), nproc=1,
+            processing_mode='sequential', num_workers=0, batch_size=16,
+            **kwargs)
+    messages = [str(record.message) for record in records
+                if record.category is UserWarning]
+    return result, messages
+
+
+def _empty_cell_warnings(messages):
+    return [message for message in messages if 'no expressed gene' in message]
 
 
 @pytest.mark.parametrize('sample_key', [None, 'sample'])
 @pytest.mark.parametrize('agg_type', ['avg', 'softmax'])
-def test_cells_without_genes_are_removed_by_default(bundle, tmp_path,
-                                                    sample_key, agg_type):
-    result = _embed(_adata(EMPTY_CELLS), bundle, tmp_path,
-                    sample_key=sample_key, agg_type=agg_type)
+def test_cells_without_genes_are_kept_by_default_with_a_warning(
+        bundle, tmp_path, sample_key, agg_type):
+    result, messages = _embed(_adata(EMPTY_CELLS), bundle, tmp_path,
+                              sample_key=sample_key, agg_type=agg_type)
+    # One warning per tokenized AnnData (here: per sample) with such cells
+    warned = _empty_cell_warnings(messages)
+    assert len(warned) == (2 if sample_key else 1)
+    assert all('min_genes_per_cell >= 1' in message for message in warned)
+
+    # The cells stay, with empty cell embeddings, as before
+    assert list(result.obs_names) == [f'c{i}' for i in range(N_CELLS)]
+    empty = result[[f'c{i}' for i in EMPTY_CELLS]]
+    for key in ('cell_emb', 'spatial_cell_emb'):
+        if agg_type == 'avg':
+            assert np.all(empty.obsm[key] == 0), key
+        else:
+            assert np.all(np.isnan(empty.obsm[key])), key
+
+
+@pytest.mark.parametrize('sample_key', [None, 'sample'])
+@pytest.mark.parametrize('agg_type', ['avg', 'softmax'])
+def test_min_genes_per_cell_1_removes_cells_without_genes(
+        bundle, tmp_path, sample_key, agg_type):
+    result, messages = _embed(_adata(EMPTY_CELLS), bundle, tmp_path,
+                              sample_key=sample_key, agg_type=agg_type,
+                              min_genes_per_cell=1)
+    assert not _empty_cell_warnings(messages)
     assert result.n_obs == N_CELLS - len(EMPTY_CELLS)
     assert not set(result.obs_names) & {f'c{i}' for i in EMPTY_CELLS}
-    for key in ('cell_emb', 'spatial_cell_emb', 'neighborhood_emb'):
+    for key in EMBEDDINGS:
         norms = np.linalg.norm(result.obsm[key], axis=1)
         assert np.all(np.isfinite(norms)) and np.all(norms > 0), key
 
 
-def test_min_genes_per_cell_0_keeps_cells_without_genes(bundle, tmp_path):
-    # Previous default: the cells stay, with an all-zero cell embedding
-    result = _embed(_adata(EMPTY_CELLS), bundle, tmp_path, sample_key=None,
-                    min_genes_per_cell=0)
-    assert result.n_obs == N_CELLS
-    cell_emb = result.obsm['cell_emb'][list(EMPTY_CELLS)]
-    assert np.all(cell_emb == 0)
-
-
 @pytest.mark.parametrize('sample_key', [None, 'sample'])
-def test_data_with_genes_in_every_cell_is_unchanged(bundle, tmp_path,
-                                                    sample_key):
-    default = _embed(_adata(), bundle, tmp_path / 'default',
-                     sample_key=sample_key)
-    previous = _embed(_adata(), bundle, tmp_path / 'previous',
-                      sample_key=sample_key, min_genes_per_cell=0)
-    assert list(default.obs_names) == list(previous.obs_names)
-    for key in ('cell_emb', 'spatial_cell_emb', 'neighborhood_emb'):
-        np.testing.assert_array_equal(default.obsm[key], previous.obsm[key])
+def test_data_with_genes_in_every_cell_is_identical_either_way(
+        bundle, tmp_path, sample_key):
+    default, messages = _embed(_adata(), bundle, tmp_path / 'default',
+                               sample_key=sample_key)
+    assert not _empty_cell_warnings(messages)
+    filtered, _ = _embed(_adata(), bundle, tmp_path / 'filtered',
+                         sample_key=sample_key, min_genes_per_cell=1)
+    assert list(default.obs_names) == list(filtered.obs_names)
+    for key in EMBEDDINGS:
+        np.testing.assert_array_equal(default.obsm[key], filtered.obsm[key])

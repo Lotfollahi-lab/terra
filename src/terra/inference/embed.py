@@ -361,7 +361,7 @@ def harmonize_tokenize_embed_pipeline(
         ensembl_release: int = 111,
         species: str = 'human',
         min_cells_per_gene: int = 0,
-        min_genes_per_cell: int = 1,
+        min_genes_per_cell: int = 0,
         gene_perturb_df: pd.DataFrame | None = None,               
         nproc: int = 4,
         processing_mode: Literal['sequential',
@@ -420,12 +420,12 @@ def harmonize_tokenize_embed_pipeline(
         harmonization.
     min_genes_per_cell:
         Minimum number of genes a cell must express to be kept during
-        harmonization. The default 1 removes cells without any expressed
-        (harmonized) gene: they have no tokens of their own, so their cell
-        embeddings are empty (all-zero, or NaN with `agg_type='softmax'`),
-        and they shift the neighbor segments of the cells around them (see
-        `CellGraphTokenizer`). 0 keeps them (the default before November
-        2026).
+        harmonization. The default 0 keeps cells without any expressed
+        (harmonized) gene, which reproduces existing results. Such cells have
+        no tokens of their own, so their cell embeddings are empty (all-zero,
+        or NaN with `agg_type='softmax'`), and they shift the neighbor
+        segments of the cells around them (see `CellGraphTokenizer`); the
+        tokenizer warns when it finds them. 1 removes them.
     gene_perturb_df:
         DataFrame with perturbation data, e.g.::
 
