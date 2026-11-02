@@ -4,7 +4,7 @@ genes or with duplicated genes, on a tiny, randomly initialized model bundle
 (CPU only, no downloads).
 
 Cells without any expressed gene have no tokens of their own: their cell
-embeddings are all-zero (NaN with softmax aggregation; e.g. the TERRA-112M
+embeddings are empty (all-zero with 'avg' aggregation, so e.g. the TERRA-112M
 quickstart printed a NaN cell embedding cosine similarity), and they shift the
 neighbor segments of the cells around them. The default
 ``min_genes_per_cell=0`` keeps them, which reproduces existing results, and
@@ -130,14 +130,16 @@ def test_cells_without_genes_are_kept_by_default_with_a_warning(
     assert len(warned) == (2 if sample_key else 1)
     assert all('min_genes_per_cell >= 1' in message for message in warned)
 
-    # The cells stay, with empty cell embeddings, as before
+    # The cells stay, with empty cell embeddings, as before (all-zero with
+    # 'avg'; with 'softmax' all-zero or NaN, depending on its implementation)
     assert list(result.obs_names) == [f'c{i}' for i in range(N_CELLS)]
     empty = result[[f'c{i}' for i in EMPTY_CELLS]]
     for key in ('cell_emb', 'spatial_cell_emb'):
+        emb = np.asarray(empty.obsm[key])
         if agg_type == 'avg':
-            assert np.all(empty.obsm[key] == 0), key
+            assert np.all(emb == 0), key
         else:
-            assert np.all(np.isnan(empty.obsm[key])), key
+            assert np.all((emb == 0) | np.isnan(emb)), key
 
 
 @pytest.mark.parametrize('sample_key', [None, 'sample'])

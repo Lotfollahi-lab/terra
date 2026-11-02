@@ -422,10 +422,10 @@ def harmonize_tokenize_embed_pipeline(
         Minimum number of genes a cell must express to be kept during
         harmonization. The default 0 keeps cells without any expressed
         (harmonized) gene, which reproduces existing results. Such cells have
-        no tokens of their own, so their cell embeddings are empty (all-zero,
-        or NaN with `agg_type='softmax'`), and they shift the neighbor
-        segments of the cells around them (see `CellGraphTokenizer`); the
-        tokenizer warns when it finds them. 1 removes them.
+        no tokens of their own, so their cell embeddings are empty (e.g.
+        all-zero with `agg_type='avg'`), and they shift the neighbor segments
+        of the cells around them (see `CellGraphTokenizer`); the tokenizer
+        warns when it finds them. 1 removes them.
     gene_perturb_df:
         DataFrame with perturbation data, e.g.::
 
