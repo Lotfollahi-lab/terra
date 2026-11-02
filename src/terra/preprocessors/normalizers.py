@@ -9,6 +9,15 @@ import scipy.sparse as sp
 from skmisc.loess import loess
 
 
+def _sparse_as_csr(y):
+    """
+    Return a sparse result as CSR. Dividing a sparse matrix by a dense
+    array returns a COO matrix with recent scipy (e.g. 1.17), which AnnData
+    does not accept as a layer.
+    """
+    return y.tocsr() if sp.issparse(y) else y
+
+
 def normalize_by_analytic_pearson_residuals(x: sp.csr_matrix,
                                             theta: float = 100,
                                             ) -> sp.csr_matrix:
@@ -84,7 +93,7 @@ def normalize_by_cell_area(x: sp.csr_matrix,
         raise ValueError('Length of `cell_areas` does not match the number of'
                          'observations in `x`.')
 
-    y = x / cell_areas.reshape(-1, 1)
+    y = _sparse_as_csr(x / cell_areas.reshape(-1, 1))
 
     return y
 
@@ -117,7 +126,7 @@ def normalize_by_gene_corrected_read_depth(
     y = x / x.sum(axis=1).reshape(-1, 1) * (basis_target_read_depth +
         x.shape[1] * target_read_depth_per_gene)
 
-    return y
+    return _sparse_as_csr(y)
 
 
 def normalize_by_factor(x: sp.csr_matrix,
@@ -186,7 +195,7 @@ def normalize_by_read_depth(x: sp.csr_matrix,
     y:
         A sparse matrix containing the normalized features.
     """
-    y = x / x.sum(axis=1).reshape(-1, 1) * target_size
+    y = _sparse_as_csr(x / x.sum(axis=1).reshape(-1, 1) * target_size)
 
     return y
 

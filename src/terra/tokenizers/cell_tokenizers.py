@@ -89,7 +89,8 @@ from ..preprocessors.normalizers import normalize_by_read_depth
 from ..preprocessors.normalizers import normalize_by_seurat
 from ..preprocessors.normalizers import normalize_by_shifted_log
 from ..preprocessors.normalizers import normalize_by_pflog1ppf
-from .tokenize import process_gene_expr, process_gene_tokens, rank_gene_tokens
+from .tokenize import (process_gene_expr, process_gene_tokens,
+                       rank_gene_order, rank_gene_tokens)
 
 
 warnings.filterwarnings('ignore', message=".*The 'nopython' keyword.*") # noqa
@@ -157,12 +158,15 @@ class CellBaseTokenizer(ABC):
     include_special_tokens:
         If `True`, include special tokens.
     stable_rank_ties:
-        If `True`, the sparse ranking path breaks ties by gene order (stable
-        sort), like the dense path's lexsort, so both paths select the same
-        genes when a cell has more expressed genes than fit into its segment.
-        Default `False` keeps numpy's default sort, whose order of tied genes
-        is unspecified (it depends on the gene order and the numpy build); this
-        reproduces how existing data and models were tokenized.
+        If `True`, genes with tied ranking values (and, on the dense path,
+        tied counts) are ordered by ascending token id on both ranking
+        paths. The tokenization then does not depend on the order of the
+        genes (columns) of the input or on the numpy build, and both paths
+        select the same genes when a cell has more expressed genes than fit
+        into its segment. Default `False` keeps the previous tie order
+        (numpy's default sort over the stored genes on the sparse path, the
+        gene order on the dense path); this reproduces how existing data and
+        models were tokenized.
     zero_expr_from_raw_counts:
         If `True` (and `include_zero_expr_genes` is `False`), the dense ranking
         path identifies non-expressed genes by their raw count of 0, ranks
@@ -185,6 +189,13 @@ class CellBaseTokenizer(ABC):
         LOESS span of the 'seurat_v3' gene normalization. Seurat v3 and scanpy
         use 0.3; the default 0.75 reproduces how existing data were tokenized
         (the intended 0.3 was not applied, see `normalize_by_seurat`).
+    eliminate_stored_zeros:
+        If `True`, zeros stored explicitly in a sparse count matrix are
+        removed before tokenization (from a copy of the AnnData). On the
+        sparse ranking path they otherwise become gene tokens with value 0,
+        so the same counts stored with and without them tokenize differently.
+        Default `False` keeps them, as existing data were tokenized, and logs
+        a warning when they are present.
     stream_per_file:
         If `True`, assemble the output dataset by building and formatting
         one HF dataset PER input file and concatenating them, instead of
@@ -247,6 +258,7 @@ class CellBaseTokenizer(ABC):
             gcrd_basis_target_read_depth: float = 153.4768,
             gcrd_target_read_depth_per_gene: float = 0.0487,
             seurat_loess_span: float = 0.75,
+            eliminate_stored_zeros: bool = False,
             ):
         self.nproc = nproc
         self.processing_mode = processing_mode
@@ -269,12 +281,12 @@ class CellBaseTokenizer(ABC):
         self.include_special_tokens = include_special_tokens
         self.stream_per_file = stream_per_file
         self.stable_rank_ties = stable_rank_ties
-        self.rank_sort_kind = 'stable' if stable_rank_ties else None
         self.zero_expr_from_raw_counts = zero_expr_from_raw_counts
         self.gcrd_kwargs = dict(
             basis_target_read_depth=gcrd_basis_target_read_depth,
             target_read_depth_per_gene=gcrd_target_read_depth_per_gene)
         self.seurat_loess_span = seurat_loess_span
+        self.eliminate_stored_zeros = eliminate_stored_zeros
 
         # Make the PFlog1pPF target source explicit (frozen-corpus vs per-file)
         # so a missing path can never silently mismatch a frozen-trained model.
@@ -347,6 +359,33 @@ class CellBaseTokenizer(ABC):
             key for key in list(self.vocab) if 'ENS' in key]
         self.coding_miRNA_dict = dict(
             zip(self.coding_miRNA_ids, [True] * len(self.vocab)))
+
+    def _handle_stored_zeros(self,
+                             adata: ad.AnnData,
+                             ) -> ad.AnnData:
+        """
+        Remove (with `eliminate_stored_zeros`) or report the zeros stored
+        explicitly in a sparse `adata.X`. The input AnnData is not modified.
+        """
+        if not sp.issparse(adata.X):
+            return adata
+        n_stored_zeros = int(np.count_nonzero(adata.X.data == 0))
+        if n_stored_zeros == 0:
+            return adata
+        if self.eliminate_stored_zeros:
+            logger.info(
+                f'Removing {n_stored_zeros} zeros stored explicitly in adata.X.')
+            adata = adata.copy()
+            adata.X.eliminate_zeros()
+        elif not self.rank_differs_from_count:
+            logger.warning(
+                f'adata.X stores {n_stored_zeros} explicit zeros. The sparse '
+                'ranking path tokenizes them as genes with value 0, so the same '
+                'counts stored without them tokenize differently. Remove them '
+                'with adata.X.eliminate_zeros() or set '
+                '`eliminate_stored_zeros=True` (model config key '
+                '`data.eliminate_stored_zeros`).')
+        return adata
 
     def _load_pf_targets(self) -> tuple[float | None, float | None]:
         """Load the frozen corpus-wide PFlog1pPF targets (s1, s2).
@@ -593,6 +632,7 @@ class CellBaseTokenizer(ABC):
 
 class CellGraphTokenizer(CellBaseTokenizer):
     def __init__(self,
+                 pad_empty_neighbors: bool = False,
                  **base_tokenizer_kwargs,
                  ):
         """
@@ -600,6 +640,17 @@ class CellGraphTokenizer(CellBaseTokenizer):
 
         Parameters
         -----------
+        pad_empty_neighbors:
+            If `True`, a neighbor without any expressed vocabulary gene keeps
+            its segment as an all-padding segment, so every cell gets
+            `n_neighs` neighbor segments of `model_input_size /
+            (n_neighs + 1)` tokens, as on the dense ranking path. Default
+            `False` keeps the previous sparse-path layout: with k such
+            neighbors, a cell gets `n_neighs - k` neighbor segments of
+            `model_input_size / (n_neighs + 1 - k)` tokens (its k farthest
+            neighbors are dropped), so its segments no longer start where
+            the cell datasets read them. A `UserWarning` reports such cells
+            in the data either way.
         **base_tokenizer_kwargs:
             Keyword arguments for the initialization of the
             CellBaseTokenizer.
@@ -607,6 +658,7 @@ class CellGraphTokenizer(CellBaseTokenizer):
         super().__init__(**base_tokenizer_kwargs)
 
         self.seq_len_cell = int(self.model_input_size / (self.n_neighs + 1))
+        self.pad_empty_neighbors = pad_empty_neighbors
 
     def _tokenize_adata(self,
                         adata_file_path: Path | str | None = None,
@@ -673,6 +725,7 @@ class CellGraphTokenizer(CellBaseTokenizer):
         logger.info('Filtering cells...')
         # Filter cells based on adata.obs['filter_pass']
         adata = filter_cells(adata)
+        adata = self._handle_stored_zeros(adata)
 
         adata_neigh = adata
 
@@ -928,7 +981,9 @@ class CellGraphTokenizer(CellBaseTokenizer):
                     # Rank gene expression and append across chunks
                     adata_dict['gene_expr_cell'] += [
                         norm_counts_cell_count[j][
-                            np.argsort(-norm_counts_cell_rank[j], kind=self.rank_sort_kind)][
+                            rank_gene_order(norm_counts_cell_rank[j],
+                                            coding_miRNA_tokens_cell,
+                                            stable=self.stable_rank_ties)][
                                 :self.model_input_size]
                         for j in range(norm_counts_cell_count.shape[0])]
 
@@ -951,7 +1006,10 @@ class CellGraphTokenizer(CellBaseTokenizer):
                     # Rank gene expression and append across chunks
                     adata_dict['gene_expr_cell'] += [
                         norm_counts_cell_count[j].data[
-                            np.argsort(-norm_counts_cell_rank[j].data, kind=self.rank_sort_kind)][
+                            rank_gene_order(
+                                norm_counts_cell_rank[j].data,
+                                coding_miRNA_tokens_cell[norm_counts_cell_rank[j].indices],
+                                stable=self.stable_rank_ties)][
                                 :self.model_input_size]
                         for j in range(norm_counts_cell_count.shape[0])]
 
@@ -962,6 +1020,17 @@ class CellGraphTokenizer(CellBaseTokenizer):
                               and not self.include_zero_expr_genes)
             if mask_by_counts:
                 X_raw_coding = adata.X[:, coding_miRNA_idx]
+            if self.stable_rank_ties:
+                # Arrange the genes by token id, so that the stable sorts
+                # below order tied genes by token id
+                token_order = np.argsort(coding_miRNA_tokens_cell,
+                                         kind='stable')
+                coding_miRNA_tokens_cell = coding_miRNA_tokens_cell[
+                    token_order]
+                X_rank_coding = X_rank_coding[:, token_order]
+                X_count_coding = X_count_coding[:, token_order]
+                if mask_by_counts:
+                    X_raw_coding = X_raw_coding[:, token_order]
             for i in range(0, len(adata), self.chunk_size):
                 rank_block = X_rank_coding[i:i+self.chunk_size]
                 count_block = X_count_coding[i:i+self.chunk_size]
@@ -1070,6 +1139,14 @@ class CellGraphTokenizer(CellBaseTokenizer):
         gene_tokens_cell_neigh = adata_dict['gene_tokens_cell_neigh']
         gene_expr_cell_neigh = adata_dict['gene_expr_cell_neigh']
 
+        # Cells without an expressed vocabulary gene have an empty token list
+        # on the sparse ranking path (the dense path stores their panel with
+        # all tokens masked to 0)
+        pad_token = self.token_dict.get('<pad>', 0)
+        n_empty_cells = sum(1 for tokens in gene_tokens_cell_neigh
+                            if np.count_nonzero(tokens) == 0)
+        n_shifted_cells = 0
+
         # Loop through all cells to add neighbor cell gene tokens based on
         # position of neighbor cell compared to index cell. Gene tokens of cells
         # that are closer to the index cell will be added first.
@@ -1107,6 +1184,11 @@ class CellGraphTokenizer(CellBaseTokenizer):
             # instead of (n_neighbors x model_input_size).
             n_nonempty = sum(1 for k in ordered_neighbors
                              if len(gene_tokens_cell_neigh[k]) > 0)
+            if self.pad_empty_neighbors:
+                # Every neighbor keeps its segment (empty ones as padding)
+                n_nonempty = len(ordered_neighbors)
+            elif n_nonempty < len(ordered_neighbors):
+                n_shifted_cells += 1
             seg_length = self.model_input_size // (1 + n_nonempty)
             # Guard: if the per-segment length rounds to 0 (pathologically high
             # degree), store the full arrays so the stored segment set -- and
@@ -1123,6 +1205,11 @@ class CellGraphTokenizer(CellBaseTokenizer):
             for j, k in enumerate(ordered_neighbors):
                 neigh_tokens = gene_tokens_cell_neigh[k]
                 neigh_expr = gene_expr_cell_neigh[k]
+                if self.pad_empty_neighbors and len(neigh_tokens) == 0:
+                    # One pad token labels the neighbor's segment, which
+                    # _format_examples then pads to its full length
+                    neigh_tokens = [pad_token]
+                    neigh_expr = [0.0]
                 if cap is not None:
                     neigh_tokens = neigh_tokens[:cap]
                     neigh_expr = neigh_expr[:cap]
@@ -1149,6 +1236,30 @@ class CellGraphTokenizer(CellBaseTokenizer):
 
         del adata_dict['gene_tokens_cell_neigh']
         del adata_dict['gene_expr_cell_neigh']
+
+        if n_empty_cells > 0:
+            # A warning (not only a log record), so that it is shown without
+            # logging configuration
+            message = (
+                f'{n_empty_cells} of {n_cells} cells have no expressed gene '
+                'of the model vocabulary, so their own segment holds only '
+                'padding and their cell embeddings are empty.')
+            if n_shifted_cells > 0:
+                message += (
+                    ' As neighbors they do not count as segments, which '
+                    f'lengthens the segments of {n_shifted_cells} cells, moves '
+                    'them away from the positions the model expects and drops '
+                    'their farthest neighbors.')
+            message += (
+                ' Remove such cells before tokenization, e.g. with '
+                '`min_genes_per_cell >= 1` in `harmonize_adata` or '
+                '`harmonize_tokenize_embed_pipeline`')
+            if n_shifted_cells > 0:
+                message += (
+                    ', or keep an all-padding segment for them as neighbors '
+                    'with `pad_empty_neighbors=True` (model config key '
+                    '`data.pad_empty_neighbors`)')
+            warnings.warn(message + '.', UserWarning, stacklevel=2)
 
         # Add cell IDs for collecting metadata at inference time
         adata_dict['cell_id'] = adata.obs['cell_id'].values.tolist() 
@@ -1415,6 +1526,7 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
         logger.info('Filtering cells.')
         # Filter to remove poor quality cells
         adata = filter_cells(adata)
+        adata = self._handle_stored_zeros(adata)
 
         logger.info('Computing spatial neighborhood graph and aggregating counts.')
         # Aggregate neighborhood cell gene expression
@@ -1679,11 +1791,15 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
                     # Rank gene expression and append across chunks
                     adata_dict['gene_expr_cell'] += [
                         norm_counts_cell_count[j][
-                            np.argsort(-norm_counts_cell_rank[j], kind=self.rank_sort_kind)]
+                            rank_gene_order(norm_counts_cell_rank[j],
+                                            coding_miRNA_tokens_cell,
+                                            stable=self.stable_rank_ties)]
                         for j in range(norm_counts_cell_count.shape[0])]
                     adata_dict['gene_expr_neighborhood'] += [
                         norm_counts_neighborhood_count[j][
-                            np.argsort(-norm_counts_neighborhood_rank[j], kind=self.rank_sort_kind)]
+                            rank_gene_order(norm_counts_neighborhood_rank[j],
+                                            coding_miRNA_tokens_neighborhood,
+                                            stable=self.stable_rank_ties)]
                         for j in range(norm_counts_neighborhood_count.shape[0])]
 
                 else:
@@ -1719,11 +1835,19 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
                     # Rank gene expression and append across chunks
                     adata_dict['gene_expr_cell'] += [
                         norm_counts_cell_count[j].data[
-                            np.argsort(-norm_counts_cell_rank[j].data, kind=self.rank_sort_kind)]
+                            rank_gene_order(
+                                norm_counts_cell_rank[j].data,
+                                coding_miRNA_tokens_cell[
+                                    norm_counts_cell_rank[j].indices],
+                                stable=self.stable_rank_ties)]
                         for j in range(norm_counts_cell_rank.shape[0])]
                     adata_dict['gene_expr_neighborhood'] += [
                         norm_counts_neighborhood_count[j].data[
-                            np.argsort(-norm_counts_neighborhood_rank[j].data, kind=self.rank_sort_kind)]
+                            rank_gene_order(
+                                norm_counts_neighborhood_rank[j].data,
+                                coding_miRNA_tokens_neighborhood[
+                                    norm_counts_neighborhood_rank[j].indices],
+                                stable=self.stable_rank_ties)]
                         for j in range(norm_counts_neighborhood_rank.shape[0])]
 
         else:  # dense path with lexsort tie-breaking
@@ -1732,6 +1856,11 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
             # identify expressed genes
             mask_by_counts = (self.zero_expr_from_raw_counts
                               and not self.include_zero_expr_genes)
+            # Last tie-break: token id with stable_rank_ties, otherwise the
+            # gene order (lexsort is stable)
+            cell_tie_keys, neigh_tie_keys = (
+                ((coding_miRNA_tokens_cell,), (coding_miRNA_tokens_neighborhood,))
+                if self.stable_rank_ties else ((), ()))
             for i in range(0, len(adata), self.chunk_size):
                 # --- Cell ---
                 cell_rank_block = adata[
@@ -1781,12 +1910,12 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
 
                     if mask_by_counts:
                         # Expressed genes first, then rank, then count
-                        cell_order = np.lexsort((
+                        cell_order = np.lexsort(cell_tie_keys + (
                             -cell_count_row, -cell_rank_row,
                             ~cell_expressed_block[j]))
                     else:
-                        cell_order = np.lexsort(
-                            (-cell_count_row, -cell_rank_row))
+                        cell_order = np.lexsort(cell_tie_keys + (
+                            -cell_count_row, -cell_rank_row))
 
                     sorted_cell_tokens = coding_miRNA_tokens_cell[
                         cell_order].copy()
@@ -1812,12 +1941,12 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
                     neigh_count_row = neigh_count_block[j]
 
                     if mask_by_counts:
-                        neigh_order = np.lexsort((
+                        neigh_order = np.lexsort(neigh_tie_keys + (
                             -neigh_count_row, -neigh_rank_row,
                             ~neigh_expressed_block[j]))
                     else:
-                        neigh_order = np.lexsort(
-                            (-neigh_count_row, -neigh_rank_row))
+                        neigh_order = np.lexsort(neigh_tie_keys + (
+                            -neigh_count_row, -neigh_rank_row))
 
                     sorted_neigh_tokens = coding_miRNA_tokens_neighborhood[
                         neigh_order].copy()

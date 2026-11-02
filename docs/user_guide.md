@@ -45,6 +45,7 @@ adata = harmonize_tokenize_embed_pipeline(
     batch_key="batch",
     model_folder_path=model_dir,
     cache_directory_path="./terra_cache",
+    min_genes_per_cell=1,              # remove cells without any expressed gene
 )
 ```
 
@@ -68,12 +69,15 @@ from terra import (download_pretrained, harmonize_adata, tokenize_adata,
 model_dir = download_pretrained("Lotfollahi-lab/TERRA-96M")
 
 # 1. Harmonize: map gene symbols -> Ensembl IDs and apply QC, using the bundle's
-#    gene-reference files (min_*_per_* = 0 mirrors the pipeline default).
+#    gene-reference files, as the pipeline call above does: cells without any
+#    expressed gene are removed (their embeddings would be empty; the
+#    pipeline's default min_genes_per_cell=0 keeps them, which reproduces
+#    earlier results), all genes are kept.
 adata = harmonize_adata(
     adata,                              # raw counts in adata.X
     gene_mapping_dict_file_path=os.path.join(model_dir, "ensembl_dictionary.pkl"),
     gene_occurrence_count_file_path=os.path.join(model_dir, "gene_count_dictionary.pkl"),
-    min_genes_per_cell=0,
+    min_genes_per_cell=1,
     min_cells_per_gene=0,
 )
 

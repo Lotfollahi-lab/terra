@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 import scipy.sparse as sp
 
-from terra.tokenizers import CellGraphTokenizer
+from terra.tokenizers import CellGraphTokenizer, CellNeighborhoodTokenizer
 
 N_CELLS = 40
 N_GENES = 60
@@ -91,7 +91,7 @@ def test_stable_sparse_path_matches_dense_path(token_dictionary_file_path):
 def test_default_sparse_path_is_unchanged(token_dictionary_file_path):
     # Without the option the sparse path keeps numpy's default sort.
     tk, default = _tokenize(token_dictionary_file_path)
-    assert tk.rank_sort_kind is None
+    assert not tk.stable_rank_ties
     adata = _make_adata()
     x = adata.X.tocsr()
     token_ids = np.arange(N_GENES) + 2
@@ -100,6 +100,40 @@ def test_default_sparse_path_is_unchanged(token_dictionary_file_path):
         expected = token_ids[row.indices][np.argsort(-row.data)]
         np.testing.assert_array_equal(np.asarray(tokens),
                                       expected[:MODEL_INPUT_SIZE])
+
+
+@pytest.mark.parametrize('tokenizer', [CellGraphTokenizer,
+                                       CellNeighborhoodTokenizer])
+@pytest.mark.parametrize('dense', [False, True])
+def test_stable_rank_ties_do_not_depend_on_gene_order(
+        token_dictionary_file_path, tokenizer, dense):
+    adata = _make_adata()
+    permuted = adata[:, np.random.default_rng(1).permutation(N_GENES)].copy()
+    # As if the genes had been stored in this order (sorted CSR indices)
+    permuted.X = sp.csr_matrix(permuted.X.toarray())
+    keys = ('gene_tokens_cell', 'gene_expr_cell', 'gene_tokens_neighborhood',
+            'gene_expr_neighborhood', 'seg_tokens_neighborhood')
+    results = []
+    for data in (adata, permuted):
+        tk = tokenizer(
+            model_input_size=MODEL_INPUT_SIZE, n_neighs=N_NEIGHS,
+            token_dictionary_file_path=token_dictionary_file_path,
+            include_special_tokens=False, rank_cell_norm_method=None,
+            rank_gene_norm_method=None, rank_count_norm_method=None,
+            count_cell_norm_method=None, count_gene_norm_method=None,
+            count_count_norm_method='shifted_log', stable_rank_ties=True)
+        # Same ranking through the dense (lexsort) path
+        tk.rank_differs_from_count = dense
+        adata_dict = tk._tokenize_adata(adata=data)
+        results.append([
+            tk._format_examples({key: adata_dict[key][i] for key in keys
+                                 if key in adata_dict})
+            for i in range(N_CELLS)])
+    for example, permuted_example in zip(*results):
+        np.testing.assert_array_equal(example['gene_tokens'],
+                                      permuted_example['gene_tokens'])
+        np.testing.assert_array_equal(example['gene_expr'],
+                                      permuted_example['gene_expr'])
 
 
 RESIDUAL_RANKS = {
@@ -186,16 +220,7 @@ def test_n_nonzero_tokens_counts_expressed_genes_on_dense_path(
     assert results[0] == results[1]
 
 
-def test_gcrd_constants_are_configurable(token_dictionary_file_path,
-                                        monkeypatch):
-    # With recent scipy, sparse / dense-matrix division returns a COO matrix,
-    # which recent anndata refuses as a layer; convert (unrelated to the
-    # constants under test).
-    from terra.tokenizers import cell_tokenizers
-    gcrd_fn = cell_tokenizers.normalize_by_gene_corrected_read_depth
-    monkeypatch.setattr(
-        cell_tokenizers, 'normalize_by_gene_corrected_read_depth',
-        lambda x, **kwargs: sp.csr_matrix(gcrd_fn(x, **kwargs)))
+def test_gcrd_constants_are_configurable(token_dictionary_file_path):
     gcrd = dict(rank_cell_norm_method='gene_corrected_read_depth',
                 count_cell_norm_method='gene_corrected_read_depth',
                 count_count_norm_method=None)
@@ -237,7 +262,8 @@ def test_inference_tokenizer_reads_optional_settings(tmp_path, monkeypatch):
                 rank_count_norm_method=None, count_cell_norm_method=None,
                 count_gene_norm_method=None,
                 count_count_norm_method='shifted_log',
-                stable_rank_ties=True, gcrd_basis_target_read_depth=151.0)
+                stable_rank_ties=True, gcrd_basis_target_read_depth=151.0,
+                pad_empty_neighbors=True, eliminate_stored_zeros=True)
     with open(tmp_path / 'model_config.yaml', 'w') as f:
         yaml.safe_dump({'data': data}, f)
 
@@ -247,6 +273,8 @@ def test_inference_tokenizer_reads_optional_settings(tmp_path, monkeypatch):
             cache_directory_path=str(tmp_path))
     assert captured['stable_rank_ties'] is True
     assert captured['gcrd_basis_target_read_depth'] == 151.0
+    assert captured['pad_empty_neighbors'] is True
+    assert captured['eliminate_stored_zeros'] is True
     assert 'zero_expr_from_raw_counts' not in captured
     assert 'gcrd_target_read_depth_per_gene' not in captured
 

@@ -86,6 +86,36 @@ def process_gene_expr(gene_expr: list[float],
     return processed_gene_expr
     
 
+def rank_gene_order(gene_scores: np.ndarray,
+                    gene_tokens: np.ndarray,
+                    stable: bool = False,
+                    ) -> np.ndarray:
+    """
+    Return the indices that rank genes by descending gene score.
+
+    Parameters
+    ----------
+    gene_scores:
+        1D vector containing gene scores (normalized gene expression).
+    gene_tokens:
+        1D vector containing the gene tokens matching `gene_scores`.
+    stable:
+        If `True`, order genes with tied scores by ascending token id, so the
+        ranking does not depend on the order of the genes in the input.
+        Default `False` uses numpy's default sort, whose order of tied genes
+        is unspecified (it depends on the input order and the numpy build).
+
+    Returns
+    ----------
+    sorted_indices:
+        1D vector of indices into `gene_scores` from the highest to the
+        lowest score.
+    """
+    if stable:
+        return np.lexsort((gene_tokens, -gene_scores))
+    return np.argsort(-gene_scores)
+
+
 def rank_gene_tokens(gene_scores: np.ndarray,
                      gene_tokens: np.ndarray,
                      n_tokens: int | None = None,
@@ -104,9 +134,9 @@ def rank_gene_tokens(gene_scores: np.ndarray,
     n_tokens:
         Number of tokens to be returned.
     stable:
-        If `True`, break ties in `gene_scores` by input order (stable sort).
-        Default `False` uses numpy's default sort, whose order of tied genes
-        is unspecified (it depends on the input order and the numpy build).
+        If `True`, order genes with tied scores by ascending token id (see
+        `rank_gene_order`). Default `False` uses numpy's default sort, whose
+        order of tied genes is unspecified.
 
     Returns
     ----------
@@ -114,8 +144,7 @@ def rank_gene_tokens(gene_scores: np.ndarray,
         1D vector containing gene tokens ranked by gene scores.
     """
     # Sort gene tokens by gene scores
-    sorted_indices = np.argsort(-gene_scores,
-                                kind='stable' if stable else None)
+    sorted_indices = rank_gene_order(gene_scores, gene_tokens, stable=stable)
     ranked_gene_tokens = gene_tokens[sorted_indices][:n_tokens]
-    
+
     return ranked_gene_tokens

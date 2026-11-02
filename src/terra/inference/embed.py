@@ -420,7 +420,12 @@ def harmonize_tokenize_embed_pipeline(
         harmonization.
     min_genes_per_cell:
         Minimum number of genes a cell must express to be kept during
-        harmonization.
+        harmonization. The default 0 keeps cells without any expressed
+        (harmonized) gene, which reproduces existing results. Such cells have
+        no tokens of their own, so their cell embeddings are empty (e.g.
+        all-zero with `agg_type='avg'`), and they shift the neighbor segments
+        of the cells around them (see `CellGraphTokenizer`); the tokenizer
+        warns when it finds them. 1 removes them.
     gene_perturb_df:
         DataFrame with perturbation data, e.g.::
 
@@ -498,6 +503,20 @@ def harmonize_tokenize_embed_pipeline(
             species=species,
             min_cells_per_gene=0,
             min_genes_per_cell=0)
+        # The genes of the samples are selected by name below, which needs
+        # unique gene names (previously an InvalidIndexError after every
+        # sample was tokenized)
+        duplicated_genes = adata.var_names[
+            adata.var_names.duplicated()].unique().tolist()
+        if duplicated_genes:
+            raise ValueError(
+                f'{len(duplicated_genes)} genes occur in more than one column '
+                f"of adata ({', '.join(duplicated_genes[:10])}"
+                f"{', ...' if len(duplicated_genes) > 10 else ''}). With "
+                '`sample_key`, each gene must occur in one column: make '
+                'adata.var_names unique (e.g. with '
+                'adata.var_names_make_unique()) or sum the counts of the '
+                'duplicated columns.')
             
         samples = adata.obs[sample_key].unique().tolist()
         idx_list = []
