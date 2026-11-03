@@ -920,8 +920,10 @@ def init_model_from_config(model_config: dict,
     distances, finetuning) builds the model here, so none of them can drift
     from training. Keys missing from the config fall back to the defaults of
     ``train.py``, which differ from ``init_model``'s own defaults for some keys
-    (e.g. ``mlp_bias``), and ``n_special_values`` is read from the config
-    rather than counted in the token dictionary.
+    (e.g. ``mlp_bias``). ``n_special_values`` is read from the config; configs
+    of models trained before the key existed fall back to the number of
+    special values (``spv``) in the token dictionary, which training used
+    then.
 
     Parameters
     -----------
@@ -947,6 +949,9 @@ def init_model_from_config(model_config: dict,
     meta = model_config['meta']
     data = model_config['data']
     n_special_tokens = len(meta['special_tokens'])
+    n_special_values = data.get('n_special_values')
+    if n_special_values is None:
+        n_special_values = sum(1 for key in token_dict if 'spv' in key)
     return init_model(
         gt_type=meta['gt_type'],
         count_encoding=meta['count_encoding'],
@@ -958,7 +963,7 @@ def init_model_from_config(model_config: dict,
                  n_special_tokens),
         n_special_tokens=n_special_tokens,
         n_segments=data['n_segments'],
-        n_special_values=data.get('n_special_values', 0),
+        n_special_values=n_special_values,
         enc_emb_dim=meta['enc_emb_dim'],
         enc_depth=meta['enc_depth'],
         pred_emb_dim=meta['pred_emb_dim'],

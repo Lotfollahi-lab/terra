@@ -83,7 +83,7 @@ def _token_dict():
     return token_dict, genes
 
 
-def _training_model(config, layout, token_dict):
+def _training_model(config, layout, token_dict, **overrides):
     """Build encoder and predictor the way ``train.py`` built them."""
     meta, data = config['meta'], config['data']
     n_special_tokens = len(meta['special_tokens'])
@@ -101,7 +101,7 @@ def _training_model(config, layout, token_dict):
         use_layer_norm=meta['use_layer_norm'],
         sep_gene_tokens_neb=data['sep_gene_tokens_neb'],
         predict_gene=meta['predict_gene'], pos_learnable=meta['pos_learnable'],
-        **TRAINING_KWARGS[layout])
+        **{**TRAINING_KWARGS[layout], **overrides})
 
 
 def _perturb(module, seed):
@@ -130,6 +130,23 @@ def test_builder_loads_training_checkpoint_strictly(layout):
         assert 'backbone.value_embed.fc1.bias' in rebuilt_encoder.state_dict()
     else:
         assert rebuilt_predictor.backbone.new_spc
+
+
+def test_builder_counts_special_values_for_older_configs():
+    """Models trained before ``data.n_special_values`` existed sized their
+    special value table by the ``spv`` entries of the token dictionary."""
+    token_dict, _ = _token_dict()
+    n_spv = sum(1 for key in token_dict if 'spv' in key)
+    config = copy.deepcopy(CONFIG_112M)
+    config['data'].pop('n_special_values')
+    torch.manual_seed(0)
+    encoder, predictor = _training_model(
+        config, '112M', token_dict, n_special_values=n_spv)
+
+    rebuilt_encoder, rebuilt_predictor = init_model_from_config(
+        config, token_dict, 'cpu')
+    rebuilt_encoder.load_state_dict(encoder.state_dict())
+    rebuilt_predictor.load_state_dict(predictor.state_dict())
 
 
 @pytest.mark.parametrize('layout', ['112M', '96M'])
