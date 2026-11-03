@@ -94,6 +94,50 @@ def _all_gather_with_local_grad(
     gathered[rank] = local
     return torch.cat(gathered, dim=0)
 
+def _reduction_device(device: torch.device) -> torch.device:
+    """Device of the tensors of a collective: the GPU for NCCL, else CPU."""
+    import torch.distributed as dist
+    return device if dist.get_backend() == 'nccl' else torch.device('cpu')
+
+
+def _mean_over_ranks(value: float | torch.Tensor,
+                     device: torch.device) -> float:
+    """
+    Mean of a scalar over the DDP ranks, for logging. A collective: every rank
+    must call it at the same step. Without distributed training (or with one
+    rank) it returns the value itself.
+    """
+    import torch.distributed as dist
+    value = float(value)
+    if not (dist.is_available() and dist.is_initialized()):
+        return value
+    world_size = dist.get_world_size()
+    if world_size == 1:
+        return value
+    total = torch.tensor(value, dtype=torch.float64,
+                         device=_reduction_device(device))
+    dist.all_reduce(total)
+    return float(total) / world_size
+
+
+def _meter_average_over_ranks(meter: AverageMeter,
+                              device: torch.device) -> float:
+    """
+    Average of the values an AverageMeter recorded on all DDP ranks (sum of
+    the sums over sum of the counts), for logging. A collective, like
+    `_mean_over_ranks`; the meter's own average without distributed training.
+    """
+    import torch.distributed as dist
+    if not (dist.is_available() and dist.is_initialized()):
+        return meter.avg
+    if dist.get_world_size() == 1:
+        return meter.avg
+    totals = torch.tensor([meter.sum, meter.count], dtype=torch.float64,
+                          device=_reduction_device(device))
+    dist.all_reduce(totals)
+    return float(totals[0] / totals[1]) if totals[1] > 0 else meter.avg
+
+
 os.environ["NCCL_ASYNC_ERROR_HANDLING"] = "1" # Better error propagation
 
 _GLOBAL_SEED = 0
@@ -1217,7 +1261,8 @@ def train(args: dict,
                      'scaler': None if scaler is None else scaler.state_dict(),
                      'epoch': epoch,
                      'zero_epoch_tracking': True,
-                     'loss': loss_meter.avg,
+                     # Over all ranks (every rank saves a checkpoint here)
+                     'loss': _meter_average_over_ranks(loss_meter, device),
                      'batch_size': batch_size,
                      'world_size': world_size,
                      'lr': lr}
@@ -1876,9 +1921,13 @@ def train(args: dict,
             #                grad_stats.max))
 
             #log_stats()
+            if itr % log_freq == 0:
+                # Loss of the global batch: mean over the ranks (a collective,
+                # so every rank computes it; it was rank 0's own loss before)
+                logged_loss = _mean_over_ranks(loss.detach(), device)
             if WORLD_RANK == 0 and (itr % log_freq == 0):
                 log_payload = {
-                    "loss": float(loss),
+                    "loss": logged_loss,
                     "lr": float(_new_lr),
                     "epoch": int(epoch),
                     "global_norm_enc": float(grad_stats.global_norm),
@@ -1944,7 +1993,8 @@ def train(args: dict,
                     epoch, n_iterations_done // checkpoint_freq_iter)
 
         # -- Save Checkpoint after every epoch
-        logger.info('avg. loss %.3f' % loss_meter.avg)
+        logger.info('avg. loss %.3f'
+                    % _meter_average_over_ranks(loss_meter, device))
         save_checkpoint(epoch)
 
     if use_profiler and WORLD_RANK == 0 :
