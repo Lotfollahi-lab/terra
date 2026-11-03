@@ -5,6 +5,7 @@ import pickle
 import time
 import yaml
 from collections import defaultdict
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Literal
 
@@ -146,6 +147,41 @@ def _excluded_gene_tokens(agg_excluded_genes: list[str] | None,
             f"vocabulary; not in the token dictionary: {unknown[:10]}"
             f"{' ...' if len(unknown) > 10 else ''}")
     return [token_dict[gene] for gene in agg_excluded_genes]
+
+
+@contextmanager
+def _unique_obs_names(adata: ad.AnnData):
+    """
+    Context in which the cell names of `adata` are unique.
+
+    Duplicated names are made unique as by ``obs_names_make_unique`` and
+    restored on exit, so that the caller's AnnData is not modified (a view is
+    copied instead, since renaming its cells would make it an actual AnnData
+    in place).
+
+    Parameters
+    -----------
+    adata:
+        AnnData object of the caller.
+
+    Yields
+    -----------
+    adata:
+        `adata` (or a copy of a view) with unique cell names.
+    """
+    if adata.obs_names.is_unique:
+        yield adata
+    elif adata.is_view:
+        adata = adata.copy()
+        adata.obs_names_make_unique()
+        yield adata
+    else:
+        obs_names = adata.obs_names
+        adata.obs_names_make_unique()
+        try:
+            yield adata
+        finally:
+            adata.obs_names = obs_names
 
 
 def _encoder_backbone(encoder: torch.nn.Module) -> torch.nn.Module:
@@ -757,18 +793,20 @@ def harmonize_tokenize_embed_pipeline(
         with open(Path(model_folder_path) / 'token_dictionary.pkl', 'rb') as file:
             _check_special_token_metadata(adata, pickle.load(file))
     datasets = []
-    adata.obs_names_make_unique()
     if sample_key:
         logger.info(f"Harmonizing AnnData...")
-        adata = harmonize_adata(
-            adata,
-            gene_mapping_dict_file_path=gene_mapping_dict_file_path,
-            gene_occurrence_count_file_path=gene_occurrence_count_file_path,
-            gene_occurrence_count_filter_value=gene_occurrence_count_filter_value,
-            ensembl_release=ensembl_release,
-            species=species,
-            min_cells_per_gene=0,
-            min_genes_per_cell=0)
+        # The harmonized AnnData (a copy) gets unique cell names; the
+        # caller's AnnData keeps its names
+        with _unique_obs_names(adata) as adata_unique:
+            adata = harmonize_adata(
+                adata_unique,
+                gene_mapping_dict_file_path=gene_mapping_dict_file_path,
+                gene_occurrence_count_file_path=gene_occurrence_count_file_path,
+                gene_occurrence_count_filter_value=gene_occurrence_count_filter_value,
+                ensembl_release=ensembl_release,
+                species=species,
+                min_cells_per_gene=0,
+                min_genes_per_cell=0)
         # The genes of the samples are selected by name below, which needs
         # unique gene names (previously an InvalidIndexError after every
         # sample was tokenized)
@@ -838,15 +876,16 @@ def harmonize_tokenize_embed_pipeline(
               "This is the intended behavior if the AnnData object contains only one sample. "
               "Otherwise please specify a `sample_key` or results will be invalid!!!")
         logger.info(f"Harmonizing AnnData...")
-        adata = harmonize_adata(
-            adata,
-            gene_mapping_dict_file_path=gene_mapping_dict_file_path,
-            gene_occurrence_count_file_path=gene_occurrence_count_file_path,
-            gene_occurrence_count_filter_value=gene_occurrence_count_filter_value,
-            ensembl_release=ensembl_release,
-            species=species,
-            min_cells_per_gene=min_cells_per_gene,
-            min_genes_per_cell=min_genes_per_cell)
+        with _unique_obs_names(adata) as adata_unique:
+            adata = harmonize_adata(
+                adata_unique,
+                gene_mapping_dict_file_path=gene_mapping_dict_file_path,
+                gene_occurrence_count_file_path=gene_occurrence_count_file_path,
+                gene_occurrence_count_filter_value=gene_occurrence_count_filter_value,
+                ensembl_release=ensembl_release,
+                species=species,
+                min_cells_per_gene=min_cells_per_gene,
+                min_genes_per_cell=min_genes_per_cell)
         if 'batch' in adata.uns:
             adata.obs[batch_key] = adata.uns['batch']
         elif batch_key not in adata.obs:
