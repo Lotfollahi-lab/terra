@@ -184,6 +184,7 @@ def init_dataloader_and_sampler(cell_dataset: CellBaseDataset,
                                 rank: int,
                                 mega_batch_mult_max: int,
                                 seed: int = _GLOBAL_SEED,
+                                shuffle: bool = False,
                                 **dataloader_kwargs,
     ) -> tuple[torch.utils.data.DataLoader,
                torch.utils.data.distributed.DistributedSampler | None]:
@@ -205,6 +206,10 @@ def init_dataloader_and_sampler(cell_dataset: CellBaseDataset,
     seed:
         Seed of the sampler's shuffling (the training seed; defaults to the
         historical seed 0).
+    shuffle:
+        If `True` and not `distributed`, shuffle the data in every epoch (call
+        the sampler's `set_epoch` before each epoch). Default `False` keeps the
+        order of the dataset.
     dataloader_kwargs:
         Keyword arguments for the dataloader.
 
@@ -228,7 +233,7 @@ def init_dataloader_and_sampler(cell_dataset: CellBaseDataset,
             dataset=cell_dataset,
             num_replicas=world_size,
             rank=rank,
-            shuffle=False,
+            shuffle=shuffle,
             seed=seed,
         )
         

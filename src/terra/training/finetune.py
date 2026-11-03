@@ -363,7 +363,9 @@ def finetune(
     ----------
     args:
         Config dict. Relevant sub-dicts: args['model'], args['data'],
-        args['finetune'].
+        args['finetune']. The training data are shuffled in every epoch with
+        the configured seed; ``args['finetune']['shuffle'] = False`` keeps
+        their order.
     train_adata:
         AnnData with obs columns 'cell_id' and the integer label column.
     train_dataset:
@@ -511,7 +513,9 @@ def finetune(
         tokenized_seq_len_cell=tokenized_seq_len_cell
     )
 
-    train_loader, _ = init_dataloader_and_sampler(
+    # The training data are shuffled in every epoch (they were always seen
+    # in the same order before); finetune.shuffle False keeps their order
+    train_loader, train_sampler = init_dataloader_and_sampler(
         cell_dataset=train_cell_dataset,
         batch_size=args['data']['batch_size'],
         distributed=False,
@@ -523,7 +527,8 @@ def finetune(
         drop_last=False,
         persistent_workers=False,
         mega_batch_mult_max=args['data'].get('mega_batch_mult_max', 1000),
-        seed=seed
+        seed=seed,
+        shuffle=args['finetune'].get('shuffle', True)
     )
 
     # -------------------------------------------------------------------- #
@@ -802,6 +807,7 @@ def finetune(
     val_loss, val_accuracy = None, None
 
     for epoch in range(start_epoch, num_epochs):
+        train_sampler.set_epoch(epoch)
         model.train()
         train_running_loss = 0.0
         train_correct_preds = 0

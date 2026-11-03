@@ -10,7 +10,9 @@ that loads a trained checkpoint now builds the model with
 ``init_model_from_config``.
 
 Finetuning also hard-coded the seed 0; the optional top-level ``seed`` config
-key now sets it, as for pretraining.
+key now sets it, as for pretraining. Supervised finetuning saw the training
+cells in the same order in every epoch; it now shuffles them in every epoch
+with that seed (``finetune.shuffle: false`` keeps the order).
 """
 
 import copy
@@ -393,6 +395,67 @@ def test_finetune_seed_is_configurable(tmp_path, monkeypatch):
     # Without the key the historical seed 0 is used
     assert torch.equal(heads[0], heads[1])
     assert not torch.equal(heads[1], heads[2])
+
+
+def _training_orders(monkeypatch, finetune_module, parts, args):
+    """Run supervised finetuning and return the cell order of every epoch."""
+    orders, loaders = [], []
+    make_loader = finetune_module.init_dataloader_and_sampler
+
+    class RecordingLoader:
+        def __init__(self, loader):
+            self.loader = loader
+
+        def __len__(self):
+            return len(self.loader)
+
+        def __iter__(self):
+            orders.append([])
+            for item in self.loader:
+                orders[-1].extend(item[0]['cell_id'])
+                yield item
+
+    def make_recording_loader(*args, **kwargs):
+        loader, sampler = make_loader(*args, **kwargs)
+        loaders.append(loader)
+        # The training loader is created first
+        if len(loaders) == 1:
+            loader = RecordingLoader(loader)
+        return loader, sampler
+
+    monkeypatch.setattr(finetune_module, 'init_dataloader_and_sampler',
+                        make_recording_loader)
+    finetune_module.finetune(
+        args=args, train_adata=parts['train'][0],
+        train_dataset=parts['train'][1], test_adata=parts['test'][0],
+        test_dataset=parts['test'][1])
+    return orders
+
+
+def test_finetune_shuffles_the_training_data_every_epoch(tmp_path, monkeypatch):
+    import terra.training.finetune as finetune_module
+
+    bundle = tmp_path / 'bundle'
+    _write_bundle(bundle, '96M')
+    parts = _split(*_tokenized_data(bundle, tmp_path / 'cache'))
+    in_order = list(parts['train'][1]['cell_id'])
+
+    def orders(seed=0, **finetune_args):
+        args = _finetune_args(bundle, seed=seed)
+        args['finetune'].update(num_epochs=2, **finetune_args)
+        return _training_orders(monkeypatch, finetune_module, parts, args)
+
+    shuffled = orders()
+    assert len(shuffled) == 2
+    for order in shuffled:
+        assert sorted(order) == sorted(in_order)
+        assert order != in_order
+    assert shuffled[0] != shuffled[1]
+    # Reproducible with the seed, different with another one
+    assert orders() == shuffled
+    assert orders(seed=1) != shuffled
+    # finetune.shuffle False keeps the order of the data
+    assert orders(shuffle=False) == [in_order, in_order]
 
 
 def test_self_supervised_dataset_shuffle_follows_seed(tmp_path):
