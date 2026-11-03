@@ -513,6 +513,27 @@ def resolve_special_token_padding(model_config: dict,
     return True
 
 
+def strip_ddp_prefix(state_dict: dict) -> dict:
+    """
+    Remove the leading ``module.`` that DistributedDataParallel adds to the
+    keys of a state dict. Only the prefix is removed, so submodules whose
+    names end in ``module`` (e.g. ``rda_module``) keep their keys.
+
+    Parameters
+    ----------
+    state_dict:
+        State dict, e.g. of a checkpoint saved in training.
+
+    Returns
+    ----------
+    state_dict:
+        State dict with the prefix removed from its keys.
+    """
+    prefix = 'module.'
+    return {(key[len(prefix):] if key.startswith(prefix) else key): value
+            for key, value in state_dict.items()}
+
+
 def load_checkpoint(device: str,
                     r_path: str,
                     encoder: gt.GeneTransformerBaseEncoder,
@@ -607,9 +628,7 @@ def load_checkpoint(device: str,
         if target_encoder is not None:
             pretrained_dict = checkpoint['target_encoder']
             if not is_training:
-                pretrained_dict = {
-                    key.replace("module.", ""): value for key, value in 
-                    pretrained_dict.items()}
+                pretrained_dict = strip_ddp_prefix(pretrained_dict)
             msg = target_encoder.load_state_dict(pretrained_dict)
             logger.info(
                 f'Loaded pretrained target encoder from epoch {epoch} with msg:'

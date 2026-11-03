@@ -38,7 +38,8 @@ from terra.masks.block_masking import BlockMaskCollator
 from terra.masks.utils import apply_masks
 from terra.training.train import resolve_seed
 from terra.utils.helper import (init_model_from_config, init_opt,
-                                resolve_special_token_padding)
+                                resolve_special_token_padding,
+                                strip_ddp_prefix)
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,7 @@ def _load_pretrained_checkpoint(device, r_path, encoder, predictor,
                                 target_encoder):
     """Load pretrained weights, stripping any ``module.`` DDP prefix."""
     ckpt = torch.load(r_path, map_location=torch.device(device))
-    _strip = lambda sd: {k.replace('module.', ''): v for k, v in sd.items()}
+    _strip = strip_ddp_prefix
     if encoder is not None:
         logger.info('encoder load: %s',
                     encoder.load_state_dict(_strip(ckpt['encoder'])))
