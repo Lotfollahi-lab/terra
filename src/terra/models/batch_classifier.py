@@ -142,6 +142,7 @@ class BatchClassifierHead(nn.Module):
 
 def mean_pool_cell_embedding(
         z: torch.Tensor, n_special_tokens: int = 0,
+        pad_special_tokens: bool = False,
         ) -> torch.Tensor:
     """Cell-level embedding for downstream batch classification.
 
@@ -154,10 +155,14 @@ def mean_pool_cell_embedding(
     them would let the classifier shortcut via the special-token
     embedding rather than the cell representation we actually want
     debiased.
+
+    In a batch whose special tokens are padded (``pad_special_tokens``),
+    the context holds no special tokens, so every position is pooled
+    (its first ``n_special_tokens`` entries are gene tokens).
     """
     if z.dim() != 3:
         raise ValueError(
             f"Expected (B, L, D) tensor, got shape {tuple(z.shape)}.")
-    if n_special_tokens > 0:
+    if n_special_tokens > 0 and not pad_special_tokens:
         z = z[:, n_special_tokens:, :]
     return z.mean(dim=1)

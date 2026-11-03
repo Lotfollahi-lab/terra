@@ -14,6 +14,12 @@ concatenation for padded batches; batches with special tokens are unchanged.
 With ``restrict_special_attention`` a padded special token had no key left,
 which gave NaN outputs without SDPA that spread to every token; it now
 attends to itself.
+
+The mean-pooled cell embedding of the batch classifier and the distribution
+alignment dropped the first ``n_special_tokens`` context entries, which are
+gene tokens in padded batches; with a single context token (masks trimmed to
+the sparsest cell) it averaged nothing and the loss became NaN. It now pools
+every entry of padded batches.
 """
 
 import pytest
@@ -22,6 +28,7 @@ from datasets import Dataset
 
 from terra.datasets.cell_datasets import init_cell_dataset
 from terra.masks.block_masking import BlockMaskCollator
+from terra.models.batch_classifier import mean_pool_cell_embedding
 from terra.masks.utils import padding_key_masks
 from terra.utils.helper import init_model
 
@@ -194,3 +201,33 @@ def test_restricted_attention_unchanged_with_special_tokens():
         -1, 1, tokens.shape[1], -1).clone()
     expected[:, :, 0, 1:] = False
     torch.testing.assert_close(masks_attention, expected)
+
+
+
+@pytest.mark.parametrize('special_token_pad_ratio', [0.0, 1.0])
+def test_cell_embedding_pools_the_gene_tokens_of_the_context(
+        special_token_pad_ratio):
+    udata, masks_enc, _, _, pad_special_tokens = _batch(
+        'combined', special_token_pad_ratio)
+    assert pad_special_tokens == bool(special_token_pad_ratio)
+    encoder, _ = _model('combined', new_spc=True)
+    with torch.no_grad():
+        z, _ = encoder(batch=udata, masks=list(masks_enc))
+    # The context holds the special token only if it is not padded
+    context = masks_enc[0]
+    is_gene_token = context >= 1
+    assert is_gene_token[:, 0].all() == pad_special_tokens
+    expected = torch.stack([z[0][i][is_gene_token[i]].mean(0)
+                            for i in range(N_CELLS)])
+    torch.testing.assert_close(
+        mean_pool_cell_embedding(z[0], n_special_tokens=1,
+                                 pad_special_tokens=pad_special_tokens),
+        expected)
+
+
+def test_cell_embedding_of_a_single_context_gene_token_is_finite():
+    # Context of a padded batch trimmed to one (gene) token
+    z = torch.randn(N_CELLS, 1, 8)
+    torch.testing.assert_close(
+        mean_pool_cell_embedding(z, n_special_tokens=1,
+                                 pad_special_tokens=True), z[:, 0])

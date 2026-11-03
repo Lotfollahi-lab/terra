@@ -1620,6 +1620,7 @@ def train(args: dict,
                     cell_emb = mean_pool_cell_embedding(
                         z_encoder_output[0],
                         n_special_tokens=n_special_tokens,
+                        pad_special_tokens=pad_special_tokens,
                     )
                     cell_emb_rev = grad_reverse(cell_emb, alpha=grl_alpha)
                     # Multi-head classifier: returns list of logits
@@ -1696,6 +1697,7 @@ def train(args: dict,
                         cell_emb_for_align = mean_pool_cell_embedding(
                             z_encoder_output[0],
                             n_special_tokens=n_special_tokens,
+                            pad_special_tokens=pad_special_tokens,
                         )
                     else:
                         cell_emb_for_align = cell_emb
