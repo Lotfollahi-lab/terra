@@ -53,24 +53,34 @@ def _build_perturb_index(df: pd.DataFrame) -> dict[str, list[dict]]:
         index[row.perturbed_cell_id].append(row._asdict())
     return index
 
+
 def _perturb_batch_with_idx(
     batch: dict,
     index: dict[str, list[dict]],
     seq_len_cell: int = 256,
+    pad_gene_tokens: bool = True,
     ) -> dict:
     """
     Modify the tensors in-place (cheap) and return the same dict.
 
     Cells are matched by their own ``cell_id`` for ``cell``-target
-    perturbations. ``neighborhood``-target perturbations on specific cells also
-    need the neighbor IDs (the ``cell_ids`` column added by
-    ``add_neigh_cell_ids``); they are skipped if that column is absent.
+    perturbations. ``neighborhood``-target perturbations of a specific cell
+    edit, in the sequences of the cells that have it as a neighbor, the
+    positions of its own tokens; they need the per-token neighbor IDs (the
+    ``cell_ids`` column added by ``add_neigh_cell_ids``) and are skipped if
+    that column is absent.
 
     Parameters
     -----------
     batch:
         The dictionary mapping column -> list-of-values returned by Hugging Face
         when batched=True.
+    index:
+        Perturbations per perturbed cell ID (``_build_perturb_index``).
+    seq_len_cell:
+        Number of cell gene tokens (excluding neighborhood gene tokens).
+    pad_gene_tokens:
+        If `True`, also zero out the gene tokens of knocked-out genes.
     """
     # Mapped without the torch format; convert the edited columns to tensors so
     # the in-place per-cell edits below work (no-op if already tensors).
@@ -79,22 +89,20 @@ def _perturb_batch_with_idx(
     own_ids = batch["cell_id"]            # each cell's own id (always present)
     neigh_ids = batch.get("cell_ids")     # neighbor ids (add_neigh_cell_ids only)
     B = len(own_ids)
+    cell_positions = torch.arange(seq_len_cell)
 
-    def _apply(b, row, is_index_cell):
+    def _apply(b, row, positions):
         gene_tokens = batch["gene_tokens"][b]
         gene_expr = batch["gene_expr"][b]
         if row["perturbed_gene_token"] == "all":
-            idx = (slice(0, seq_len_cell) if is_index_cell
-                   else slice(seq_len_cell, None))
+            idx = positions
         else:
-            token_slice = (gene_tokens[:seq_len_cell] if is_index_cell
-                           else gene_tokens[seq_len_cell:])
-            offset = 0 if is_index_cell else seq_len_cell
-            idx = torch.nonzero(
-                token_slice == row["perturbed_gene_token"],
-                as_tuple=True)[0] + offset
+            idx = positions[
+                gene_tokens[positions] == row["perturbed_gene_token"]]
         if row["perturbation_type"] == "knockout":
             gene_expr[idx] = 0.0
+            if pad_gene_tokens:
+                gene_tokens[idx] = 0
         elif row["perturbation_type"] == "foldchange":
             gene_expr[idx] *= row["foldchange"]
         else:
@@ -105,15 +113,21 @@ def _perturb_batch_with_idx(
         # cell-target: edit cell b's own tokens when b is in the perturb list
         for row in index.get(own, []):
             if row["perturbation_target"] == "cell":
-                _apply(b, row, is_index_cell=True)
-        # neighborhood-target: edit cell b's neighborhood for any listed neighbor
+                _apply(b, row, cell_positions)
+        # neighborhood-target: edit the tokens of each listed neighbor of b
         if neigh_ids is not None:
-            for nid in dict.fromkeys(neigh_ids[b][seq_len_cell:]):
+            neighbors = np.asarray(neigh_ids[b][seq_len_cell:])
+            for nid in dict.fromkeys(neighbors.tolist()):
                 if nid == own:
                     continue
-                for row in index.get(nid, []):
-                    if row["perturbation_target"] == "neighborhood":
-                        _apply(b, row, is_index_cell=False)
+                rows = [row for row in index.get(nid, [])
+                        if row["perturbation_target"] == "neighborhood"]
+                if not rows:
+                    continue
+                positions = torch.as_tensor(
+                    np.nonzero(neighbors == nid)[0] + seq_len_cell)
+                for row in rows:
+                    _apply(b, row, positions)
     # Return the edited columns as numpy arrays. datasets re-encodes numpy via
     # fast buffer copies; torch tensors are ~2x slower and python lists are
     # pathologically slow (can appear to hang) for these wide token columns.
@@ -259,7 +273,8 @@ def _affected_cell_indices(dataset: Dataset,
     ``neighborhood`` target (``"all"`` targets every cell) -- and, for a
     specific gene, that gene token is present in the relevant segment (the
     cell's own gene tokens for a ``cell`` target, the neighborhood tokens for a
-    ``neighborhood`` target).
+    ``neighborhood`` target, and only those of the listed neighbor for a
+    specific cell).
     """
     n = len(dataset)
     affected = np.zeros(n, dtype=bool)
@@ -269,6 +284,7 @@ def _affected_cell_indices(dataset: Dataset,
         cell_target = row["perturbation_target"] == "cell"
         tok = row["perturbed_gene_token"]
 
+        neighbor_positions = None
         if row["perturbed_cell_id"] == "all":
             targeted = np.ones(n, dtype=bool)
         elif cell_target:
@@ -276,12 +292,16 @@ def _affected_cell_indices(dataset: Dataset,
                 cell_id_col = np.asarray([str(c) for c in dataset["cell_id"]])
             targeted = cell_id_col == str(row["perturbed_cell_id"])
         else:
-            # neighborhood target on a specific cell: cells having it as neighbor
+            # neighborhood target on a specific cell: cells having it as
+            # neighbor, at the positions of its tokens
             if neigh_lists is None:
                 neigh_lists = dataset["cell_ids"]
             pid = str(row["perturbed_cell_id"])
+            neighbor_positions = [
+                np.asarray([str(x) for x in ids[seq_len_cell:]]) == pid
+                for ids in neigh_lists]
             targeted = np.fromiter(
-                (pid in {str(x) for x in ids[seq_len_cell:]} for ids in neigh_lists),
+                (positions.any() for positions in neighbor_positions),
                 dtype=bool, count=n)
 
         if tok != "all":
@@ -289,7 +309,14 @@ def _affected_cell_indices(dataset: Dataset,
                 gene_tokens = np.asarray(dataset["gene_tokens"])
             seg = (gene_tokens[:, :seq_len_cell] if cell_target
                    else gene_tokens[:, seq_len_cell:])
-            targeted = targeted & (seg == int(tok)).any(axis=1)
+            present = seg == int(tok)
+            if neighbor_positions is None:
+                targeted = targeted & present.any(axis=1)
+            else:
+                targeted = targeted & np.fromiter(
+                    (present[i, :len(positions)][positions].any()
+                     for i, positions in enumerate(neighbor_positions)),
+                    dtype=bool, count=n)
 
         affected |= targeted
         if return_masks:
@@ -335,7 +362,9 @@ def perturb_dataset(dataset: Dataset,
         `perturbed_cell_id` (a cell ID or `"all"`), `perturbed_ensembl_id` (an
         ensembl ID or `"all"`), `perturbation_target` (`"cell"` or
         `"neighborhood"`) and `perturbation_type` (`"knockout"` or
-        `"foldchange"`), plus a `foldchange` value for fold-change rows.
+        `"foldchange"`), plus a `foldchange` value for fold-change rows. A
+        `"neighborhood"` target on a specific cell edits that cell's tokens in
+        the sequences of the cells that have it as a neighbor.
     model_folder_path:
         Path to the folder containing the model config and token dictionary;
         used to map ensembl IDs to token IDs.
@@ -359,7 +388,7 @@ def perturb_dataset(dataset: Dataset,
         edit (computed from the unperturbed dataset).
     pad_gene_tokens:
         If `True`, also zero out the gene tokens (not just the expression) of
-        knocked-out genes.
+        knocked-out genes, for all cells or specific cells.
     adjust_positions:
         If `True`, re-pack each segment so padded (zeroed) gene positions are
         moved to the end after perturbation.
@@ -423,6 +452,7 @@ def perturb_dataset(dataset: Dataset,
             _perturb_batch_with_idx,
             index=perturb_index,
             seq_len_cell=seq_len_cell,
+            pad_gene_tokens=pad_gene_tokens,
         )
 
     # Compute which cells the perturbations actually edit *before* mapping, from
