@@ -72,6 +72,9 @@ and this project adheres to [Semantic Versioning][].
     shown regardless of the logging configuration.
 -   The training launcher no longer forces `TORCH_DISTRIBUTED_DEBUG=DETAIL`;
     set it in the job environment to enable it.
+-   Importing TERRA no longer configures the root logger; TERRA's log records
+    are shown once the application configures logging (e.g.
+    `logging.basicConfig(level="INFO")`).
 
 ### Fixed
 
@@ -138,6 +141,23 @@ and this project adheres to [Semantic Versioning][].
     draws one rotation per forward pass, its target encoder runs in eval
     mode, and a warning flags frequency scales that alias on micrometre
     coordinates.
+-   Tokenization and `harmonize_tokenize_embed_pipeline` no longer modify the
+    input AnnData: the tokenizers no longer add the neighbor graph and
+    normalized layers to it or log-transform a dense float32 `adata.X` in
+    place, and the pipeline no longer renames its cells. Tokenizing the same
+    AnnData twice gives the same result, dense and sparse input give the same
+    values with shifted-log rank and count normalization, and the pipeline's
+    returned and saved harmonized AnnData holds the counts. Embeddings of the
+    released models are unchanged.
+-   A sample with too few cells for the neighbor graph raises a clear error
+    that names it.
+-   Cell-neighborhood tokenization with cell-area count normalization
+    normalizes the neighborhood counts instead of the index cell's counts.
+-   Training with batch correction and metatoken dropout: cycle consistency
+    skips the second encoder pass in batches whose padded metatokens cannot
+    carry the swapped labels and checks the label range of rank models, and
+    the adversarial classifier and distribution alignment pool every gene
+    token of such batches.
 -   The training launcher supports plain `srun` launches, and `meta.add_cls`
     is no longer silently ignored for cell-neighborhood models; the embedding
     and finetuning entry points reject models trained with it with a clear
