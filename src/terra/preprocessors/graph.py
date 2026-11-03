@@ -16,11 +16,20 @@ def _combine_neighbor_graphs(adata: ad.AnnData,
                              radius: float | None,
                              delaunay: bool,
                              include_self_loop: bool,
+                             batch: str | None = None,
                              ) -> ad.AnnData:
     """
     Helper function to combine neighbor graphs computed using different
-    methods.
+    methods. `batch` names the data in error messages.
     """
+    if n_neighs is not None and adata.n_obs <= n_neighs:
+        # Otherwise scikit-learn fails with "Expected n_neighbors <
+        # n_samples_fit", which names neither the cause nor the data
+        raise ValueError(
+            f"Cannot compute the {n_neighs} nearest neighbors of each cell: "
+            f"the data{'' if batch is None else f' of batch {batch!r}'} "
+            f"has {adata.n_obs} cells, but at least {n_neighs + 1} are "
+            "needed. Remove samples with too few cells.")
     if n_neighs is not None:
         # Compute knn spatial neighborhood graph
         sq.gr.spatial_neighbors(adata,
@@ -135,7 +144,8 @@ def construct_neighbor_graph(adata: ad.AnnData,
                 n_neighs,
                 radius,
                 delaunay,
-                include_self_loop)
+                include_self_loop,
+                batch=batch)
             adata_batch_list.append(adata_batch)
 
         # Block-diagonal concatenate graphs (disconnected components)

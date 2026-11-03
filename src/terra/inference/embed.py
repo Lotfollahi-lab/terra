@@ -747,13 +747,12 @@ def harmonize_tokenize_embed_pipeline(
         _ref = Path(model_folder_path) / 'gene_count_dictionary.pkl'
         if _ref.is_file():
             gene_occurrence_count_file_path = str(_ref)
+    with open(Path(model_folder_path) / 'model_config.yaml', 'r') as file:
+        model_config = yaml.safe_load(file)
     # Special tokens are only tokenized for models that have them; check
     # their values before any processing
-    include_special_tokens = False
-    if keep_special_tokens:
-        with open(Path(model_folder_path) / 'model_config.yaml', 'r') as file:
-            include_special_tokens = bool(
-                yaml.safe_load(file)['meta']['special_tokens'])
+    include_special_tokens = (
+        keep_special_tokens and bool(model_config['meta']['special_tokens']))
     if include_special_tokens:
         with open(Path(model_folder_path) / 'token_dictionary.pkl', 'rb') as file:
             _check_special_token_metadata(adata, pickle.load(file))
@@ -803,6 +802,14 @@ def harmonize_tokenize_embed_pipeline(
                 species=species,
                 min_cells_per_gene=min_cells_per_gene,
                 min_genes_per_cell=min_genes_per_cell)
+            # Each cell needs n_neighs neighbors within its sample
+            n_neighs = model_config['data']['n_neighs']
+            if adata_sample.n_obs <= n_neighs:
+                raise ValueError(
+                    f'Sample {sample!r} has {adata_sample.n_obs} cells (after '
+                    f'harmonization), but the model needs at least '
+                    f'{n_neighs + 1} cells per sample ({n_neighs} neighbors '
+                    'per cell). Remove the sample from adata.')
             idx_list.extend(adata_sample.obs.index.tolist())
             gene_list.extend(adata_sample.var.index.tolist())
             batch_ids.extend([sample] * len(adata_sample))
