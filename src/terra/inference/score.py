@@ -155,7 +155,8 @@ def get_emd_distance(
         List with gene IDs for which cell gene embeddings will be retrieved.
     neighborhood_gene_ensembl_id:
         List with gene IDs for which neighborhood gene embeddings will be
-        retrieved.
+        retrieved: the same genes in the same order as `cell_gene_ensembl_id`
+        (a `ValueError` is raised otherwise).
     batch_size:
         Dataloader param.
     pin_memory:

@@ -995,7 +995,9 @@ def gene_embed_dataset(dataset: Dataset,
        It could have value of `cell` or/and `neighborhood`.
     return_distance:
         If `True` will compute and return distance between cosine sim of cell_neb
-        and cell_cell matrix.
+        and cell_cell matrix. Compares each gene's similarities to the other
+        genes, so `cell_gene_ids` and `neighborhood_gene_ids` must list the
+        same genes in the same order (a `ValueError` is raised otherwise).
     return_cosine_sim:
         If `True` will compute and return cosine_sim matrix.
     return_receptor_average:
@@ -1036,6 +1038,15 @@ def gene_embed_dataset(dataset: Dataset,
           ``[sum, count]``.
         - If none of the above flags is set: `None`.
     """
+    if return_distance and list(cell_gene_ids) != list(neighborhood_gene_ids):
+        # The distances exclude each gene's similarity to itself, i.e. the
+        # diagonal of the (cell gene, neighborhood gene) matrices
+        raise ValueError(
+            'return_distance=True compares the similarities of each gene to '
+            'the other genes in the cell and the neighborhood context, so the '
+            'cell and neighborhood gene lists must be the same genes in the '
+            f'same order (got {len(cell_gene_ids)} cell genes and '
+            f'{len(neighborhood_gene_ids)} neighborhood genes).')
     logger.info('STEP 1: LOADING CONFIG...')
     model_config_file_path = Path(model_folder_path) / 'model_config.yaml'
     token_dictionary_file_path = Path(model_folder_path) / 'token_dictionary.pkl'

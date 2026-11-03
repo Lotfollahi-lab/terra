@@ -6,6 +6,11 @@ Tests for the gene embedding entry points.
   accumulators of a gene were views of one tensor, so after the first batch
   every batch added its counts twice and the averages were too small. GPU
   results were correct (``.cpu()`` copies there).
+* ``return_distance=True`` (``get_emd_distance``) compares each gene's
+  similarities to the other genes in the cell and neighborhood contexts.
+  Different cell and neighborhood gene lists failed with a bare
+  ``AssertionError`` (different lengths) or excluded the wrong gene from the
+  comparison (same length); they now raise a ``ValueError``.
 """
 
 import pickle
@@ -13,7 +18,8 @@ import pickle
 import numpy as np
 import pytest
 
-from terra import get_average_gene_embed
+from terra import get_average_gene_embed, get_emd_distance
+from terra.inference.embed import gene_embed_dataset
 
 SEQ_LEN_CELL = 16
 
@@ -57,3 +63,30 @@ def test_average_gene_embeddings_do_not_depend_on_the_batch_size(
         np.testing.assert_allclose(
             outputs[8][key], outputs[len(dataset)][key], rtol=1e-5,
             atol=1e-6)
+
+
+@pytest.mark.parametrize('n_neighborhood_genes', [2, 3])
+def test_distances_need_the_same_cell_and_neighborhood_genes(
+        tiny, n_neighborhood_genes):
+    bundle = tiny.bundle('96M')
+    dataset = tiny.dataset(bundle)
+    genes, _ = _present_genes(tiny, bundle)
+    with open(bundle / 'token_dictionary.pkl', 'rb') as f:
+        token_dict = pickle.load(f)
+    ids = [token_dict[gene] for gene in genes]
+    with pytest.raises(ValueError, match='same genes in the same order'):
+        gene_embed_dataset(
+            dataset, str(bundle), cell_gene_ids=ids[:3],
+            neighborhood_gene_ids=ids[3:3 + n_neighborhood_genes],
+            compute_cosine_with_list=['cell', 'neighborhood'],
+            return_distance=True, batch_size=8, num_workers=0)
+    with pytest.raises(ValueError, match='same genes in the same order'):
+        get_emd_distance(
+            dataset, str(bundle), cell_gene_ensembl_id=genes[:3],
+            neighborhood_gene_ensembl_id=genes[3:3 + n_neighborhood_genes],
+            batch_size=8, num_workers=0)
+    emd, emd_matrix = get_emd_distance(
+        dataset, str(bundle), cell_gene_ensembl_id=genes[:3],
+        neighborhood_gene_ensembl_id=genes[:3], batch_size=8, num_workers=0)
+    assert np.asarray(emd).shape == (len(dataset),)
+    assert np.isfinite(np.asarray(emd)).all()
