@@ -159,8 +159,9 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         # Read-Depth-Aware (RDA) conditioning: scFoundation-style
         # per-cell depth embedding broadcast across each cell's
         # gene-token positions. Zero-initialized output head makes
-        # this a no-op at step 0 even when ``enabled=True``, so
-        # backward-compat is preserved.
+        # the depth term a no-op at step 0 even when ``enabled=True``
+        # (the other weights are still initialized differently for a
+        # given seed, since this module draws from the generator).
         self.rda_enabled = bool(rda_kwargs) and rda_kwargs.get(
             'enabled', False)
         if self.rda_enabled:

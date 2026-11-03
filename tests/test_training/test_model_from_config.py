@@ -149,6 +149,14 @@ def test_builder_counts_special_values_for_older_configs():
     rebuilt_predictor.load_state_dict(predictor.state_dict())
 
 
+def test_builder_rejects_models_trained_with_cls_tokens():
+    config = copy.deepcopy(CONFIG_112M)
+    config['meta']['add_cls'] = True
+    token_dict, _ = _token_dict()
+    with pytest.raises(ValueError, match='add_cls'):
+        init_model_from_config(config, token_dict, 'cpu')
+
+
 @pytest.mark.parametrize('layout', ['112M', '96M'])
 def test_builder_matches_previous_embedding_construction(layout):
     """The released models embed exactly as before (embed.py's old call)."""

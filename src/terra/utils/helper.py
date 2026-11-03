@@ -948,6 +948,12 @@ def init_model_from_config(model_config: dict,
     """
     meta = model_config['meta']
     data = model_config['data']
+    if meta.get('add_cls', False):
+        raise ValueError(
+            "The model was trained with meta.add_cls, whose CLS tokens the "
+            "embedding and finetuning entry points do not build (the TERRA "
+            "tokenizers write no CLS token columns), so it cannot be loaded "
+            "here.")
     n_special_tokens = len(meta['special_tokens'])
     n_special_values = data.get('n_special_values')
     if n_special_values is None:

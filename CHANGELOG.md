@@ -134,11 +134,14 @@ and this project adheres to [Semantic Versioning][].
     warmup. Mid-epoch checkpoints are written every `checkpoint_freq_iter`
     iterations, without the extra checkpoint after the first iteration of
     each epoch. Training of the released configurations is unchanged.
--   RDA depth conditioning starts as an exact no-op, as documented. RoPE draws
-    one rotation per forward pass, its target encoder runs in eval mode, and a
-    warning flags frequency scales that alias on micrometre coordinates.
+-   The RDA depth term is exactly zero at initialization, as documented. RoPE
+    draws one rotation per forward pass, its target encoder runs in eval
+    mode, and a warning flags frequency scales that alias on micrometre
+    coordinates.
 -   The training launcher supports plain `srun` launches, and `meta.add_cls`
-    is no longer silently ignored for cell-neighborhood models.
+    is no longer silently ignored for cell-neighborhood models; the embedding
+    and finetuning entry points reject models trained with it with a clear
+    error instead of a weight-size mismatch.
 -   `harmonize_tokenize_embed_pipeline` accepts a `pathlib.Path` save path and
     no longer derives the batch label from it; `get_gene_embed` accepts
     repeated genes.

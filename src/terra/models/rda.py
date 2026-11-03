@@ -45,10 +45,11 @@ class DepthConditioning(nn.Module):
 
     Takes per-cell ``log(1 + T)`` (and optionally ``log(1 + S)``)
     through a 2-layer MLP whose output is **zero-initialized**, so
-    the depth contribution to the encoder is exactly zero at step 0.
-    This makes ``rda.enabled = True`` strictly backward-compatible
-    with the no-RDA baseline -- any divergence emerges through
-    training, not initialization.
+    the depth contribution to the encoder is exactly zero at step 0;
+    any effect of the depth embedding emerges through training. Note
+    that the module's own weights are drawn from the global generator,
+    so for a given seed the other weights of an RDA model are
+    initialized differently from those of a model without RDA.
 
     Args
     ----
