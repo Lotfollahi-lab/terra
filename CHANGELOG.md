@@ -75,6 +75,19 @@ and this project adheres to [Semantic Versioning][].
 -   Importing TERRA no longer configures the root logger; TERRA's log records
     are shown once the application configures logging (e.g.
     `logging.basicConfig(level="INFO")`).
+-   Supervised finetuning shuffles the training data in every epoch with the
+    configured seed; `finetune.shuffle: false` restores the previous fixed
+    order. Self-supervised finetuning samples gene masks unless
+    `data.sample_gene_masks` is set to false (it failed without the key).
+-   Fold changes in `perturb_dataset` multiply the counts: for shifted-log
+    models such as TERRA-112M and TERRA-96M a value `v` becomes
+    `log1p(expm1(v) * foldchange)` (previously the log values were
+    multiplied).
+-   `gene_embed_dataset(return_distance=True)` and `get_emd_distance` require
+    the same cell and neighborhood genes in the same order and raise a clear
+    error otherwise; `harmonize_tokenize_embed_pipeline` raises an error for
+    `gene_perturb_df`, which it never applied (use `perturb_dataset` and
+    `embed_dataset`).
 
 ### Fixed
 
@@ -158,6 +171,22 @@ and this project adheres to [Semantic Versioning][].
     carry the swapped labels and checks the label range of rank models, and
     the adversarial classifier and distribution alignment pool every gene
     token of such batches.
+-   Perturbing the neighborhood of specific cells edits only those cells'
+    tokens in their neighbors' sequences (it edited the whole neighborhood),
+    and knockouts of specific cells honour `pad_gene_tokens`.
+-   `get_average_gene_embed` on CPU no longer counts cells twice when the
+    data span several batches (GPU results are unchanged).
+-   Embeddings of models with ALiBi position encodings include the ALiBi
+    bias, as in training.
+-   Checkpoints of models with read-depth-aware conditioning can be loaded
+    for inference and finetuning; `tokenize_adata` reads the normalization
+    files shipped in the model folder; `prepare_finetuned_model` scales the
+    merged LoRA adapters by `peft_alpha / peft_rank`, as PEFT does.
+-   `filter_dataset_by_cell_ids` gives every call a cache of its own, so
+    repeated calls in one directory no longer return an earlier subset; the
+    caches are removed when the Python session ends.
+-   With `sample_key`, the pipeline returns the genes in the input order
+    instead of a different order in every process.
 -   The training launcher supports plain `srun` launches, and `meta.add_cls`
     is no longer silently ignored for cell-neighborhood models; the embedding
     and finetuning entry points reject models trained with it with a clear
