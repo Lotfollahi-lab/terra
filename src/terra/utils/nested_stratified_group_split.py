@@ -46,8 +46,11 @@ Sample Directory structure created by NestedStratifiedGroupKFold (if K_outer = 2
             ├── nested_cv_visualization.png
 """
 
+import atexit
 import os
 import pickle
+import shutil
+import tempfile
 from pathlib import Path
 from collections import Counter
 from typing import Union, Optional, List
@@ -89,6 +92,8 @@ def filter_dataset_by_cell_ids(
         Number of processes for parallel processing (default 4).
     temp_dir : str
         Custom temporary directory path. If None, uses the current working directory.
+        Every call writes its result to a new subdirectory, which is removed
+        when the Python session ends (the returned dataset reads from it).
         
     Returns
     --------
@@ -101,19 +106,6 @@ def filter_dataset_by_cell_ids(
     # Define the filter function
     def filter_function(ids):
         return [cell_id in target_cell_ids_set for cell_id in ids]
-    
-    # Cleanup function
-    def cleanup_cache_file(cache_file_path):
-        """Clean up cache file."""
-        try:
-            if os.path.exists(cache_file_path):
-                os.remove(cache_file_path)
-            # Also clean up the cache directory if it's empty
-            cache_dir = os.path.dirname(cache_file_path)
-            if os.path.exists(cache_dir) and not os.listdir(cache_dir):
-                os.rmdir(cache_dir)
-        except Exception:
-            pass  # Silently fail if cleanup doesn't work
 
     # Determine temp directory
     if temp_dir is None:
@@ -121,26 +113,29 @@ def filter_dataset_by_cell_ids(
     
     # Create directory if it doesn't exist
     os.makedirs(temp_dir, exist_ok=True)
-    cache_file = os.path.join(temp_dir, "filtered_dataset_cache_by_cell_ids.arrow")
-    
+    # A new cache directory for every call, never read from an earlier call:
+    # with one fixed cache file name, a later call in the same directory
+    # loaded the subset of an earlier call (with num_proc > 1 its shard files
+    # were never removed). The files back the returned dataset, which is
+    # memory-mapped and pickled by file path (e.g. for DataLoader workers or
+    # save_to_disk with num_proc > 1), so they are removed, shards included,
+    # when the Python session ends.
+    cache_dir = tempfile.mkdtemp(
+        prefix='filtered_dataset_cache_by_cell_ids_', dir=temp_dir)
+    atexit.register(shutil.rmtree, cache_dir, ignore_errors=True)
     try:
-        # Apply the filter with cache location
-        filtered_dataset = dataset.filter(
+        return dataset.filter(
             filter_function,
             input_columns="cell_id",
             batched=True,
             batch_size=batch_size,
             num_proc=num_proc,
-            cache_file_name=cache_file,
+            cache_file_name=os.path.join(cache_dir, 'filtered_dataset.arrow'),
+            load_from_cache_file=False,
         )
-        
-        # Clean up cache file after successful filtering
-        cleanup_cache_file(cache_file)
-        
-        return filtered_dataset
-    except Exception as e:
+    except Exception:
         # Clean up on error
-        cleanup_cache_file(cache_file)
+        shutil.rmtree(cache_dir, ignore_errors=True)
         raise
 
 
