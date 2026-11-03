@@ -286,7 +286,9 @@ def normalize_by_shifted_log(x: sp.csr_matrix) -> sp.csr_matrix:
         x = x.tocsr()
         x = x.astype(np.float32)
     else:
-        x = np.asarray(x, dtype=np.float32)
+        # A copy: `sc.pp.log1p` transforms an array in place, so a float32
+        # input (e.g. a dense adata.X) was log-transformed itself
+        x = np.array(x, dtype=np.float32)
 
     y = sc.pp.log1p(x)
 

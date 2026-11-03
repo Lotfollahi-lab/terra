@@ -101,6 +101,40 @@ norm_factor_file_path = base_path / 'norm_factors.csv'
 token_dictionary_file_path = base_path / 'token_dictionary.pkl'
 
 
+def _working_copy(adata: ad.AnnData) -> ad.AnnData:
+    """
+    AnnData for a tokenizer to annotate instead of the caller's `adata`.
+
+    Tokenizing adds the neighbor graph (`obsp`, `uns`) and normalized layers
+    to the AnnData it processes. The copy has its own annotations, graphs and
+    layer mapping, but shares the matrices (`X`, layers, `obsm`), which the
+    tokenizers read without modifying them, so the caller's AnnData is not
+    modified and its data is not copied.
+
+    Parameters
+    ----------
+    adata:
+        AnnData object of the caller.
+
+    Returns
+    ----------
+    adata:
+        AnnData object with the data of `adata`.
+    """
+    if adata.isbacked:
+        return adata.to_memory()
+    return ad.AnnData(
+        X=adata.X,
+        obs=adata.obs.copy(),
+        var=adata.var.copy(),
+        uns=dict(adata.uns),
+        obsm=dict(adata.obsm),
+        varm=dict(adata.varm),
+        layers=dict(adata.layers),
+        obsp=dict(adata.obsp),
+        varp=dict(adata.varp))
+
+
 class CellBaseTokenizer(ABC):
     """
     CellBaseTokenizer class.
@@ -721,6 +755,8 @@ class CellGraphTokenizer(CellBaseTokenizer):
             if adata_file_path is not None:
                 raise ValueError(
                     'Specify either `adata` or `adata_file_path`, not both.')
+            # The caller's AnnData is not modified
+            adata = _working_copy(adata)
 
         logger.info('Filtering cells...')
         # Filter cells based on adata.obs['filter_pass']
@@ -1522,6 +1558,8 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
             if adata_file_path is not None:
                 raise ValueError(
                     'Specify either `adata` or `adata_file_path`, not both.')
+            # The caller's AnnData is not modified
+            adata = _working_copy(adata)
 
         logger.info('Filtering cells.')
         # Filter to remove poor quality cells
