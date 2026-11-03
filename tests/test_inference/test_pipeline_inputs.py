@@ -10,9 +10,12 @@ Tests for the handling of the caller's data by the inference API.
   samples were tokenized; the pipeline now names the sample.
 * ``tokenize_adata`` log-transformed a dense float32 ``adata.X`` in place,
   so tokenizing the same AnnData again gave log1p(log1p(counts)) values.
+* The pipeline documented ``gene_perturb_df`` but ignored it, so the returned
+  embeddings were unperturbed; it now raises a ``ValueError``.
 """
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from terra import (harmonize_adata, harmonize_tokenize_embed_pipeline,
@@ -79,3 +82,18 @@ def test_tokenizing_an_anndata_twice_gives_the_same_data(tiny, tmp_path):
         np.testing.assert_array_equal(
             np.stack([np.asarray(x) for x in datasets[0][column]]),
             np.stack([np.asarray(x) for x in datasets[1][column]]))
+
+
+@pytest.mark.parametrize('sample_key', ['sample', None])
+def test_pipeline_rejects_gene_perturbations(tiny, tmp_path, sample_key):
+    bundle = tiny.bundle('96M')
+    gene_perturb_df = pd.DataFrame({
+        'perturbed_cell_id': ['all'], 'perturbed_ensembl_id': ['all'],
+        'perturbation_target': ['cell'], 'perturbation_type': ['knockout'],
+        'foldchange': [np.nan]})
+    with pytest.raises(ValueError, match='perturb_dataset'):
+        harmonize_tokenize_embed_pipeline(
+            adata=tiny.adata(), sample_key=sample_key,
+            model_folder_path=str(bundle),
+            cache_directory_path=str(tmp_path / 'cache'),
+            gene_perturb_df=gene_perturb_df, **KW)

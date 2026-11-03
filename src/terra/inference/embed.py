@@ -714,14 +714,10 @@ def harmonize_tokenize_embed_pipeline(
         of the cells around them (see `CellGraphTokenizer`); the tokenizer
         warns when it finds them. 1 removes them.
     gene_perturb_df:
-        DataFrame with perturbation data, e.g.::
-
-            gene_perturb_df = pd.DataFrame({
-                'ensembl_id': ['ENSG00000169194', 'ENSG00000131724'],
-                'target': ['neighborhood', 'cell'],
-                'perturbation_type': ['foldchange', 'knockout'],
-                'foldchange': [0.5, np.nan],
-            })
+        Not supported: perturbations were never applied by the pipeline, so a
+        DataFrame raises a `ValueError`. Perturb the tokenized data with
+        `perturb_dataset` and embed it with `embed_dataset` instead (e.g. with
+        `save_dataset_path` to keep the tokenized data). Must be `None`.
     nproc:
         Number of processes used for tokenization.
     processing_mode:
@@ -770,6 +766,13 @@ def harmonize_tokenize_embed_pipeline(
     adata : anndata.AnnData
         A harmonized AnnData object with embeddings stored in `adata.obsm`.
     """
+    if gene_perturb_df is not None:
+        raise ValueError(
+            'harmonize_tokenize_embed_pipeline does not apply perturbations '
+            '(gene_perturb_df was ignored before, so the embeddings were '
+            'unperturbed). Tokenize the data (e.g. with save_dataset_path), '
+            'perturb it with perturb_dataset and embed it with embed_dataset; '
+            'pass gene_perturb_df=None.')
     # Gene-reference files default to the ones shipped inside the model bundle
     # (see terra.hub.BUNDLE_FILES), so a downloaded HF model reproduces the
     # model's training-time harmonization without any external paths. An explicit
