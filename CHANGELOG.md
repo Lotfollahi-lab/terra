@@ -43,11 +43,35 @@ and this project adheres to [Semantic Versioning][].
     -   `schedule_values_at_step`; training also logs the learning rate,
         weight decay and EMA momentum at its last step (with `ipe_scale` > 1
         the schedules end before their configured final values).
+-   Further opt-in options from the November 2026 code review; their defaults
+    also reproduce the previous behaviour:
+    -   tokenizer option `pad_empty_neighbors` (`data.pad_empty_neighbors`):
+        a neighbor without vocabulary genes keeps an all-padding segment, so
+        every neighbor occupies a fixed segment on both ranking paths;
+    -   tokenizer option `eliminate_stored_zeros`
+        (`data.eliminate_stored_zeros`), which removes explicitly stored zeros
+        from sparse count matrices before tokenization;
+    -   `keep_special_tokens` for both finetuning modes
+        (`finetune.keep_special_tokens`) and for `infer_token_distance`;
+    -   the top-level `seed` config key for both finetuning modes (default 0);
+    -   `random_state` for the subsampling of the `summarize_*_by_label`
+        point-cloud summaries.
 
 ### Changed
 
 -   The `hst_corpus_110m` model configs now use `attention_backend: flash`
     (and `use_flash_attention: True`, which flash requires).
+-   `stable_rank_ties` (unreleased) now orders equally ranked genes by token
+    ID on both ranking paths, so tokenization no longer depends on the order
+    of the gene columns in the input.
+-   `embed_dataset(agg_type='softmax')` applies the softmax once, over the
+    aggregated genes only, so outputs of this option change. It was not used
+    for published results; the default `agg_type='avg'` is unchanged.
+-   User-facing warnings (padded metatokens at inference, cells without
+    expressed genes, duplicated genes) are issued as `UserWarning`s and are
+    shown regardless of the logging configuration.
+-   The training launcher no longer forces `TORCH_DISTRIBUTED_DEBUG=DETAIL`;
+    set it in the job environment to enable it.
 
 ### Fixed
 
@@ -66,6 +90,58 @@ and this project adheres to [Semantic Versioning][].
     the sparse path, e.g. for the TERRA-96M/112M data.
 -   Tokenizing with Pearson-residual ranks and shifted-log counts no longer
     fails with an `IndexError`.
+-   Finetuning rebuilds the pretrained model from its saved config, as
+    inference does. Supervised finetuning of TERRA-96M previously dropped the
+    value-MLP biases of the pretrained model, and TERRA-112M could not be
+    finetuned at all; finetuning results change accordingly. The finetuning
+    data follow the model config as at inference, and the classification head
+    no longer pools over the metatoken.
+-   Inference follows the training config: `restrict_special_attention` is
+    read from `mask` (no NaN embeddings with eager attention), `nz_spc` is
+    passed to the datasets, cell-neighborhood models use the configured cell
+    length, and models with `api_version` v4 or unset, or with neighbor
+    truncation, can be embedded. `infer_token_distance` works with
+    TERRA-112M-style models, and `infer()` works with its default arguments,
+    with cell-neighborhood models and with `agg_type='weighted_avg'`. Outputs
+    of the released models are unchanged.
+-   `keep_special_tokens=True` checks its inputs and raises a clear error
+    when the `adata.uns` metadata, a batch the model was trained on, or the
+    special-token columns of a tokenized dataset are missing.
+-   `harmonize_adata` accepts Ensembl gene IDs (with or without version
+    suffix) as `var_names`, raises an error when no gene can be mapped and
+    warns when fewer than 10% map. It no longer modifies the input AnnData,
+    raises a clear error instead of hanging when neither `X` nor
+    `layers['counts']` holds integer counts, and treats genes missing from the
+    occurrence counts as unseen instead of raising a `KeyError`. Genes that
+    occur in several columns are kept as before, with a warning; with
+    `sample_key` the pipeline reports them with a clear error instead of an
+    `InvalidIndexError`.
+-   The tokenizer warns about cells without any expressed gene: they get empty
+    cell embeddings and shift the neighbor segments of nearby cells. The
+    pipeline still keeps them by default (`min_genes_per_cell=0`, reproducing
+    existing results); pass `min_genes_per_cell=1` to remove them, as the user
+    guide now does.
+-   The read-depth, gene-corrected read-depth and cell-area normalizers return
+    CSR matrices, which fixes tokenization with these normalizations under
+    recent scipy and anndata releases.
+-   Training: metatoken dropout (`mask.special_token_pad_ratio` > 0) and
+    self-supervised finetuning of models with metatokens use the correct
+    predictor layout when the metatokens are padded, and
+    `restrict_special_attention` no longer produces NaN outputs for padded
+    metatokens. Cycle consistency with metadata keys now changes the encoder
+    input. `ipe_scale` < 1 works, gradient clipping stays on after a
+    fractional warmup, and the logged gradient norms are no longer 0 during
+    warmup. Mid-epoch checkpoints are written every `checkpoint_freq_iter`
+    iterations, without the extra checkpoint after the first iteration of
+    each epoch. Training of the released configurations is unchanged.
+-   RDA depth conditioning starts as an exact no-op, as documented. RoPE draws
+    one rotation per forward pass, its target encoder runs in eval mode, and a
+    warning flags frequency scales that alias on micrometre coordinates.
+-   The training launcher supports plain `srun` launches, and `meta.add_cls`
+    is no longer silently ignored for cell-neighborhood models.
+-   `harmonize_tokenize_embed_pipeline` accepts a `pathlib.Path` save path and
+    no longer derives the batch label from it; `get_gene_embed` accepts
+    repeated genes.
 
 ## [0.1.13] - 2026-07-28
 
