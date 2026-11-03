@@ -734,11 +734,12 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
         If `True`, use PyTorch's scaled dot-product attention (SDPA)
         instead of the manual (eager) attention implementation.
     attention_backend:
-        SDPA backend preference when `use_flash_attention` is `True`; one
-        of `terra.models.modules.ATTENTION_BACKENDS`. This sets the
-        memory/softmax-precision trade-off: `'auto'` (default) keeps the
-        fp32 softmax, `'flash'` minimizes memory and allows the largest
-        batch size but computes the softmax in bf16.
+        SDPA backends that may be used when `use_flash_attention` is
+        `True`; one of `terra.models.modules.ATTENTION_BACKENDS`.
+        `'auto'` (default) excludes FlashAttention;
+        `'flash'` allows it, which minimizes memory and allows the largest
+        batch size. PyTorch tries the enabled backends in its own priority
+        order (see `terra.models.modules`).
     use_layer_norm:
         If `True` use layer norm, else Dynamic Tanh.
     sep_gene_tokens_neb:

@@ -11,7 +11,10 @@ import logging
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.attention import SDPBackend, sdpa_kernel
+try:
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+except ImportError:  # PyTorch < 2.3: no backend selection
+    SDPBackend = sdpa_kernel = None
 
 from .adaln import AdaLN
 from .rope2d import RoPE2D
@@ -22,28 +25,36 @@ logger = logging.getLogger(__name__)
 
 
 # Scaled-dot-product-attention (SDPA) backend presets, selected with the
-# `attention_backend` config option. SDPA tries the listed backends in order
-# and uses the first one that supports the given inputs.
+# `attention_backend` config option. Each preset is the set of backends SDPA
+# may use. Within that set PyTorch takes the first backend that supports the
+# inputs in its own priority order (`torch._C._get_sdp_priority_order()`,
+# FLASH > EFFICIENT > MATH > CUDNN in PyTorch 2.11), NOT in the order listed
+# here (`sdpa_kernel` only honours the order with `set_priority=True`, which
+# TERRA does not use, to keep trained models' numerics).
 #
-# The trade-off is softmax precision vs. memory:
-#   * FLASH_ATTENTION is the most memory-efficient (largest usable batch
-#     size), but keeps the softmax in bf16, which loses precision on the
-#     exp/sum step and noticeably hurts JEPA-style training.
-#   * EFFICIENT_ATTENTION / CUDNN_ATTENTION accumulate the softmax in fp32
-#     while still saving memory through tile-wise computation.
+#   * 'auto' (the default) excludes FLASH_ATTENTION: in practice the
+#     memory-efficient kernel, or MATH where it cannot run. CUDNN_ATTENTION is
+#     enabled but ranks after MATH, which supports every input, so it is not
+#     reached with the default priority order.
+#   * 'flash' adds FLASH_ATTENTION (lowest memory, largest usable batch size).
+#     Flash cannot take an attention mask, so masked attention (e.g. every
+#     inference pass) still uses the memory-efficient kernel. Kernels round
+#     differently, so results can differ slightly between presets.
+#   * 'efficient' / 'cudnn' / 'math' pin a single backend (SDPA raises if it
+#     does not support the inputs, e.g. 'efficient' and 'cudnn' on CPU).
 #   * MATH materializes the full attention matrix: highest memory use
 #     (smallest usable batch size), but always available.
+#   * 'torch' does not constrain the backend (PyTorch picks among all). This
+#     is how TERRA-96M and TERRA-112M were trained, before the presets
+#     existed: FlashAttention for the unmasked attention of the context
+#     encoder and predictor, the memory-efficient kernel for masked attention.
 _ATTENTION_BACKEND_PRESETS = {
-    # fp32 softmax, memory-efficient tiling; the training default.
     'auto': ('CUDNN_ATTENTION', 'EFFICIENT_ATTENTION', 'MATH'),
-    # Prefer flash: lowest memory / largest batch size, bf16 softmax.
     'flash': ('FLASH_ATTENTION', 'CUDNN_ATTENTION', 'EFFICIENT_ATTENTION',
               'MATH'),
-    # Pin a single backend (raises if it does not support the inputs).
     'efficient': ('EFFICIENT_ATTENTION',),
     'cudnn': ('CUDNN_ATTENTION',),
     'math': ('MATH',),
-    # Do not constrain the backend: let PyTorch pick (bf16 -> flash).
     'torch': (),
 }
 
@@ -76,21 +87,20 @@ def resolve_sdpa_backends(attention_backend: str = 'auto'):
     if not names:  # 'torch' -> no backend constraint
         return None
 
-    try:
-        from torch.nn.attention import SDPBackend as _SDPBackend
-    except ImportError:
+    if SDPBackend is None:
         logger.warning(
             "torch.nn.attention.SDPBackend is unavailable (PyTorch < 2.3), so "
             "attention_backend='%s' cannot be enforced. Falling back to "
-            "PyTorch's default backend selection, which may hurt training "
-            "stability. Consider upgrading to PyTorch 2.3+.",
+            "PyTorch's default backend selection, which differs from the "
+            "backends TERRA models were trained with. Consider upgrading to "
+            "PyTorch 2.3+.",
             attention_backend)
         return None
 
     # Skip backends the installed PyTorch does not know about (e.g.
     # CUDNN_ATTENTION was added after the selector API itself).
-    backends = [getattr(_SDPBackend, name) for name in names
-                if hasattr(_SDPBackend, name)]
+    backends = [getattr(SDPBackend, name) for name in names
+                if hasattr(SDPBackend, name)]
     if not backends:
         logger.warning(
             "None of the backends %s are available in this PyTorch build; "
@@ -109,11 +119,22 @@ def describe_attention(use_flash_attention: bool,
 
     backends = resolve_sdpa_backends(attention_backend)
     if backends is None:
-        order = "PyTorch default (unconstrained)"
-    else:
-        order = ' > '.join(b.name for b in backends)
-    return (f"SDPA with attention_backend='{attention_backend}' "
-            f"(backend preference: {order})")
+        return (f"SDPA with attention_backend='{attention_backend}' "
+                "(backend: PyTorch default, unconstrained)")
+    return (f"SDPA with attention_backend='{attention_backend}' (enabled "
+            "backends in the order PyTorch tries them: "
+            f"{' > '.join(b.name for b in _in_priority_order(backends))})")
+
+
+def _in_priority_order(backends: list) -> list:
+    """Sort SDPA backends by PyTorch's backend priority order (the order in
+    which SDPA tries the enabled backends); unchanged if it is unknown."""
+    try:
+        order = [int(b) for b in torch._C._get_sdp_priority_order()]
+    except (AttributeError, RuntimeError, TypeError):
+        return list(backends)
+    return sorted(backends, key=lambda b: (order.index(int(b))
+                                           if int(b) in order else len(order)))
 
 
 def log_attention_config(use_flash_attention: bool,
@@ -129,10 +150,10 @@ def log_attention_config(use_flash_attention: bool,
         return
     if attention_backend == 'flash':
         logger.warning(
-            "attention_backend='flash' minimizes memory (largest batch "
-            "size) but computes the softmax in bf16, which loses precision "
-            "and can hurt JEPA-style training. Prefer 'auto' for training "
-            "and reserve 'flash' for inference or memory-bound runs.")
+            "attention_backend='flash' enables FlashAttention (lowest memory, "
+            "largest batch size) for unmasked attention. Attention kernels "
+            "round differently, so results can differ slightly from runs with "
+            "the default 'auto', which excludes it.")
     elif attention_backend == 'math':
         logger.warning(
             "attention_backend='math' materializes the full attention "
@@ -162,10 +183,10 @@ class Attention(nn.Module):
         If `True`, use PyTorch's scaled dot-product attention (SDPA)
         instead of the manual (eager) attention implementation.
     attention_backend:
-        Which SDPA backend(s) to use when `use_flash_attention` is
-        `True`; one of :data:`ATTENTION_BACKENDS`. Controls the
-        memory/softmax-precision trade-off — `'flash'` allows the
-        largest batch size, `'auto'` (default) keeps the fp32 softmax.
+        Which SDPA backend(s) may be used when `use_flash_attention` is
+        `True`; one of :data:`ATTENTION_BACKENDS` (see
+        ``_ATTENTION_BACKEND_PRESETS``). `'auto'` (default) excludes
+        FlashAttention, `'flash'` allows it (lowest memory).
     """
     def __init__(self,
                  dim: int,
@@ -250,10 +271,9 @@ class Attention(nn.Module):
         if self.use_flash_attention:
             # SDPA, restricted to the backends selected by
             # `attention_backend` (resolved in __init__). SDPA uses the
-            # first listed backend that supports these inputs, so the
-            # order encodes the memory/precision preference -- see
-            # `_ATTENTION_BACKEND_PRESETS`. `None` means the preference
-            # is unconstrained and PyTorch picks the backend itself.
+            # first enabled backend that supports these inputs, in
+            # PyTorch's priority order -- see `_ATTENTION_BACKEND_PRESETS`.
+            # `None` means unconstrained: PyTorch picks the backend itself.
             _sdpa_backends = self._sdpa_backends
 
             if _sdpa_backends is not None:
