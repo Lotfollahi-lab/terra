@@ -476,11 +476,14 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
             # Optionally block cross-attention from cell queries to
             # neighborhood keys
             if cell_only:
+                # Blocked: False in a boolean mask, -inf in an additive
+                # (ALiBi) bias
                 attn[
                     :,
                     :,
                     :(self.n_special_tokens+self.cell_only_seq_len),
-                    (self.n_special_tokens+self.cell_only_seq_len):] = False
+                    (self.n_special_tokens+self.cell_only_seq_len):] = (
+                        False if attn.dtype == torch.bool else float('-inf'))
 
         if cell_only:
             x[:, (self.n_special_tokens+self.cell_only_seq_len):, :] = 0
@@ -1072,6 +1075,26 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
             mask_f = mask_f.masked_fill(~ma, float('-inf'))
             return mask_f
         return masks_attention + alibi
+
+    def _layer_emb_attention(
+            self,
+            batch: dict,
+            masks_attention: Optional[torch.Tensor] = None,
+            masks: list[torch.Tensor] | torch.Tensor | None = None,
+            ) -> Optional[torch.Tensor]:
+        """Attention mask of the embedding path (``return_layer_emb``):
+        ``masks_attention`` with the ALiBi bias of ``'alibi'`` /
+        ``'polar+alibi'`` added as in the forward pass (sliced to a single
+        JEPA mask, if given). Other encodings get ``masks_attention``
+        unchanged.
+        """
+        if masks is not None and not isinstance(masks, list):
+            masks = [masks]
+        keep_indices = (
+            masks[0] if (masks is not None and len(masks) == 1) else None)
+        return self._compute_attention_bias(
+            batch, masks_attention=masks_attention,
+            keep_indices=keep_indices)
 
     @torch.no_grad()
     def return_token_emb(self,
@@ -1924,6 +1947,9 @@ class GeneTransformerRankEncoder(GeneTransformerBaseEncoder):
         # so models trained with these features can also be embedded.
         coords = self._build_coords(batch)
         cond = self._compute_cond(batch)
+        # ALiBi bias, as in the forward pass ('alibi' / 'polar+alibi' only)
+        masks_attention = self._layer_emb_attention(
+            batch, masks_attention, masks)
 
         full_ctx: dict[int, torch.Tensor] = self._compute_layer_emb(
             x,
@@ -2234,6 +2260,9 @@ class GeneTransformerCountEncoder(GeneTransformerBaseEncoder):
         # so models trained with these features can also be embedded.
         coords = self._build_coords(batch)
         cond = self._compute_cond(batch)
+        # ALiBi bias, as in the forward pass ('alibi' / 'polar+alibi' only)
+        masks_attention = self._layer_emb_attention(
+            batch, masks_attention, masks)
 
         full_ctx: dict[int, torch.Tensor] = self._compute_layer_emb(
             x,
@@ -2586,6 +2615,9 @@ class GeneTransformerCombinedEncoder(GeneTransformerBaseEncoder):
         # so models trained with these features can also be embedded.
         coords = self._build_coords(batch)
         cond = self._compute_cond(batch)
+        # ALiBi bias, as in the forward pass ('alibi' / 'polar+alibi' only)
+        masks_attention = self._layer_emb_attention(
+            batch, masks_attention, masks)
 
         full_ctx: dict[int, torch.Tensor] = self._compute_layer_emb(
             x,
