@@ -867,7 +867,11 @@ def harmonize_tokenize_embed_pipeline(
             datasets.append(dataset_sample)
             logger.info(f"Tokenized sample {sample}.")
 
-        adata = adata[idx_list, list(set(gene_list))]
+        # The genes of any sample, in the order of the input (the order of a
+        # set changed between Python processes)
+        genes = set(gene_list)
+        adata = adata[idx_list,
+                      [gene for gene in adata.var_names if gene in genes]]
         adata.obs[batch_key] = batch_ids
 
         logger.info(f"Concatenating tokenized data...")

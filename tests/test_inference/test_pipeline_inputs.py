@@ -12,6 +12,9 @@ Tests for the handling of the caller's data by the inference API.
   so tokenizing the same AnnData again gave log1p(log1p(counts)) values.
 * The pipeline documented ``gene_perturb_df`` but ignored it, so the returned
   embeddings were unperturbed; it now raises a ``ValueError``.
+* With ``sample_key`` the genes of the returned AnnData came from a set, so
+  their order changed between Python processes; they now keep the input
+  order.
 """
 
 import numpy as np
@@ -97,3 +100,19 @@ def test_pipeline_rejects_gene_perturbations(tiny, tmp_path, sample_key):
             model_folder_path=str(bundle),
             cache_directory_path=str(tmp_path / 'cache'),
             gene_perturb_df=gene_perturb_df, **KW)
+
+
+
+def test_pipeline_with_sample_key_keeps_the_gene_order(tiny, tmp_path):
+    bundle = tiny.bundle('96M')
+    adata = tiny.adata(n_cells=44)
+    adata.obs['sample'] = ['S1'] * 22 + ['S2'] * 22
+    # Shuffle the genes, so that the input order is not sorted
+    order = np.random.default_rng(0).permutation(adata.n_vars)
+    adata = adata[:, order].copy()
+    result = harmonize_tokenize_embed_pipeline(
+        adata=adata, sample_key='sample', model_folder_path=str(bundle),
+        cache_directory_path=str(tmp_path / 'cache'), **KW)
+    kept = set(result.var_names)
+    assert list(result.var_names) == [
+        gene for gene in adata.var_names if gene in kept]
