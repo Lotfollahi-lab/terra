@@ -125,6 +125,10 @@ def finetune_self_supervised(
         for the schema). ``args['model']['pretrained_checkpoint_path']`` must
         point at a model folder containing ``model_config.yaml``,
         ``token_dictionary.pkl`` and ``model_checkpoint.pt``.
+        ``args['finetune']['use_bfloat16'] = True`` runs the models under
+        bf16 autocast on GPU, as in pretraining; by default (`False`)
+        finetuning runs in float32 (the model config's ``use_bfloat16`` is
+        not used here).
     dataset:
         Tokenised HuggingFace :class:`~datasets.Dataset` to fine-tune on. If
         ``None``, the tokenised sections listed in

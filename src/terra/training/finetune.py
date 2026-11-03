@@ -157,6 +157,7 @@ def build_selection_mask(
         dim=1)
 
 
+@torch.no_grad()
 def validate(
         model,
         val_loader,
@@ -167,7 +168,8 @@ def validate(
         model_config,
         selection_type,
         agg_excluded_tokens,
-        top_k
+        top_k,
+        use_bfloat16=False,
     ):
     """
     Run one validation pass and return loss and accuracy scalars.
@@ -204,6 +206,8 @@ def validate(
         Token ids to exclude from aggregation (or None).
     top_k:
         If set, restrict aggregation to the top-k expressed genes.
+    use_bfloat16:
+        If `True`, run the model under bf16 autocast on GPU.
 
     Returns
     -------
@@ -229,11 +233,13 @@ def validate(
             udata['tokens'], n_special_tokens, model_config, selection_type,
             agg_excluded_tokens, top_k)
 
-        logits = model(
-            udata=udata,
-            masks_attention=masks_attention,
-            selection_mask=selection_mask,
-        )
+        with torch.amp.autocast('cuda', dtype=torch.bfloat16,
+                                enabled=use_bfloat16):
+            logits = model(
+                udata=udata,
+                masks_attention=masks_attention,
+                selection_mask=selection_mask,
+            )
 
         labels = torch.tensor(
             val_label_lookup[udata['cell_id']].values,
@@ -266,7 +272,8 @@ def test(
         model_config,
         selection_type,
         agg_excluded_tokens,
-        top_k
+        top_k,
+        use_bfloat16=False,
     ) -> Tuple[List[int], List[int], float]:
     """
     Run a final evaluation pass and return per-sample predictions.
@@ -302,11 +309,13 @@ def test(
             udata['tokens'], n_special_tokens, model_config, selection_type,
             agg_excluded_tokens, top_k)
 
-        logits = model(
-            udata=udata,
-            masks_attention=masks_attention,
-            selection_mask=selection_mask,
-        )
+        with torch.amp.autocast('cuda', dtype=torch.bfloat16,
+                                enabled=use_bfloat16):
+            logits = model(
+                udata=udata,
+                masks_attention=masks_attention,
+                selection_mask=selection_mask,
+            )
 
         labels = torch.tensor(
             label_lookup[udata['cell_id']].values,
@@ -365,7 +374,9 @@ def finetune(
         Config dict. Relevant sub-dicts: args['model'], args['data'],
         args['finetune']. The training data are shuffled in every epoch with
         the configured seed; ``args['finetune']['shuffle'] = False`` keeps
-        their order.
+        their order. ``args['finetune']['use_bfloat16'] = True`` runs the
+        model under bf16 autocast on GPU, as in pretraining; by default
+        (`False`) finetuning runs in float32.
     train_adata:
         AnnData with obs columns 'cell_id' and the integer label column.
     train_dataset:
@@ -719,6 +730,8 @@ def finetune(
     selection_type = args['finetune']['selection_type']
     agg_excluded_tokens = args['finetune']['excluded_tokens']
     top_k = args['finetune']['top_k']
+    # bf16 autocast on GPU, as in pretraining (opt-in; float32 by default)
+    use_bfloat16 = args['finetune'].get('use_bfloat16', False)
 
     model = ClassificationModel(
         base_model=peft_target_encoder if use_peft else target_encoder,
@@ -825,11 +838,13 @@ def finetune(
                 agg_excluded_tokens, top_k)
 
             optimizer.zero_grad()
-            logits = model(
-                udata=udata,
-                masks_attention=masks_attention,
-                selection_mask=selection_mask,
-            )
+            with torch.amp.autocast('cuda', dtype=torch.bfloat16,
+                                    enabled=use_bfloat16):
+                logits = model(
+                    udata=udata,
+                    masks_attention=masks_attention,
+                    selection_mask=selection_mask,
+                )
 
             labels = torch.tensor(
                 label_lookup[udata['cell_id']].values,
@@ -866,7 +881,8 @@ def finetune(
                 model_config=model_config,
                 selection_type=selection_type,
                 agg_excluded_tokens=agg_excluded_tokens,
-                top_k=top_k
+                top_k=top_k,
+                use_bfloat16=use_bfloat16,
             )
 
             logger.info(
@@ -924,7 +940,8 @@ def finetune(
         model_config=model_config,
         selection_type=selection_type,
         agg_excluded_tokens=agg_excluded_tokens,
-        top_k=top_k
+        top_k=top_k,
+        use_bfloat16=use_bfloat16,
     )
 
     logger.info(f"{eval_set_name} Accuracy: {accuracy:.4f}")

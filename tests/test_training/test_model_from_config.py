@@ -475,3 +475,48 @@ def test_self_supervised_dataset_shuffle_follows_seed(tmp_path):
 
     assert order() == order(seed=0)
     assert order(seed=0) != order(seed=1)
+
+
+def test_finetune_evaluates_without_autograd_and_bf16_is_opt_in(
+        tmp_path, monkeypatch):
+    """Validation and test passes run without autograd (memory); the model
+    runs under bf16 autocast only with finetune.use_bfloat16."""
+    import terra.training.finetune as finetune_module
+
+    bundle = tmp_path / 'bundle'
+    _write_bundle(bundle, '96M')
+    parts = _split(*_tokenized_data(bundle, tmp_path / 'cache'))
+
+    grad_enabled_in_eval = []
+    base_class = finetune_module.ClassificationModel
+
+    class Spy(base_class):
+        def forward(self, *args, **kwargs):
+            if not self.training:
+                grad_enabled_in_eval.append(torch.is_grad_enabled())
+            return super().forward(*args, **kwargs)
+
+    monkeypatch.setattr(finetune_module, 'ClassificationModel', Spy)
+    requested = []
+    autocast = torch.amp.autocast
+
+    def recording_autocast(device_type, dtype=None, enabled=True, **kwargs):
+        requested.append((device_type, dtype, enabled))
+        # (CPU test: CUDA autocast would be a no-op anyway)
+        return autocast(device_type, dtype=dtype, enabled=False, **kwargs)
+
+    monkeypatch.setattr(torch.amp, 'autocast', recording_autocast)
+    for use_bfloat16 in (None, True):
+        requested.clear()
+        args = _finetune_args(bundle)
+        if use_bfloat16 is not None:
+            args['finetune']['use_bfloat16'] = use_bfloat16
+        finetune_module.finetune(
+            args=args,
+            train_adata=parts['train'][0], train_dataset=parts['train'][1],
+            val_adata=parts['val'][0], val_dataset=parts['val'][1],
+            test_adata=parts['test'][0], test_dataset=parts['test'][1])
+        assert requested
+        assert set(requested) == {('cuda', torch.bfloat16,
+                                   bool(use_bfloat16))}
+    assert grad_enabled_in_eval and not any(grad_enabled_in_eval)
