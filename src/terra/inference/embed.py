@@ -45,6 +45,9 @@ from .tokenize import tokenize_adata
 from typing import Dict, List
 
 
+_GLOBAL_SEED = 0
+np.random.seed(_GLOBAL_SEED)
+torch.manual_seed(_GLOBAL_SEED)
 torch.backends.cudnn.benchmark = True
 
 

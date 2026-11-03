@@ -1,13 +1,13 @@
 """
-Tests that the inference API leaves the global numpy and torch random number
-generators alone.
+Tests for the global numpy and torch random number generators at inference.
 
-``import terra`` reseeded both (``np.random.seed(0)`` and
-``torch.manual_seed(0)`` at the top of the embed, infer and score modules),
-which reset the caller's random state. The embeddings do not depend on the
-global generators, and the subsampling of the point-cloud summaries draws
-from its own generator (``random_state``, by default the stream the reseeded
-global generator gave the first call).
+Importing the embed, infer and score modules seeds both generators with 0
+(``np.random.seed(0)``, ``torch.manual_seed(0)``). This side effect of
+``import terra`` is kept on purpose: analyses that draw from the global
+generators after the import without seeding them (e.g. the linear probes of
+``terra.evaluation`` in the published benchmarks) reproduce only with it. The
+embeddings themselves do not depend on the global generators, and the
+subsampling of the point-cloud summaries can be seeded with ``random_state``.
 """
 
 import importlib.util
@@ -23,9 +23,6 @@ import terra.inference
 from terra import embed_dataset
 from terra.inference import summarize_distance, summarize_energy_by_label
 
-MODULES = ['embed', 'infer', 'score', 'perturb', 'summarize_distance',
-           'token_distance', 'harmonize', 'tokenize']
-
 
 def _global_states():
     return np.random.get_state()[1].copy(), torch.get_rng_state().clone()
@@ -36,24 +33,42 @@ def _assert_global_states(states):
     assert torch.equal(torch.get_rng_state(), states[1])
 
 
-@pytest.mark.parametrize('name', MODULES)
-def test_module_import_keeps_global_rng_state(name):
-    np.random.seed(123)
-    torch.manual_seed(123)
-    states = _global_states()
-
+def _exec_fresh_copy(name):
     # Execute a fresh copy of the module (its imports are cached)
     path = Path(terra.inference.__file__).parent / f'{name}.py'
     spec = importlib.util.spec_from_file_location(
         f'terra.inference._{name}_copy', path)
     spec.loader.exec_module(importlib.util.module_from_spec(spec))
 
+
+@pytest.mark.parametrize('name', ['embed', 'infer', 'score'])
+def test_module_import_seeds_global_rng_with_zero(name):
+    np.random.seed(0)
+    torch.manual_seed(0)
+    seeded = _global_states()
+
+    np.random.seed(123)
+    torch.manual_seed(123)
+    _exec_fresh_copy(name)
+
+    _assert_global_states(seeded)
+
+
+@pytest.mark.parametrize('name', ['perturb', 'summarize_distance',
+                                  'token_distance', 'harmonize', 'tokenize'])
+def test_other_module_imports_keep_global_rng_state(name):
+    np.random.seed(123)
+    torch.manual_seed(123)
+    states = _global_states()
+
+    _exec_fresh_copy(name)
+
     _assert_global_states(states)
 
 
 def test_embeddings_do_not_depend_on_global_rng_state(tiny):
     # The model is initialized with the global generators before its weights
-    # are loaded, so the import-time seed did not enter the embeddings
+    # are loaded, so the global random state does not enter the embeddings
     bundle = tiny.bundle('112M')
     dataset = tiny.dataset(bundle)
     outputs = []
@@ -66,7 +81,7 @@ def test_embeddings_do_not_depend_on_global_rng_state(tiny):
         np.testing.assert_array_equal(outputs[0][key], outputs[1][key])
 
 
-def test_summary_subsampling_is_seeded(monkeypatch):
+def test_summary_subsampling_random_state(monkeypatch):
     rng = np.random.default_rng(0)
     adata = ad.AnnData(obs=pd.DataFrame(
         {'label': np.repeat(['a', 'b'], [12, 9])},
@@ -102,27 +117,20 @@ def test_summary_subsampling_is_seeded(monkeypatch):
                 X[generator.choice(X.shape[0], size=5, replace=False)])
         return clouds_expected
 
-    # Default: independent of (and not drawing from) the global generator;
-    # the draws of the global generator seeded with 0, as in the first call
-    # after the import-time seed
+    # Default: numpy's global generator, as before
+    np.random.seed(3)
+    for got, want in zip(subsamples(), expected(np.random.RandomState(3))):
+        np.testing.assert_array_equal(got, want)
+
+    # Explicit seed: independent of, and not drawing from, the global
+    # generator
     np.random.seed(1)
     states = _global_states()
-    first = subsamples()
+    first = subsamples(random_state=7)
     _assert_global_states(states)
     np.random.seed(2)
-    second = subsamples()
-    for got, want in zip(first, expected(np.random.RandomState(0))):
+    second = subsamples(random_state=7)
+    for got, want in zip(first, expected(np.random.RandomState(7))):
         np.testing.assert_array_equal(got, want)
     for got, want in zip(second, first):
-        np.testing.assert_array_equal(got, want)
-
-    # Explicit seed
-    for got, want in zip(subsamples(random_state=7),
-                         expected(np.random.RandomState(7))):
-        np.testing.assert_array_equal(got, want)
-
-    # random_state=None draws from the global generator
-    np.random.seed(3)
-    got_global = subsamples(random_state=None)
-    for got, want in zip(got_global, expected(np.random.RandomState(3))):
         np.testing.assert_array_equal(got, want)

@@ -39,6 +39,9 @@ from terra.inference.embed import gene_embed_dataset
 from typing import Dict, List
 
 
+_GLOBAL_SEED = 0
+np.random.seed(_GLOBAL_SEED)
+torch.manual_seed(_GLOBAL_SEED)
 torch.backends.cudnn.benchmark = True
 
 

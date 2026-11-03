@@ -173,7 +173,7 @@ def summarize_w1_by_label(
     backend="tensorized",
     device=None,
     threshold=None,
-    random_state=0,
+    random_state=None,
 ):
     """
     W1 (Sinkhorn, ``p=1``) between point-cloud distributions per label.
@@ -224,11 +224,9 @@ def summarize_w1_by_label(
         randomly subsampled to ``threshold`` rows (same indices) before the
         distance is computed.
     random_state:
-        Seed of the subsampling (``threshold``), so that the result does not
-        depend on numpy's global random state; ``None`` uses numpy's global
-        generator. With the default ``0`` the subsamples are those that
-        earlier versions drew in the first call of a session (importing
-        TERRA seeded the global generator with 0).
+        Seed of the subsampling (``threshold``). ``None`` (default) draws from
+        numpy's global generator, as before; an integer makes the subsamples
+        independent of the global random state.
 
     Returns
     -------
@@ -265,7 +263,7 @@ def summarize_w2_by_label(
     backend="tensorized",
     device=None,
     threshold=None,
-    random_state=0,
+    random_state=None,
 ):
     """
     W2 (Sinkhorn, ``p=2``) between point-cloud distributions per label.
@@ -309,7 +307,7 @@ def summarize_energy_by_label(
     backend="tensorized",
     device=None,
     threshold=None,
-    random_state=0,
+    random_state=None,
 ):
     """
     Energy distance (GeomLoss ``'energy'``) between point-cloud distributions
@@ -354,7 +352,7 @@ def summarize_mmd_by_label(
     backend="tensorized",
     device=None,
     threshold=None,
-    random_state=0,
+    random_state=None,
 ):
     """
     Gaussian MMD-like loss (GeomLoss ``'gaussian'``) between point-cloud
@@ -401,7 +399,7 @@ def _summarize_pointcloud_by_label(
     threshold,
     loss,
     p,
-    random_state=0,
+    random_state=None,
 ):
     """Shared driver for the point-cloud (Sinkhorn/energy/gaussian) summaries."""
     if labels is None:
