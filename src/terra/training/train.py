@@ -301,6 +301,11 @@ def train(args: dict,
     rope_freq_scale = args['meta'].get('rope_freq_scale', None)
     rope_rotation_augment = bool(
         args['meta'].get('rope_rotation_augment', True))
+    # Opt-in: compute the phases of the coordinate position encodings
+    # ('coord', 'polar', 'polar+alibi', 'rope') in float32 also under bf16
+    # autocast. Off by default, as the released models were trained.
+    fp32_position_encoding = bool(
+        args['meta'].get('fp32_position_encoding', False))
 
     # Optional batch-correction kwargs (off by default; existing
     # behavior preserved). Two independent features:
@@ -927,7 +932,8 @@ def train(args: dict,
         rope_rotation_augment=rope_rotation_augment,
         adaln_kwargs=adaln_kwargs,
         rda_kwargs=rda_kwargs,
-        special_token_moe_kwargs=moe_kwargs)
+        special_token_moe_kwargs=moe_kwargs,
+        fp32_position_encoding=fp32_position_encoding)
     # Build the adversarial batch classifier head (returns None when
     # disabled, so default training is unchanged).
     batch_classifier = build_batch_classifier_head(

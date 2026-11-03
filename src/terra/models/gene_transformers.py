@@ -31,6 +31,7 @@ from .rope2d import RoPE2D
 _NO_COND = None
 from .utils import (get_1d_sincos_pos_embed,
                     get_1d_sincos_pos_embed_from_coord,
+                    sincos_pos_embed_from_coord,
                     repeat_interleave_batch,
                     trunc_normal_)
 from ..masks.utils import apply_masks
@@ -137,9 +138,13 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                  rope_rotation_augment: bool = True,
                  adaln_kwargs: dict | None = None,
                  rda_kwargs: dict | None = None,
+                 fp32_position_encoding: bool = False,
                  **kwargs
                  ):
         super().__init__()
+        # Compute the phases of the coordinate position encodings ('coord',
+        # 'polar', 'polar+alibi', 'rope') in float32 also under bf16 autocast
+        self.fp32_position_encoding = fp32_position_encoding
         self.seq_len = seq_len
         self.n_segments = n_segments
         self.n_special_tokens = n_special_tokens
@@ -268,6 +273,7 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                 head_dim=head_dim,
                 freq_scale=rope_freq_scale,
                 rotation_augment=rope_rotation_augment,
+                fp32=fp32_position_encoding,
             )
         else:
             self.rope = None
@@ -543,14 +549,16 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         if self.cell_pos_enc == 'segment':
             seg_emb = self.seg_embed(batch['segments'])
         elif self.cell_pos_enc == 'coord':
-            rel_x_coord_emb = get_1d_sincos_pos_embed_from_coord(
+            rel_x_coord_emb = sincos_pos_embed_from_coord(
                 embed_dim=self.embed_dim // 2,
                 omega=self.coord_omega,
-                coord=batch['rel_x_coords'])
-            rel_y_coord_emb = get_1d_sincos_pos_embed_from_coord(
+                coord=batch['rel_x_coords'],
+                fp32=self.fp32_position_encoding)
+            rel_y_coord_emb = sincos_pos_embed_from_coord(
                 embed_dim=self.embed_dim // 2,
                 omega=self.coord_omega,
-                coord=batch['rel_y_coords'])
+                coord=batch['rel_y_coords'],
+                fp32=self.fp32_position_encoding)
             seg_emb = torch.cat(
                 [rel_x_coord_emb, rel_y_coord_emb], dim=-1)
         elif self.cell_pos_enc in ('polar', 'polar+alibi'):
@@ -580,14 +588,16 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
             neg_inf = torch.full_like(log_r, float('-inf'))
             log_r = torch.where(special_mask, neg_inf, log_r)
             theta = torch.where(special_mask, neg_inf, theta)
-            r_emb = get_1d_sincos_pos_embed_from_coord(
+            r_emb = sincos_pos_embed_from_coord(
                 embed_dim=self.embed_dim // 2,
                 omega=self.coord_omega,
-                coord=log_r)
-            theta_emb = get_1d_sincos_pos_embed_from_coord(
+                coord=log_r,
+                fp32=self.fp32_position_encoding)
+            theta_emb = sincos_pos_embed_from_coord(
                 embed_dim=self.embed_dim // 2,
                 omega=self.coord_omega,
-                coord=theta)
+                coord=theta,
+                fp32=self.fp32_position_encoding)
             seg_emb = torch.cat([r_emb, theta_emb], dim=-1)
         elif self.cell_pos_enc == 'alibi':
             # ALiBi mode: keep the ordinal segment encoding at input
@@ -1248,9 +1258,12 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
                  rope_rotation_augment: bool = True,
                  adaln_kwargs: dict | None = None,
                  special_token_moe_kwargs: dict | None = None,
+                 fp32_position_encoding: bool = False,
                  **kwargs
                  ):
         super().__init__()
+        # See the encoder
+        self.fp32_position_encoding = fp32_position_encoding
         self.embed_dim = embed_dim
         self.seq_len = seq_len
         self.n_special_tokens = n_special_tokens
@@ -1403,6 +1416,7 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
                 head_dim=pred_head_dim,
                 freq_scale=rope_freq_scale,
                 rotation_augment=rope_rotation_augment,
+                fp32=fp32_position_encoding,
             )
         else:
             self.rope = None
@@ -1571,14 +1585,16 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
         if self.cell_pos_enc == 'segment':
             seg_emb = self.seg_embed(batch['segments'])
         elif self.cell_pos_enc == 'coord':
-            rel_x_coord_emb = get_1d_sincos_pos_embed_from_coord(
+            rel_x_coord_emb = sincos_pos_embed_from_coord(
                 embed_dim=self.predictor_embed_dim // 2,
                 omega=self.coord_omega,
-                coord=batch['rel_x_coords'])
-            rel_y_coord_emb = get_1d_sincos_pos_embed_from_coord(
+                coord=batch['rel_x_coords'],
+                fp32=self.fp32_position_encoding)
+            rel_y_coord_emb = sincos_pos_embed_from_coord(
                 embed_dim=self.predictor_embed_dim // 2,
                 omega=self.coord_omega,
-                coord=batch['rel_y_coords'])
+                coord=batch['rel_y_coords'],
+                fp32=self.fp32_position_encoding)
             seg_emb = torch.cat(
                 [rel_x_coord_emb, rel_y_coord_emb], dim=-1)
         elif self.cell_pos_enc in ('polar', 'polar+alibi'):
@@ -1597,14 +1613,16 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
             neg_inf = torch.full_like(log_r, float('-inf'))
             log_r = torch.where(special_mask, neg_inf, log_r)
             theta = torch.where(special_mask, neg_inf, theta)
-            r_emb = get_1d_sincos_pos_embed_from_coord(
+            r_emb = sincos_pos_embed_from_coord(
                 embed_dim=self.predictor_embed_dim // 2,
                 omega=self.coord_omega,
-                coord=log_r)
-            theta_emb = get_1d_sincos_pos_embed_from_coord(
+                coord=log_r,
+                fp32=self.fp32_position_encoding)
+            theta_emb = sincos_pos_embed_from_coord(
                 embed_dim=self.predictor_embed_dim // 2,
                 omega=self.coord_omega,
-                coord=theta)
+                coord=theta,
+                fp32=self.fp32_position_encoding)
             seg_emb = torch.cat([r_emb, theta_emb], dim=-1)
         elif self.cell_pos_enc in ('alibi', 'laplacian'):
             # On the predictor side, both 'alibi' (encoder-only

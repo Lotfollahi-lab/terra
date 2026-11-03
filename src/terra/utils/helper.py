@@ -278,8 +278,8 @@ def parse_arch_kwargs(args: dict) -> dict:
 
     Returns a dict suitable for direct ``**unpacking`` into
     ``init_model``. Covers: Laplacian PE (laplacian_k, laplacian_sigma),
-    RoPE (rope_freq_scale, rope_rotation_augment), and AdaLN
-    (adaln_kwargs). For any field missing from the config, the
+    RoPE (rope_freq_scale, rope_rotation_augment), AdaLN (adaln_kwargs),
+    RDA, the special-token MoE and ``meta.fp32_position_encoding``. For any field missing from the config, the
     corresponding default in ``init_model``'s signature applies.
 
     Use this in every entry point that reconstructs a trained
@@ -401,6 +401,8 @@ def parse_arch_kwargs(args: dict) -> dict:
         'adaln_kwargs': adaln,
         'rda_kwargs': rda,
         'special_token_moe_kwargs': moe,
+        'fp32_position_encoding': bool(
+            meta.get('fp32_position_encoding', False)),
     }
 
 
@@ -695,6 +697,7 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
                adaln_kwargs: dict | None = None,
                rda_kwargs: dict | None = None,
                special_token_moe_kwargs: dict | None = None,
+               fp32_position_encoding: bool = False,
                ) -> tuple[gt.GeneTransformerBaseEncoder,
                           gt.GeneTransformerBasePredictor]:
     """
@@ -747,6 +750,13 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
     predict_gene:
         If `True`, predict gene given rank, otherwise predict rank given
         gene.
+    fp32_position_encoding:
+        If `True`, the phases (coordinate x frequency) of the coordinate
+        position encodings ('coord', 'polar', 'polar+alibi', 'rope') are
+        computed in float32 also under bf16 autocast. Otherwise (default, as
+        TERRA-96M was trained) they are computed in bf16 on GPU, which
+        rounds coordinates of a few hundred units by about 1 rad, and in
+        float32 on CPU, so GPU and CPU embeddings of such models differ.
 
     Returns
     -----------
@@ -847,7 +857,8 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
                          else math.pi),
         rope_rotation_augment=rope_rotation_augment,
         adaln_kwargs=adaln_kwargs_enc,
-        rda_kwargs=rda_kwargs)
+        rda_kwargs=rda_kwargs,
+        fp32_position_encoding=fp32_position_encoding)
     if api_version == 'v3' or api_version == 'v4':
         encoder = EncoderMultiMaskWrapper(encoder)
     predictor = gt.__dict__["init_gt_predictor"](
@@ -874,7 +885,8 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
                          else math.pi),
         rope_rotation_augment=rope_rotation_augment,
         adaln_kwargs=adaln_kwargs_pred,
-        special_token_moe_kwargs=special_token_moe_kwargs)
+        special_token_moe_kwargs=special_token_moe_kwargs,
+        fp32_position_encoding=fp32_position_encoding)
     if api_version == 'v3' or api_version == 'v4':
         predictor = PredictorMultiMaskWrapper(predictor)
 

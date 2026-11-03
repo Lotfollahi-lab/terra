@@ -39,6 +39,8 @@ import math
 import torch
 import torch.nn as nn
 
+from .utils import float32_context
+
 logger = logging.getLogger(__name__)
 
 
@@ -67,6 +69,11 @@ class RoPE2D(nn.Module):
         once per forward pass, so all attention layers see the same
         rotation). This yields statistical rotation invariance with no
         loss of capacity.
+    fp32:
+        If True, the rotation of the coordinates and the phases (coordinate
+        x frequency) with their cos / sin are computed in float32 also under
+        bf16 autocast (where the einsums would otherwise run in bf16 and lose
+        the high frequencies); q and k are rotated in their own dtype.
     """
 
     # Whether the coordinate range was checked against the frequencies
@@ -78,8 +85,10 @@ class RoPE2D(nn.Module):
                  base: float = 10000.0,
                  freq_scale: float = math.pi,
                  rotation_augment: bool = True,
+                 fp32: bool = False,
                  ):
         super().__init__()
+        self.fp32 = fp32
         if head_dim % 4 != 0:
             raise ValueError(
                 f"head_dim must be divisible by 4 for 2D RoPE, got {head_dim}"
@@ -152,6 +161,9 @@ class RoPE2D(nn.Module):
             dim=-2,
         )
         # coords: (B, N, 2) -> (B, N, 2)
+        if self.fp32:
+            with float32_context(coords):
+                return torch.einsum("bij,bnj->bni", rot.float(), coords.float())
         return torch.einsum("bij,bnj->bni", rot, coords)
 
     def _cos_sin(self, coords: torch.Tensor
@@ -162,6 +174,13 @@ class RoPE2D(nn.Module):
         """
         x = coords[..., 0]  # (B, N)
         y = coords[..., 1]
+
+        if self.fp32:
+            with float32_context(coords):
+                x_ang = torch.einsum("bn,d->bnd", x.float(), self.freqs.float())
+                y_ang = torch.einsum("bn,d->bnd", y.float(), self.freqs.float())
+                ang = torch.cat([x_ang, y_ang], dim=-1)
+                return ang.cos(), ang.sin()
 
         # (B, N, head_dim / 4)
         x_ang = torch.einsum("bn,d->bnd", x, self.freqs)
@@ -184,6 +203,9 @@ class RoPE2D(nn.Module):
         Returns q_rot, k_rot with the same shapes as inputs.
         """
         cos, sin = self._cos_sin(coords)           # (B, N, head_dim / 2)
+        if self.fp32:
+            # float32 phases; rotate q and k in their own dtype
+            cos, sin = cos.to(q.dtype), sin.to(q.dtype)
         cos = cos.unsqueeze(1)                     # (B, 1, N, head_dim / 2)
         sin = sin.unsqueeze(1)
 

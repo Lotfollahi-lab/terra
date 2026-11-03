@@ -6,6 +6,7 @@ https://github.com/facebookresearch/ijepa/blob/main/src/utils/tensors.py
 (05.06.2024).
 """
 
+import contextlib
 import math
 
 import numpy as np
@@ -189,6 +190,39 @@ def get_1d_sincos_pos_embed_from_coord(embed_dim: int,
     pos_emb[mask.unsqueeze(-1).expand_as(pos_emb)] = 0.0  # (B, L, D)
 
     return pos_emb
+
+
+def float32_context(tensor: torch.Tensor, enabled: bool = True):
+    """
+    Context in which autocast is disabled on the device of `tensor`, so that
+    the enclosed ops run in the precision of their inputs; a no-op if not
+    `enabled`.
+
+    Under bf16 autocast, matmul-like ops run in bf16, including the einsum
+    that multiplies coordinates by frequencies for the position encodings.
+    With bf16's 8-bit mantissa, offsets of a few hundred then give phase
+    errors of about 1 rad, so the high-frequency components are lost.
+    """
+    if not enabled:
+        return contextlib.nullcontext()
+    return torch.autocast(device_type=tensor.device.type, enabled=False)
+
+
+def sincos_pos_embed_from_coord(embed_dim: int,
+                                omega: torch.Tensor,
+                                coord: torch.Tensor,
+                                fp32: bool = False,
+                                ) -> torch.Tensor:
+    """
+    `get_1d_sincos_pos_embed_from_coord`; if `fp32`, computed in float32 also
+    under autocast (see `float32_context`).
+    """
+    if not fp32:
+        return get_1d_sincos_pos_embed_from_coord(
+            embed_dim=embed_dim, omega=omega, coord=coord)
+    with float32_context(coord):
+        return get_1d_sincos_pos_embed_from_coord(
+            embed_dim=embed_dim, omega=omega.float(), coord=coord.float())
 
 
 def _no_grad_trunc_normal_(tensor: torch.Tensor,
