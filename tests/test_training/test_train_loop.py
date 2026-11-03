@@ -23,6 +23,12 @@ group.
   ignored for cell-neighborhood models; with the cell-graph tokenizer it
   failed in the data loader with a KeyError. Both now ask for the CLS token
   columns, which the TERRA tokenizers do not write.
+* Cycle consistency: in batches with padded special tokens the swapped
+  labels cannot reach the encoder (they are carried by the special tokens),
+  but every cell with a new label counted as changed, so a second encoder
+  pass ran for a zero loss. Rank models had no check that the swapped
+  labels, written into the special token ids, stay inside the token
+  dictionary.
 """
 
 import copy
@@ -103,7 +109,7 @@ def _args(folder, token_dict_path, overrides):
             read_checkpoint=None, checkpoint_freq_iter=10**9),
     }
     for section, values in overrides.items():
-        args[section].update(values)
+        args.setdefault(section, {}).update(values)
     return args
 
 
@@ -129,12 +135,12 @@ def run_train(tmp_path, monkeypatch):
     dist.init_process_group('gloo', init_method=f"file://{tmp_path / 'pg'}",
                             rank=0, world_size=1)
 
-    def run(**overrides):
+    def run(vocab_size=700, **overrides):
         folder = tmp_path / 'run'
         folder.mkdir(exist_ok=True)
         token_dict_path = str(tmp_path / 'token_dictionary.pkl')
         with open(token_dict_path, 'wb') as f:
-            pickle.dump({f't{i}': i for i in range(700)}, f)
+            pickle.dump({f't{i}': i for i in range(vocab_size)}, f)
 
         result = {'logged': [], 'clip_steps': [], 'saves': [], 'copies': []}
         monkeypatch.setitem(sys.modules, 'wandb', types.SimpleNamespace(
@@ -247,3 +253,48 @@ def test_add_cls_adds_cls_tokens_for_both_tokenizers(
     assert str(error.value).count('_token') == len(cls_tokens)
     for token in cls_tokens:
         assert f"'{token}_token', '{token}_value'" in str(error.value)
+
+
+# Cycle consistency with the batch label of the `batch` special token
+CYCLE = {'cycle_consistency': {
+    'enabled': True, 'lambda_cycle': 1.0, 'swap_fraction': 1.0,
+    'keys': ['batch_value'], 'n_classes': [8], 'offsets': [0]}}
+# Token id of special value 0 in rank models (homo sapiens layout)
+RANK_SPECIAL_VALUE_OFFSET = 21957
+
+
+@pytest.mark.parametrize('special_token_pad_ratio', [0.0, 1.0])
+def test_cycle_consistency_skips_batches_with_padded_special_tokens(
+        run_train, special_token_pad_ratio):
+    result = run_train(
+        optimization={'epochs': 1},
+        mask={'special_token_pad_ratio': special_token_pad_ratio},
+        special_token_correction=CYCLE)
+    cycle = [payload for payload in result['logged']
+             if 'cycle/loss' in payload]
+    if special_token_pad_ratio:
+        # No special token to carry the swapped labels: no second pass
+        assert cycle == []
+    else:
+        assert len(cycle) == ITERATIONS_PER_EPOCH
+        for payload in cycle:
+            assert payload['cycle/n_changed'] > 0
+            assert payload['cycle/loss'] > 0
+
+
+@pytest.mark.parametrize('n_classes', [8, 32])
+def test_cycle_consistency_checks_rank_labels_against_token_dictionary(
+        run_train, n_classes):
+    # Special values 0-17 have token ids (batch_value 5: id offset + 5)
+    vocab_size = RANK_SPECIAL_VALUE_OFFSET + 18
+    cycle = copy.deepcopy(CYCLE)
+    cycle['cycle_consistency']['n_classes'] = [n_classes]
+    if n_classes > 18:
+        with pytest.raises(ValueError, match='special value token ids'):
+            run_train(vocab_size=vocab_size, meta={'gt_type': 'rank'},
+                      special_token_correction=cycle)
+    else:
+        result = run_train(vocab_size=vocab_size, optimization={'epochs': 1},
+                           meta={'gt_type': 'rank'},
+                           special_token_correction=cycle)
+        assert any('cycle/loss' in payload for payload in result['logged'])

@@ -33,7 +33,9 @@ Implementation notes
   encoder sees it through the cell's special token. The swapped label
   is therefore also written into that special token (see
   ``special_token_positions``), otherwise the swap does not change the
-  encoder input and the loss is zero.
+  encoder input and the loss is zero. In batches with padded special
+  tokens a key that AdaLN does not read changes no encoder input, so
+  such cells do not count as changed.
 """
 
 from __future__ import annotations
@@ -81,6 +83,53 @@ def special_token_positions(
     return positions
 
 
+def check_swapped_label_range(
+        keys: Sequence[str | None],
+        n_classes_per_key: Sequence[int],
+        offsets: Sequence[int],
+        sequence_positions: Sequence[int | None],
+        n_labels: int,
+        label_description: str,
+        ) -> None:
+    """Check that the swapped labels written into special tokens exist.
+
+    ``make_swapped_batch`` writes the swapped label ``offset + swap``
+    (``swap`` in ``[0, n_classes)``) of a key into its special token, whose
+    value indexes the special value embedding, or for rank models whose
+    token id (the label plus a fixed offset) indexes the token embedding.
+    A label beyond these tables fails during training.
+
+    Parameters
+    ----------
+    keys:
+        Metadata keys, as for ``make_swapped_batch``.
+    n_classes_per_key:
+        Per-key number of classes, as for ``make_swapped_batch``.
+    offsets:
+        Per-key offsets, as for ``make_swapped_batch``.
+    sequence_positions:
+        Per-key special token positions, as for ``make_swapped_batch``;
+        keys without a position are not written into the sequence.
+    n_labels:
+        Number of labels a special token can carry.
+    label_description:
+        What `n_labels` counts, for the error message.
+
+    Raises
+    ----------
+    ValueError:
+        If the swapped labels of a key reach `n_labels`.
+    """
+    for key, n_classes, offset, position in zip(
+            keys, n_classes_per_key, offsets, sequence_positions):
+        if position is not None and offset + n_classes > n_labels:
+            raise ValueError(
+                f"cycle_consistency key {key!r}: swapped labels reach "
+                f"{offset + n_classes - 1} (offset {offset} + n_classes "
+                f"{n_classes} - 1), beyond the {n_labels} "
+                f"{label_description}.")
+
+
 def make_swapped_batch(
         batch: dict,
         n_classes_per_key: int | list[int],
@@ -89,6 +138,7 @@ def make_swapped_batch(
         generator: torch.Generator | None = None,
         sequence_positions: list[int | None] | None = None,
         label_in_tokens: bool = False,
+        keys_read_by_encoder: Sequence[str] = (),
         ) -> tuple[dict, torch.Tensor]:
     """Return a shallow-copied batch dict with one or more
     batch-label slots replaced by random labels.
@@ -125,6 +175,11 @@ def make_swapped_batch(
         If ``True`` (``gt_type: rank``), the special token carries its
         label in its token id (label plus a fixed offset) instead of in
         ``values``.
+    keys_read_by_encoder:
+        Metadata keys that the encoder also reads directly (its AdaLN
+        keys). The encoder sees any other key with a sequence position only
+        through its special token, so a cell whose special token is padded
+        does not count as changed.
 
     Returns
     -------
@@ -247,6 +302,10 @@ def make_swapped_batch(
                 seq[:, position] = torch.where(
                     present, new_label, seq[:, position])
                 swapped_batch[field] = seq
+                if key not in keys_read_by_encoder:
+                    # The label reaches the encoder only through its
+                    # special token
+                    changed = changed & present
         else:
             # Legacy path: swap values[:, 0]. Guarded above so this
             # branch can only fire for at most one slot per call.

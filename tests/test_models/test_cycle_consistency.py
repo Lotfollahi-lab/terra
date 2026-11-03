@@ -4,6 +4,7 @@ import pytest
 import torch
 
 from terra.models.cycle_consistency import (
+    check_swapped_label_range,
     cycle_consistency_loss,
     make_swapped_batch,
     special_token_positions,
@@ -273,6 +274,64 @@ def test_make_swapped_batch_keeps_padded_special_tokens_padded():
     assert (swapped['values'][:3, 0] == 0).all()
     torch.testing.assert_close(swapped['values'][3:, 0],
                                swapped['batch_value'][3:].float())
+
+
+def test_cells_with_padded_special_tokens_do_not_count_as_changed():
+    # The encoder sees the label only through the special token, which a
+    # padded cell does not have
+    batch = _sequence_batch()
+    batch['tokens'][:3, 0] = 0
+    batch['values'][:3, 0] = 0.0
+    swapped, changed = make_swapped_batch(
+        batch, n_classes_per_key=[16], keys=['batch_value'],
+        sequence_positions=[0])
+    assert not changed[:3].any()
+    assert torch.equal(changed[3:], swapped['batch_value'][3:] != 3)
+    # ... unless the encoder also reads the key directly (AdaLN)
+    _, changed = make_swapped_batch(
+        batch, n_classes_per_key=[16], keys=['batch_value'],
+        sequence_positions=[0], keys_read_by_encoder=['batch_value'])
+    assert changed[:3].any()
+
+
+def test_batch_with_padded_special_tokens_has_no_changed_cell():
+    torch.manual_seed(0)
+    encoder, _ = init_model(
+        gt_type='combined', count_encoding='value_bins', n_value_bins=20,
+        cell_pos_enc='segment', device='cpu', vocab_size=128, seq_len=9,
+        n_special_tokens=1, n_segments=2, n_special_values=16,
+        enc_emb_dim=16, enc_depth=1, pred_emb_dim=8, pred_depth=1,
+        num_heads=2, nz_spc=True)
+    batch = _sequence_batch()
+    batch['tokens'][:, 0] = 0
+    batch['values'][:, 0] = 0.0
+    swapped, changed = make_swapped_batch(
+        batch, n_classes_per_key=[16], keys=['batch_value'],
+        sequence_positions=[0])
+    with torch.no_grad():
+        z, _ = encoder(batch=batch)
+        z_swapped, _ = encoder(batch=swapped)
+    assert (swapped['batch_value'] != 3).any()
+    # The swap does not change the encoder input
+    assert torch.equal(z, z_swapped)
+    assert not changed.any()
+
+
+def test_check_swapped_label_range():
+    kwargs = dict(keys=['batch_value', 'assay_value'], offsets=[2, 0],
+                  sequence_positions=[0, None], label_description='rows')
+    # Labels 2-17 of the first key; the second key is not in the sequence
+    check_swapped_label_range(n_classes_per_key=[16, 100], n_labels=18,
+                              **kwargs)
+    with pytest.raises(ValueError, match="'batch_value'.*reach 18"):
+        check_swapped_label_range(n_classes_per_key=[17, 1], n_labels=18,
+                                  **kwargs)
+
+
+def test_rank_special_value_offset_matches_the_token_dictionaries():
+    from terra.datasets.cell_datasets import rank_special_value_offset
+    assert rank_special_value_offset(2785) == 1674  # mus musculus
+    assert rank_special_value_offset(23407) == 21957  # homo sapiens
 
 
 def test_make_swapped_batch_rejects_two_writes_to_one_special_token():

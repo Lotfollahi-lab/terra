@@ -24,6 +24,26 @@ _COORD_BASED_POS_ENCS = (
     'coord', 'polar', 'alibi', 'polar+alibi', 'laplacian', 'rope')
 
 
+def rank_special_value_offset(vocab_size: int) -> int:
+    """
+    Offset from a special value (e.g. ``batch_value``) to the id of its
+    special value token, which carries the value in rank models (see the
+    tokenizers module).
+
+    Parameters
+    -----------
+    vocab_size:
+        Size of the token dictionary.
+
+    Returns
+    -----------
+    offset:
+        Offset of the mus musculus (2785 tokens) or homo sapiens token
+        dictionary.
+    """
+    return 1674 if vocab_size == 2785 else 21957
+
+
 class CellBaseDataset(Dataset):
     """Base torch ``Dataset`` wrapping a Hugging Face tokenized cell dataset.
 
@@ -217,10 +237,8 @@ class CellBaseDataset(Dataset):
                     [item[f'{spc_tk}_token'],
                     item_dict['tokens']])
             else:
-                if self.vocab_size == 2785:
-                    spv_idx_subtract = torch.tensor([1674]) # mus musculus token dict
-                else:
-                    spv_idx_subtract = torch.tensor([21957]) # homo sapiens token dict
+                spv_idx_subtract = torch.tensor(
+                    [rank_special_value_offset(self.vocab_size)])
                 item_dict['tokens'] = torch.cat(
                     [item[f'{spc_tk}_value'] + spv_idx_subtract, # see tokenizers module
                     item_dict['tokens']])
