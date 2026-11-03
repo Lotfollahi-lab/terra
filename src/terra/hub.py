@@ -161,9 +161,13 @@ def push_model_to_hub(model_folder: str | Path,
 
     Only the standard bundle files present in ``model_folder`` are uploaded
     (training cruft like optimizer state / logs / intermediate epochs is
-    skipped). A model card is generated unless ``model_card`` is provided. If
-    ``tag`` is given, an immutable git tag is created on the uploaded revision
-    -- use it to pin the manuscript checkpoint (e.g. ``v1.0``).
+    skipped). A model card is generated unless ``model_card`` is provided; a
+    ``README.md`` in ``model_folder`` is not uploaded (pass its text as
+    ``model_card`` to use it). If ``tag`` is given, an immutable git tag is
+    created on the uploaded revision -- use it to pin the manuscript checkpoint
+    (e.g. ``v1.0``). A tag that already exists on the repo is never moved: the
+    upload is refused before anything is uploaded, so pick a new tag (e.g.
+    ``v1.0.1``) for a new revision of the bundle.
 
     When ``prune_stale`` is set (default), bundle-type files
     (``.pt/.pth/.pkl/.yaml/.yml/.csv``) that exist on the Hub but are absent from
@@ -182,12 +186,38 @@ def push_model_to_hub(model_folder: str | Path,
         raise NotADirectoryError(f"{model_folder} is not a directory.")
 
     api = hub.HfApi(token=token)
+    if tag:
+        # Check before uploading anything: an existing tag would keep pointing
+        # at its old revision while the new files land on main
+        existing = _tag_commit(api, repo_id, tag)
+        if existing is not None:
+            raise ValueError(
+                f"Tag '{tag}' already exists on {repo_id} (commit "
+                f"{existing[:10]}). Tags pin immutable revisions, so it is not "
+                "moved; upload with a new tag (e.g. a patch version), or delete "
+                "the old tag on the Hub first if it must point to the new "
+                "files.")
     api.create_repo(repo_id, repo_type="model", private=private, exist_ok=True)
 
+    if (model_folder / "README.md").is_file():
+        logger.warning(
+            f"{model_folder / 'README.md'} is not uploaded: the model card is "
+            + ("the given model_card." if model_card is not None
+               else "generated (pass the file's text as model_card to use it)."))
+    api.upload_folder(
+        repo_id=repo_id,
+        repo_type="model",
+        folder_path=str(model_folder),
+        allow_patterns=[f for f in BUNDLE_FILES if f != "README.md"],
+        delete_patterns=list(STALE_DELETE_PATTERNS) if prune_stale else None,
+        commit_message=commit_message or f"Upload TERRA bundle ({repo_id})",
+    )
+
+    # The model card is uploaded last, so that nothing overwrites it
     card = (model_card if model_card is not None
             else build_model_card(repo_id, corpus=corpus, license=license,
                                   training_data=training_data, paper_url=paper_url))
-    api.upload_file(
+    commit = api.upload_file(
         path_or_fileobj=card.encode("utf-8"),
         path_in_repo="README.md",
         repo_id=repo_id,
@@ -195,21 +225,31 @@ def push_model_to_hub(model_folder: str | Path,
         commit_message="Add/update model card",
     )
 
-    api.upload_folder(
-        repo_id=repo_id,
-        repo_type="model",
-        folder_path=str(model_folder),
-        allow_patterns=list(BUNDLE_FILES),
-        delete_patterns=list(STALE_DELETE_PATTERNS) if prune_stale else None,
-        commit_message=commit_message or f"Upload TERRA bundle ({repo_id})",
-    )
-
     if tag:
-        api.create_tag(repo_id, tag=tag, repo_type="model", exist_ok=True)
+        # Tag exactly the revision uploaded here
+        api.create_tag(repo_id, tag=tag, repo_type="model",
+                       revision=getattr(commit, "oid", None))
 
     url = f"https://huggingface.co/{repo_id}"
     logger.info(f"Uploaded {model_folder} -> {url}" + (f"  (tag: {tag})" if tag else ""))
     return url
+
+
+def _tag_commit(api, repo_id: str, tag: str) -> str | None:
+    """Commit a tag of a model repo points to; `None` if the tag or the repo
+    does not exist."""
+    try:
+        from huggingface_hub.errors import RepositoryNotFoundError
+    except ImportError:  # huggingface_hub < 0.23
+        from huggingface_hub.utils import RepositoryNotFoundError
+    try:
+        refs = api.list_repo_refs(repo_id, repo_type="model")
+    except RepositoryNotFoundError:
+        return None
+    for ref in refs.tags:
+        if ref.name == tag:
+            return ref.target_commit
+    return None
 
 
 def download_pretrained(repo_id: str,
@@ -262,7 +302,11 @@ def main(argv: list[str] | None = None) -> None:
     up.add_argument("--paper-url", default=None,
                     help="Manuscript/preprint reference for the Citation section.")
     up.add_argument("--tag", default=None,
-                    help="Immutable git tag to create, e.g. v1.0")
+                    help="Immutable git tag to create, e.g. v1.0 (refused if "
+                         "the tag already exists).")
+    up.add_argument("--model-card", default=None,
+                    help="Markdown file to upload as the model card instead "
+                         "of the generated one.")
     up.add_argument("--license", default=DEFAULT_LICENSE)
     up.add_argument("--public", action="store_true",
                     help="Make the repo public (default: private).")
@@ -283,6 +327,8 @@ def main(argv: list[str] | None = None) -> None:
             args.folder, args.repo_id, corpus=args.corpus,
             private=not args.public, tag=args.tag, license=args.license,
             training_data=args.training_data, paper_url=args.paper_url,
+            model_card=(Path(args.model_card).read_text()
+                        if args.model_card else None),
             prune_stale=not args.no_prune, token=args.token)
     elif args.cmd == "download":
         print(download_pretrained(
