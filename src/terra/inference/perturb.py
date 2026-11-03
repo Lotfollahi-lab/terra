@@ -54,11 +54,27 @@ def _build_perturb_index(df: pd.DataFrame) -> dict[str, list[dict]]:
     return index
 
 
+def _fold_change(values: torch.Tensor,
+                 foldchange: float,
+                 log1p_values: bool,
+                 ) -> torch.Tensor:
+    """
+    Expression values changed by `foldchange`.
+
+    Log1p-normalized values (``shifted_log``, i.e. log1p(counts)) are changed
+    in count space, ``log1p(expm1(values) * foldchange)``, so that a fold
+    change of 2 doubles the counts; other values are multiplied directly.
+    """
+    if log1p_values:
+        return torch.log1p(torch.expm1(values) * foldchange)
+    return values * foldchange
+
 def _perturb_batch_with_idx(
     batch: dict,
     index: dict[str, list[dict]],
     seq_len_cell: int = 256,
     pad_gene_tokens: bool = True,
+    log1p_values: bool = False,
     ) -> dict:
     """
     Modify the tensors in-place (cheap) and return the same dict.
@@ -81,6 +97,9 @@ def _perturb_batch_with_idx(
         Number of cell gene tokens (excluding neighborhood gene tokens).
     pad_gene_tokens:
         If `True`, also zero out the gene tokens of knocked-out genes.
+    log1p_values:
+        If `True`, the expression values are log1p-normalized counts and
+        fold changes apply to the counts (``_fold_change``).
     """
     # Mapped without the torch format; convert the edited columns to tensors so
     # the in-place per-cell edits below work (no-op if already tensors).
@@ -104,7 +123,8 @@ def _perturb_batch_with_idx(
             if pad_gene_tokens:
                 gene_tokens[idx] = 0
         elif row["perturbation_type"] == "foldchange":
-            gene_expr[idx] *= row["foldchange"]
+            gene_expr[idx] = _fold_change(
+                gene_expr[idx], row["foldchange"], log1p_values)
         else:
             raise ValueError(f"Bad perturbation_type: {row['perturbation_type']}")
 
@@ -145,6 +165,7 @@ def _perturb_batch_with_df(
     n_segments: int = 11,
     pad_gene_tokens: bool = True,
     adjust_positions: bool = False,
+    log1p_values: bool = False,
     ) -> dict:
     """
     Modify batch of token sequences in place based on config defined in
@@ -165,6 +186,9 @@ def _perturb_batch_with_df(
         Dataframe containing the perturbation config.
     seq_len_cell:
         Number of cell gene tokens (excluding neighborhood gene tokens).
+    log1p_values:
+        If `True`, the expression values are log1p-normalized counts and
+        fold changes apply to the counts (``_fold_change``).
 
     Returns
     -----------
@@ -199,7 +223,9 @@ def _perturb_batch_with_df(
                 if pad_gene_tokens:
                     batch["gene_tokens"][:, col] = 0
             else:  # foldchange
-                batch["gene_expr"][:, col] *= row["foldchange"]
+                batch["gene_expr"][:, col] = _fold_change(
+                    batch["gene_expr"][:, col], row["foldchange"],
+                    log1p_values)
             continue
 
         token_id = row["perturbed_gene_token"]
@@ -216,8 +242,10 @@ def _perturb_batch_with_df(
             if pad_gene_tokens:
                 batch["gene_tokens"][cell_pert_idx, abs_gene_pert_idx] = 0
         elif row["perturbation_type"] == "foldchange":
-            batch["gene_expr"][
-                cell_pert_idx, abs_gene_pert_idx] *= row["foldchange"]
+            batch["gene_expr"][cell_pert_idx, abs_gene_pert_idx] = (
+                _fold_change(
+                    batch["gene_expr"][cell_pert_idx, abs_gene_pert_idx],
+                    row["foldchange"], log1p_values))
 
         if adjust_positions:
             gt = batch["gene_tokens"] # (B, n_segments*seq_len_cell)
@@ -363,6 +391,10 @@ def perturb_dataset(dataset: Dataset,
         ensembl ID or `"all"`), `perturbation_target` (`"cell"` or
         `"neighborhood"`) and `perturbation_type` (`"knockout"` or
         `"foldchange"`), plus a `foldchange` value for fold-change rows. A
+        fold change multiplies the counts: for models whose expression values
+        are log1p-normalized (`count_count_norm_method` 'shifted_log', e.g.
+        TERRA-112M and TERRA-96M) a value v becomes
+        log1p(expm1(v) * foldchange); other values are multiplied directly. A
         `"neighborhood"` target on a specific cell edits that cell's tokens in
         the sequences of the cells that have it as a neighbor.
     model_folder_path:
@@ -410,6 +442,13 @@ def perturb_dataset(dataset: Dataset,
     with open(Path(model_folder_path) / "token_dictionary.pkl", "rb") as f:
         token_dict = pickle.load(f)
 
+    # Expression values of shifted-log models are log1p(counts): fold changes
+    # apply to the counts
+    with open(Path(model_folder_path) / "model_config.yaml", "r") as f:
+        model_config = yaml.safe_load(f)
+    log1p_values = (
+        model_config["data"].get("count_count_norm_method") == "shifted_log")
+
     # Convert ensembl IDs to token IDs, keeping "all"
     perturb_df = perturb_df.copy()
     perturb_df["perturbed_gene_token"] = perturb_df["perturbed_ensembl_id"].where(
@@ -431,6 +470,7 @@ def perturb_dataset(dataset: Dataset,
             n_segments=n_segments,
             pad_gene_tokens=pad_gene_tokens,
             adjust_positions=adjust_positions,
+            log1p_values=log1p_values,
         )
     
     else:
@@ -453,6 +493,7 @@ def perturb_dataset(dataset: Dataset,
             index=perturb_index,
             seq_len_cell=seq_len_cell,
             pad_gene_tokens=pad_gene_tokens,
+            log1p_values=log1p_values,
         )
 
     # Compute which cells the perturbations actually edit *before* mapping, from

@@ -161,6 +161,9 @@ space. Each edit is one row of a small `perturb_df`:
 
 - `knockout` sets it to zero (simulates removing the gene).
 - `foldchange` multiplies it by `foldchange` (e.g. `0.5` to halve, `2.0` to double).
+  For models with log-normalized expression (`shifted_log`, e.g. TERRA-112M and
+  TERRA-96M) the counts are multiplied, i.e. a value `v` becomes
+  `log1p(expm1(v) * foldchange)`.
 
 **Perturbation target** — *where* the edit is applied. Each cell is tokenized
 together with its spatial neighbors, so a sequence has two parts:

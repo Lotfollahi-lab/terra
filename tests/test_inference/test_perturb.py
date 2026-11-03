@@ -7,8 +7,13 @@ Tests for ``perturb_dataset``.
   whose neighbor ID is that cell.
 * Knockouts of specific cells kept the gene tokens (value 0) even with
   ``pad_gene_tokens=True``, unlike knockouts of all cells; both now pad them.
+* ``foldchange`` multiplied the stored values, which are log1p(counts) for
+  shifted-log models (e.g. TERRA-112M/96M), so a fold change of 2 turned a
+  count c into (c + 1)^2 - 1 instead of 2c. Log1p-normalized values now
+  change in count space; other values are multiplied as before.
 """
 
+import copy
 import pickle
 
 import numpy as np
@@ -33,9 +38,11 @@ def _tokenized(tiny, bundle, cache):
 
 @pytest.fixture(scope='module')
 def data(tiny, tmp_path_factory):
-    """Bundles with their tokenized data."""
+    """Bundles (log1p and linear count values) with their tokenized data."""
+    linear = copy.deepcopy(tiny.configs['96M'])
+    linear['data']['count_count_norm_method'] = None
     out = {}
-    for name, config in [('96M', None)]:
+    for name, config in [('96M', None), ('96M_linear', linear)]:
         bundle = tiny.bundle(name, config)
         out[name] = (bundle, _tokenized(
             tiny, bundle, tmp_path_factory.mktemp(f'cache_{name}')))
@@ -126,3 +133,32 @@ def test_knockouts_pad_gene_tokens_for_all_and_specific_cells(
         new_tokens[edited], 0 if pad_gene_tokens else token)
     np.testing.assert_array_equal(new_tokens[~edited], tokens[~edited])
     np.testing.assert_array_equal(new_values[~edited], values[~edited])
+
+
+@pytest.mark.parametrize('layout, log1p_values',
+                         [('96M', True), ('96M_linear', False)])
+@pytest.mark.parametrize('cells', ['specific', 'all'])
+def test_fold_change_multiplies_the_counts(data, layout, log1p_values,
+                                           cells):
+    bundle, dataset = data[layout]
+    tokens, values = _columns(dataset)
+    token = tokens[0, 0]
+    cell_id = dataset['cell_id'][0] if cells == 'specific' else 'all'
+    new_tokens, new_values = _columns(_perturb(
+        dataset, bundle, perturbed_cell_id=cell_id,
+        perturbed_ensembl_id=_gene_id(bundle, token),
+        perturbation_target='cell', perturbation_type='foldchange',
+        foldchange=2.0))
+    edited = np.zeros_like(tokens, dtype=bool)
+    edited[:, :SEQ_LEN_CELL] = tokens[:, :SEQ_LEN_CELL] == token
+    if cells == 'specific':
+        edited[1:] = False
+    if log1p_values:
+        # The counts double
+        np.testing.assert_allclose(np.expm1(new_values[edited]),
+                                   2 * np.expm1(values[edited]), rtol=1e-5)
+    else:
+        np.testing.assert_allclose(new_values[edited], 2 * values[edited],
+                                   rtol=1e-6)
+    np.testing.assert_array_equal(new_values[~edited], values[~edited])
+    np.testing.assert_array_equal(new_tokens, tokens)
