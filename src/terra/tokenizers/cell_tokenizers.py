@@ -1622,7 +1622,7 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
                 adata.X,
                 cell_areas=adata.obs['cell_area'].values)
             adata.layers['X_neighborhood_count'] = normalize_by_cell_area(
-                adata.X,
+                adata.layers['X_neighborhood'],
                 cell_areas=adata.obs['neighborhood_cell_area'].values)
         else:
             if self.count_cell_norm_method is None:
