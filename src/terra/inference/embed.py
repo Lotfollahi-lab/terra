@@ -1188,12 +1188,17 @@ def gene_embed_dataset(dataset: Dataset,
                         gene_sum = sum_per_gene[j]
                         gene_count = count_per_gene[j]
                         if itr == 0:
-                            all_cell_gene_emb_per_data_dict[gene_id] = (gene_sum.detach().cpu(), gene_count.detach().cpu())
+                            # Copies: on CPU, .cpu() returns views, so the cell
+                            # and spatial accumulators shared one count tensor,
+                            # which was then increased twice per batch
+                            all_cell_gene_emb_per_data_dict[gene_id] = (
+                                gene_sum.detach().cpu().clone(), gene_count.detach().cpu().clone())
                             if include_spatial_cell_emb:
                                 spatial_sum_per_gene = spatial_cell_embs.sum(dim=0)  # (Gc, D)
                                 spatial_count_per_gene = count_per_gene           # (Gc,)
                                 all_spatial_cell_gene_emb_per_data_dict[gene_id] = (
-                                    spatial_sum_per_gene[j].detach().cpu(), spatial_count_per_gene[j].detach().cpu()
+                                    spatial_sum_per_gene[j].detach().cpu().clone(),
+                                    spatial_count_per_gene[j].detach().cpu().clone()
                                 )
                         else:
                             all_cell_gene_emb_per_data_dict[gene_id][0].add_(gene_sum.detach().cpu())
