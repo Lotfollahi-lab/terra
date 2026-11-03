@@ -3,6 +3,7 @@ import logging
 import os
 import pickle
 import time
+import warnings
 import yaml
 from collections import defaultdict
 from contextlib import contextmanager
@@ -147,6 +148,24 @@ def _excluded_gene_tokens(agg_excluded_genes: list[str] | None,
             f"vocabulary; not in the token dictionary: {unknown[:10]}"
             f"{' ...' if len(unknown) > 10 else ''}")
     return [token_dict[gene] for gene in agg_excluded_genes]
+
+
+# Names of the gene mapping in a model bundle: current name first, then the
+# name in bundles published before June 2026 (e.g. the Hugging Face 'v1.0'
+# revisions of TERRA-96M and TERRA-112M)
+BUNDLE_GENE_MAPPING_FILE_NAMES = ('ensembl_dictionary.pkl', 'ensembl_dic.pkl')
+
+
+def _bundle_gene_mapping_path(model_folder_path: str | Path) -> str | None:
+    """
+    Path of the gene-name-to-Ensembl-ID mapping of a model bundle, under its
+    current or its earlier file name; `None` if the bundle has none.
+    """
+    for name in BUNDLE_GENE_MAPPING_FILE_NAMES:
+        path = Path(model_folder_path) / name
+        if path.is_file():
+            return str(path)
+    return None
 
 
 @contextmanager
@@ -689,12 +708,13 @@ def harmonize_tokenize_embed_pipeline(
     gene_mapping_dict_file_path:
         Path to a pickled gene-name-to-ensembl-ID mapping dictionary used during
         harmonization. If `None`, defaults to the model bundle's
-        `ensembl_dictionary.pkl` when present, otherwise falls back to an Ensembl
-        release lookup.
+        `ensembl_dictionary.pkl` (or `ensembl_dic.pkl`, its name in bundles
+        published before June 2026) when present, otherwise falls back to an
+        Ensembl release lookup (with a warning).
     gene_occurrence_count_file_path:
         Path to a pickled dictionary of per-gene pretraining occurrence counts. If
         `None`, defaults to the model bundle's `gene_count_dictionary.pkl` when
-        present; otherwise the occurrence filter is skipped.
+        present; otherwise the occurrence filter is skipped (with a warning).
     gene_occurrence_count_filter_value:
         Minimum number of pretraining occurrences a gene must have to be kept.
     ensembl_release:
@@ -777,15 +797,31 @@ def harmonize_tokenize_embed_pipeline(
     # (see terra.hub.BUNDLE_FILES), so a downloaded HF model reproduces the
     # model's training-time harmonization without any external paths. An explicit
     # path always overrides; a missing bundle file falls back to harmonize_adata's
-    # built-in behavior (Ensembl-release lookup / skipping the occurrence filter).
+    # built-in behavior (Ensembl-release lookup / skipping the occurrence filter),
+    # which can select other genes than the model's training did, so it warns.
     if gene_mapping_dict_file_path is None:
-        _ref = Path(model_folder_path) / 'ensembl_dictionary.pkl'
-        if _ref.is_file():
-            gene_mapping_dict_file_path = str(_ref)
+        gene_mapping_dict_file_path = _bundle_gene_mapping_path(
+            model_folder_path)
+        if gene_mapping_dict_file_path is None:
+            warnings.warn(
+                f"The model folder '{model_folder_path}' has no gene mapping "
+                "('ensembl_dictionary.pkl'), so gene names are mapped to "
+                f"Ensembl IDs with Ensembl release {ensembl_release}, which "
+                "can differ from the mapping the model was trained with. "
+                "Pass gene_mapping_dict_file_path to use a mapping file.",
+                UserWarning, stacklevel=2)
     if gene_occurrence_count_file_path is None:
         _ref = Path(model_folder_path) / 'gene_count_dictionary.pkl'
         if _ref.is_file():
             gene_occurrence_count_file_path = str(_ref)
+        else:
+            warnings.warn(
+                f"The model folder '{model_folder_path}' has no "
+                "'gene_count_dictionary.pkl', so genes are not filtered by "
+                "their number of pretraining occurrences "
+                "(gene_occurrence_count_filter_value). Pass "
+                "gene_occurrence_count_file_path to apply the filter.",
+                UserWarning, stacklevel=2)
     with open(Path(model_folder_path) / 'model_config.yaml', 'r') as file:
         model_config = yaml.safe_load(file)
     # Special tokens are only tokenized for models that have them; check
