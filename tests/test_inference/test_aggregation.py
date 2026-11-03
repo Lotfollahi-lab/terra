@@ -6,6 +6,7 @@ embeddings.
 import pickle
 
 import numpy as np
+import pytest
 import torch
 
 from terra import embed_dataset, get_gene_embed
@@ -82,3 +83,17 @@ def test_get_gene_embed_with_duplicate_genes(tiny):
     assert list(output) == list(expected)
     for key, value in expected.items():
         np.testing.assert_array_equal(output[key], value)
+
+
+
+def test_unknown_excluded_genes_raise_a_clear_error(tiny):
+    bundle = tiny.bundle('112M')
+    dataset = tiny.dataset(bundle)
+    with open(bundle / 'token_dictionary.pkl', 'rb') as f:
+        token_dict = pickle.load(f)
+    gene = next(key for key in token_dict if key.startswith('ENSG'))
+    with pytest.raises(ValueError, match='ENSG_UNKNOWN') as error:
+        embed_dataset(dataset, str(bundle),
+                      agg_excluded_genes=[gene, 'ENSG_UNKNOWN', 107], **KW)
+    assert '107' in str(error.value)
+    assert gene not in str(error.value)

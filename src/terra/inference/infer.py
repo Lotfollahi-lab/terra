@@ -39,6 +39,7 @@ from terra.utils.embedding import (create_binary_selection_mask,
                                        batch_rowwise_distances)
 from terra.utils.logging import CSVLogger
 from .embed import (_check_special_token_columns, _encoder_backbone,
+                    _excluded_gene_tokens,
                     _restrict_special_attention, _set_cell_only_seq_len,
                     _truncation_settings)
 from typing import Dict, List
@@ -273,11 +274,7 @@ def infer(args: dict,
     max_special_tokens = sum(1 for key in token_dict if "cls" in key) + sum(
         1 for key in token_dict if "spt" in key)
 
-    if agg_excluded_genes:
-        agg_excluded_tokens = [
-            token_dict[gene] for gene in agg_excluded_genes]
-    else:
-        agg_excluded_tokens = None
+    agg_excluded_tokens = _excluded_gene_tokens(agg_excluded_genes, token_dict)
 
     # Define tokenizer-specific params
     if tokenizer_type == 'cell_neigh':

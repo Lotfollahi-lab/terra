@@ -131,6 +131,23 @@ def _check_special_token_columns(dataset: Dataset,
             "does), or use keep_special_tokens=False.")
 
 
+def _excluded_gene_tokens(agg_excluded_genes: list[str] | None,
+                          token_dict: dict) -> list[int] | None:
+    """
+    Map the Ensembl IDs in ``agg_excluded_genes`` to token ids, with a clear
+    error for genes that are not in the model's vocabulary.
+    """
+    if not agg_excluded_genes:
+        return None
+    unknown = [gene for gene in agg_excluded_genes if gene not in token_dict]
+    if unknown:
+        raise ValueError(
+            'agg_excluded_genes must be Ensembl IDs of genes in the model '
+            f"vocabulary; not in the token dictionary: {unknown[:10]}"
+            f"{' ...' if len(unknown) > 10 else ''}")
+    return [token_dict[gene] for gene in agg_excluded_genes]
+
+
 def _encoder_backbone(encoder: torch.nn.Module) -> torch.nn.Module:
     """
     Return the gene transformer of an encoder, which ``init_model`` wraps in
@@ -416,11 +433,7 @@ def embed_dataset(dataset: Dataset,
         token_dict = pickle.load(file)
     vocab_size = len(token_dict)
 
-    if agg_excluded_genes:
-        agg_excluded_tokens = [
-            token_dict[gene] for gene in agg_excluded_genes]
-    else:
-        agg_excluded_tokens = None
+    agg_excluded_tokens = _excluded_gene_tokens(agg_excluded_genes, token_dict)
 
     logger.info('STEP 2: GENERATING EMBEDDINGS...')
     # Set device
