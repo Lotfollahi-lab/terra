@@ -215,7 +215,9 @@ def finetune_self_supervised(
         n_special_tokens=n_special_tokens,
         per_block_mask_ratio=model_config['mask']['per_block_mask_ratio'],
         sample_segments=args['data'].get('sample_segments', False),
-        sample_gene_masks=args['data'].get('sample_gene_masks', False),
+        # Sampled gene masks, as in pretraining (without them the collator
+        # returns no context and target masks)
+        sample_gene_masks=args['data'].get('sample_gene_masks', True),
         restrict_special_attention=model_config['mask'].get(
             'restrict_special_attention', False),
         special_token_pad_ratio=1.0 if pad_spc_tokens else 0.0,

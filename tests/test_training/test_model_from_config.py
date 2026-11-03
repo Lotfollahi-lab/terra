@@ -322,6 +322,25 @@ def test_finetune_self_supervised_loads_released_layouts(tmp_path, layout):
     assert run_dir
 
 
+def test_finetune_self_supervised_samples_gene_masks_by_default(tmp_path):
+    # Without data.sample_gene_masks the collator returned no masks and the
+    # first step failed with a TypeError
+    from terra.training.finetune_self_supervised import finetune_self_supervised
+
+    bundle = tmp_path / 'bundle'
+    _write_bundle(bundle, '96M')
+    _, dataset = _tokenized_data(bundle, tmp_path / 'cache')
+    args = {
+        'model': {'pretrained_checkpoint_path': str(bundle)},
+        'data': {'batch_size': 8, 'pin_memory': False, 'num_workers': 0},
+        'finetune': {'use_peft': False, 'lr': 1e-4, 'num_epochs': 1,
+                     'use_bfloat16': False}}
+    run_dir = finetune_self_supervised(
+        args=args, dataset=dataset, save_folder_path=str(tmp_path / 'runs'))
+    assert list((tmp_path / 'runs').rglob('checkpoint_epoch_1.pt'))
+    assert run_dir
+
+
 def test_selection_mask_never_selects_special_tokens():
     from terra.training.finetune import build_selection_mask
 
