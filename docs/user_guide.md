@@ -141,7 +141,23 @@ model_dir = download_pretrained("Lotfollahi-lab/TERRA-96M", revision="v1.0")  # 
 
 Because the gene-reference files are part of the bundle, harmonization at
 inference time reproduces the tokenization the model was trained with — no
-external file paths are required.
+external file paths are required. Bundles uploaded before June 2026 (such as
+the current `v1.0` revisions) name the gene mapping `ensembl_dic.pkl`, which
+TERRA also reads, and have no `gene_count_dictionary.pkl`: with them the
+pipeline warns and skips the pretraining-occurrence filter unless you pass
+`gene_occurrence_count_file_path`. Their weights, config and token dictionary
+are the same as on `main`.
+
+### GPU and CPU results
+
+On a GPU, TERRA runs the model under bf16 autocast, as in training; on a CPU
+it computes in float32. Embeddings therefore differ slightly between the two.
+For models with coordinate position encodings, such as TERRA-96M, the
+difference is larger (a few percent for neighborhood embeddings in our
+tests), because on a GPU the phases of the encoding are computed in bf16, as
+they were during training. Use a GPU to reproduce published TERRA-96M
+embeddings. Models trained with `meta.fp32_position_encoding: true` compute
+these phases in float32 on every device.
 
 ## In-silico perturbation
 

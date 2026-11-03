@@ -12,11 +12,14 @@ and this project adheres to [Semantic Versioning][].
 
 ### Added
 
--   New `meta.attention_backend` config option selecting the scaled
-    dot-product-attention (SDPA) backend: `auto` (default, unchanged
-    behaviour — fp32 softmax), `flash` (lowest memory, largest usable batch
-    size, bf16 softmax), `efficient`, `cudnn`, `math`, or `torch`. Previously
-    the backend preference was hard-coded.
+-   New `meta.attention_backend` config option restricting the scaled
+    dot-product-attention (SDPA) backends: `auto` (default; excludes
+    FlashAttention), `flash` (allows it: lowest memory, largest usable batch
+    size), `efficient`, `cudnn`, `math`, or `torch` (unconstrained, as
+    TERRA-96M and TERRA-112M were trained: FlashAttention for unmasked
+    attention). PyTorch tries the enabled backends in its own priority order.
+    Inference always passes an attention mask, so it uses the memory-efficient
+    kernel with every preset that allows it.
 -   The attention implementation and backend preference are now logged when the
     model is initialized, so every training, finetuning and inference run
     records which attention path it used.
@@ -57,6 +60,19 @@ and this project adheres to [Semantic Versioning][].
     -   `random_state` for the subsampling of the `summarize_*_by_label`
         point-cloud summaries.
 
+-   Opt-in options from the November 2026 review of the GPU, evaluation and
+    Hub code; their defaults keep the released models' results:
+    -   `meta.fp32_position_encoding` computes the phases of the coordinate
+        position encodings (`coord`, `polar`, `polar+alibi`, `rope`) in
+        float32 under bf16 autocast. By default they are computed in bf16 on
+        GPU, as TERRA-96M was trained, and in float32 on CPU, so GPU and CPU
+        embeddings of such models differ by more than the remaining bf16
+        rounding;
+    -   `finetune.use_bfloat16` for supervised finetuning (as for
+        self-supervised finetuning); finetuning runs in float32 by default;
+    -   `seed` for `linear_classifier` and `linear_regressor`;
+    -   `terra-hub upload --model-card` to upload a model card from a file.
+
 ### Changed
 
 -   The `hst_corpus_110m` model configs now use `attention_backend: flash`
@@ -88,6 +104,22 @@ and this project adheres to [Semantic Versioning][].
     error otherwise; `harmonize_tokenize_embed_pipeline` raises an error for
     `gene_perturb_df`, which it never applied (use `perturb_dataset` and
     `embed_dataset`).
+
+-   `linear_classifier` and `linear_regressor` evaluate the weights of the
+    epoch with the lowest validation loss. They kept references to the live
+    parameters as the "best" state, so the last epoch was evaluated (patience
+    epochs after the best one when training stopped early);
+    `restore_best=False` reproduces earlier results.
+-   `get_adata_cellphonedb_lr_pairs` keeps ligand-receptor pairs with
+    hyphenated gene symbols (e.g. HLA genes), which were split apart and
+    dropped; `legacy_split=True` restores the previous behaviour.
+-   Logged training losses (per step, per epoch and in checkpoints) are
+    averaged over the GPUs instead of being rank 0's own values.
+-   `harmonize_tokenize_embed_pipeline` reads the gene mapping of bundles
+    that ship it as `ensembl_dic.pkl` (e.g. the `v1.0` revisions on the
+    Hugging Face Hub), and warns when a bundle has no gene mapping or no
+    `gene_count_dictionary.pkl` (previously it silently looked the genes up
+    in an Ensembl release or skipped the occurrence filter).
 
 ### Fixed
 
@@ -194,6 +226,22 @@ and this project adheres to [Semantic Versioning][].
 -   `harmonize_tokenize_embed_pipeline` accepts a `pathlib.Path` save path and
     no longer derives the batch label from it; `get_gene_embed` accepts
     repeated genes.
+-   `linear_regressor` reports its `JSD` metric correctly as the
+    Jensen-Shannon distance (the square root of the divergence, natural
+    logarithm), stores it also as `JS_distance` next to `JS_divergence`, and
+    leaves cells with an all-zero composition out of the averages instead of
+    returning NaN.
+-   `terra.evaluation` imports without the `eval` extra; the ligand-receptor
+    utilities import CellPhoneDB, OmniPath and IPython when they are called
+    (importing OmniPath also sent network requests).
+-   `push_model_to_hub` refuses a tag that already exists instead of silently
+    leaving it on the previous revision, tags the uploaded revision exactly,
+    and no longer lets a `README.md` in the bundle folder overwrite the model
+    card.
+-   The attention backend presets are documented and logged as PyTorch
+    applies them (in its priority order, not the listed order), and TERRA
+    imports on PyTorch < 2.3, where the backend cannot be selected.
+-   Finetuning validation runs without autograd.
 
 ## [0.1.13] - 2026-07-28
 
