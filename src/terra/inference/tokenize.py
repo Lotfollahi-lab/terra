@@ -54,6 +54,38 @@ TOKENIZER_CONFIG_KEYS = (
 )
 
 
+def _normalization_file(model_folder_path: Path | str,
+                        model_config: dict,
+                        config_key: str,
+                        file_name: str,
+                        ) -> str | None:
+    """
+    Path of a normalization artifact of a model: the copy in the model folder
+    if it exists, else the path recorded in the model config (`None` if the
+    config has none).
+
+    Parameters
+    -----------
+    model_folder_path:
+        Path to the model folder.
+    model_config:
+        Model config.
+    config_key:
+        Key of the path in the `data` section of the config.
+    file_name:
+        File name of the copy in the model folder.
+
+    Returns
+    -----------
+    path:
+        Path of the artifact, or `None`.
+    """
+    bundled = Path(model_folder_path) / file_name
+    if bundled.is_file():
+        return str(bundled)
+    return model_config['data'].get(config_key)
+
+
 def cell_neigh_split_is_equal(data_config: dict) -> bool:
     """
     Return the `split_cell_neigh_equally` value of a cell-neighborhood model.
@@ -127,28 +159,36 @@ def tokenize_adata(adata: ad.AnnData,
     with open(model_config_file_path, 'r') as file:
         model_config = yaml.safe_load(file)
 
-    # Normalization-artifact paths are read FROM THE MODEL CONFIG (recorded at
-    # training time under config['data']). If a path is specified, it is used
-    # and logged; if it is absent, it is not read and a warning notes the
-    # per-file fallback. This keeps the inference normalization explicit and
-    # matched to how the model was trained -- no silent mismatch.
-    norm_factor_file_path = model_config['data'].get('norm_factor_file_path')
-    pf_targets_file_path = model_config['data'].get('pf_targets_file_path')
+    # Normalization artifacts: the copies in the model folder
+    # (<model_folder>/norm_factors.csv and /pf_targets.csv, which training
+    # writes there and terra.hub downloads with the model), else the paths
+    # recorded in the config at training time (e.g. on the training cluster).
+    # If neither exists, nothing is read and a warning notes the fallback.
+    # This keeps the inference normalization explicit and matched to how the
+    # model was trained -- no silent mismatch.
+    norm_factor_file_path = _normalization_file(
+        model_folder_path, model_config, 'norm_factor_file_path',
+        'norm_factors.csv')
+    pf_targets_file_path = _normalization_file(
+        model_folder_path, model_config, 'pf_targets_file_path',
+        'pf_targets.csv')
 
     if norm_factor_file_path:
-        logger.info("Gene norm factors: reading from config path "
+        logger.info("Gene norm factors: reading from "
               f"'{norm_factor_file_path}'.")
     else:
-        logger.warning("'norm_factor_file_path' is not set in the model "
+        logger.warning("The model folder has no norm_factors.csv and "
+              "'norm_factor_file_path' is not set in the model "
               "config['data'] -> gene-level norm factors will NOT be loaded. "
               "This is correct only if the model uses no gene-level norm "
               "method (e.g. shifted_log / pflog1ppf).")
 
     if pf_targets_file_path:
-        logger.info("PFlog1pPF: reading FROZEN corpus targets from config path "
+        logger.info("PFlog1pPF: reading FROZEN corpus targets from "
               f"'{pf_targets_file_path}'.")
     else:
-        logger.warning("'pf_targets_file_path' is not set in the model "
+        logger.warning("The model folder has no pf_targets.csv and "
+              "'pf_targets_file_path' is not set in the model "
               "config['data'] -> PFlog1pPF will use PER-FILE targets. This is "
               "correct only if the model was trained with per-file targets.")
 
