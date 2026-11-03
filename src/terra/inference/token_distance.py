@@ -1,7 +1,6 @@
 import logging
 import pickle
 import time
-import sys
 import yaml
 from collections import defaultdict
 from pathlib import Path
@@ -23,7 +22,6 @@ from .embed import (_encoder_backbone, _init_inference_loader,
                     _set_cell_only_seq_len)
 
 
-logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
