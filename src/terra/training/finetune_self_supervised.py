@@ -559,13 +559,27 @@ def finetune_self_supervised(
 
 # Adapter merge / model preparation
 
-def merge_lora_weights(state_dict: dict) -> dict:
+def merge_lora_weights(state_dict: dict, scaling: float) -> dict:
     """Fold LoRA adapters in a PEFT state dict into the base weights.
 
-    For each adapted layer, ``W = W_base + (lora_B @ lora_A)``; layers without
-    adapters are copied unchanged. The ``base_model.model.`` / ``base_layer``
-    PEFT wrapper prefixes are stripped so the result matches the plain model's
-    parameter names.
+    For each adapted layer, ``W = W_base + scaling * (lora_B @ lora_A)``, as
+    PEFT's ``merge_and_unload``; layers without adapters are copied
+    unchanged. The ``base_model.model.`` / ``base_layer`` PEFT wrapper
+    prefixes are stripped so the result matches the plain model's parameter
+    names.
+
+    Parameters
+    ----------
+    state_dict:
+        State dict of a model wrapped with LoRA adapters.
+    scaling:
+        Scaling of the adapters, ``lora_alpha / r`` (``peft_alpha /
+        peft_rank`` of the finetuning config).
+
+    Returns
+    -------
+    dict
+        State dict of the plain model with the adapters merged.
     """
     base_weights, lora_a_weights, lora_b_weights = {}, {}, {}
     for key, value in state_dict.items():
@@ -587,13 +601,37 @@ def merge_lora_weights(state_dict: dict) -> dict:
     for key, base_weight in base_weights.items():
         if key in lora_a_weights and key in lora_b_weights:
             delta = torch.mm(lora_b_weights[key], lora_a_weights[key])
-            merged_weights[key] = base_weight + delta
+            merged_weights[key] = base_weight + scaling * delta
             n_merged += 1
         else:
             merged_weights[key] = base_weight
     logger.info("Merged %d LoRA adapter layers (%d total layers)",
                 n_merged, len(merged_weights))
     return merged_weights
+
+
+def _lora_scaling(finetuned_checkpoint_dir: Path) -> float:
+    """
+    Scaling of the LoRA adapters of a finetuning run, ``peft_alpha /
+    peft_rank`` from the run's ``params.yaml``.
+    """
+    params_file = finetuned_checkpoint_dir / 'params.yaml'
+    if not params_file.is_file():
+        raise ValueError(
+            "Merging the LoRA adapters needs the run's peft_rank and "
+            f"peft_alpha (scaling peft_alpha / peft_rank), but '{params_file}' "
+            'does not exist (finetune_self_supervised writes it into the run '
+            'directory).')
+    with open(params_file) as f:
+        finetune_params = (yaml.safe_load(f) or {}).get('finetune') or {}
+    missing = [f'finetune.{key}' for key in ('peft_rank', 'peft_alpha')
+               if finetune_params.get(key) is None]
+    if missing:
+        raise ValueError(
+            "Merging the LoRA adapters needs the run's peft_rank and "
+            f"peft_alpha (scaling peft_alpha / peft_rank), but '{params_file}' "
+            f"has no {', '.join(missing)}.")
+    return finetune_params['peft_alpha'] / finetune_params['peft_rank']
 
 
 def prepare_finetuned_model(
@@ -628,8 +666,10 @@ def prepare_finetuned_model(
         Epoch checkpoint to prepare. Defaults to the highest-epoch checkpoint.
     use_peft:
         Set ``True`` if the fine-tune used LoRA, to merge the adapters into the
-        base encoder/predictor weights. The target encoder (used for embedding)
-        already holds fully EMA-merged weights and is copied as-is.
+        base encoder/predictor weights, scaled by ``peft_alpha / peft_rank``
+        from the run's ``params.yaml`` (a ``ValueError`` is raised if they are
+        missing). The target encoder (used for embedding) already holds fully
+        EMA-merged weights and is copied as-is.
 
     Returns
     -------
@@ -678,8 +718,9 @@ def prepare_finetuned_model(
 
     if use_peft:
         logger.info("Merging LoRA adapters into the base model...")
-        encoder_state_dict = merge_lora_weights(encoder_state_dict)
-        predictor_state_dict = merge_lora_weights(predictor_state_dict)
+        scaling = _lora_scaling(finetuned_checkpoint_dir)
+        encoder_state_dict = merge_lora_weights(encoder_state_dict, scaling)
+        predictor_state_dict = merge_lora_weights(predictor_state_dict, scaling)
         # target_encoder already holds merged fine-tuned weights from the EMA
 
     model_checkpoint = {
