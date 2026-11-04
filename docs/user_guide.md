@@ -159,6 +159,14 @@ they were during training. Use a GPU to reproduce published TERRA-96M
 embeddings. Models trained with `meta.fp32_position_encoding: true` compute
 these phases in float32 on every device.
 
+Inference computes the cell-only context on the special tokens and the index
+cell alone, which makes embedding 1.5-1.7x faster. On a GPU the embeddings are
+bit-identical to those of the full-length computation used before; on a CPU
+they can differ by rounding (up to about 2e-7). To reproduce the previous
+computation exactly, set
+`terra.models.gene_transformers.GeneTransformerBaseEncoder.layer_emb_shortcuts
+= False` before embedding.
+
 ## In-silico perturbation
 
 `perturb_dataset` edits the gene tokens of a tokenized `dataset`; re-embedding the

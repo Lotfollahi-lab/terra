@@ -105,6 +105,12 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
     sep_gene_tokens_neb:
         If `True`, use separate gene tokens for neighborhood.
     """
+    # Inference shortcuts of `_compute_layer_emb` (no mask copy for the full
+    # context, cell-only context computed on the cell's own tokens). `False`
+    # computes both contexts at full length, as before; for tests and
+    # debugging.
+    layer_emb_shortcuts: bool = True
+
     def __init__(self,
                  vocab_size: int,
                  seq_len: int,
@@ -461,6 +467,22 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         Helper function to return embeddings for either full context or
         cell only context. ``coords`` (for RoPE) and ``cond`` (for
         AdaLN) are forwarded unchanged to each Block.
+
+        Without JEPA masks (as at inference), both contexts take a shortcut
+        that gives the same embeddings with less work (see
+        ``layer_emb_shortcuts``):
+
+        - Full context: the attention mask is passed to the blocks as it
+          is; a ``[B, 1, 1, L]`` key padding mask broadcasts over the
+          queries, so no ``[B, 1, L, L]`` copy is made.
+        - Cell-only context: its special-token and index-cell queries
+          attend only to special-token and index-cell keys, and every other
+          operation of a block acts on each token on its own, so their
+          outputs do not depend on the neighborhood tokens. The context is
+          therefore computed on that block of ``n_special_tokens +
+          cell_only_seq_len`` tokens alone. The neighborhood positions of
+          its embeddings are zero (the full-length computation gave the
+          outputs of zeroed inputs there, which no caller uses).
         """
         layers: list[int] = sorted({int(l) for l in layers})
         max_layer: int = max(layers)
@@ -468,6 +490,19 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         # Format masks
         if masks is not None and not isinstance(masks, list):
             masks = [masks]
+
+        if masks is None and self.layer_emb_shortcuts and not DEBUG:
+            if not cell_only:
+                return self._run_blocks(x, attn_base, layers, coords=coords,
+                                        cond=cond)
+            # Without an attention mask the index-cell queries would attend
+            # to the zeroed neighborhood tokens: then the full-length
+            # computation below is kept
+            n_cell_block = self.n_special_tokens + self.cell_only_seq_len
+            if attn_base is not None and n_cell_block < x.size(1):
+                return self._compute_cell_block_emb(
+                    x, attn_base, layers, n_cell_block, coords=coords,
+                    cond=cond)
 
         attn = None
         if attn_base is not None:
@@ -527,6 +562,64 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
             if i == max_layer:
                 break
 
+        return out
+
+    def _run_blocks(
+            self,
+            x: torch.Tensor,
+            attn: torch.Tensor | None,
+            layers: Sequence[int],
+            coords: torch.Tensor | None = None,
+            cond: torch.Tensor | None = None,
+            ) -> dict[int, torch.Tensor]:
+        """
+        Run the blocks on `x` with the attention mask `attn` and return the
+        embeddings (special tokens removed) of the requested 1-based
+        `layers`; the final norm is applied after the last block, as in
+        training.
+        """
+        layers: list[int] = sorted({int(l) for l in layers})
+        max_layer: int = max(layers)
+        out: dict[int, torch.Tensor] = {}
+        for i, blk in enumerate(self.blocks, start=1):
+            x = blk(x, masks=attn, coords=coords, cond=cond)
+            if i == len(self.blocks) and (self.norm is not None):
+                x = self.norm(x)
+            if i in layers:
+                out[i] = x[:, self.n_special_tokens:, :]
+            if i == max_layer:
+                break
+        return out
+
+    def _compute_cell_block_emb(
+            self,
+            x: torch.Tensor,
+            attn_base: torch.Tensor,
+            layers: Sequence[int],
+            n_cell_block: int,
+            coords: torch.Tensor | None = None,
+            cond: torch.Tensor | None = None,
+            ) -> dict[int, torch.Tensor]:
+        """
+        Cell-only context computed on the special token and index-cell block
+        (the first `n_cell_block` tokens) only. The returned embeddings have
+        the full length (``[B, L - n_special_tokens, D]``, as from the
+        full-length pass); their neighborhood positions are zero.
+        """
+        if attn_base.size(2) == 1:  # [B, 1, 1, L] key padding mask
+            attn = attn_base[:, :, :, :n_cell_block]
+        else:  # [B, 1 or H, L, L] mask or additive (ALiBi) bias
+            attn = attn_base[:, :, :n_cell_block, :n_cell_block]
+        block_out = self._run_blocks(
+            x[:, :n_cell_block], attn, layers,
+            coords=None if coords is None else coords[:, :n_cell_block],
+            cond=cond)
+        out: dict[int, torch.Tensor] = {}
+        for i, emb in block_out.items():
+            full = emb.new_zeros(
+                emb.size(0), x.size(1) - self.n_special_tokens, emb.size(2))
+            full[:, :emb.size(1)] = emb
+            out[i] = full
         return out
 
     def _get_seg_emb(

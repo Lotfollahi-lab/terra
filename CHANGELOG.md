@@ -75,6 +75,25 @@ and this project adheres to [Semantic Versioning][].
 
 ### Changed
 
+-   Faster inference with the same results:
+    -   `embed_dataset`, `gene_embed_dataset`, `infer` and
+        `infer_token_distance` compute the cell-only context on the special
+        tokens and the index cell alone (257 instead of 2817 tokens for
+        TERRA-112M and TERRA-96M), and the full context without copying the
+        attention mask to `[B, 1, L, L]`. Measured on an NVIDIA L40S with
+        20,000 Xenium cells, embedding is 1.7x (TERRA-112M) and 1.5x
+        (TERRA-96M) faster and needs 18-25% less GPU memory, and the
+        embeddings are bit-identical to those of the previous version. On CPU
+        they can differ by rounding (up to about 2e-7); setting
+        `GeneTransformerBaseEncoder.layer_emb_shortcuts = False` reproduces
+        the previous computation exactly. The neighborhood positions of the
+        cell-only context, which no function uses, are now zero.
+    -   Tokenization (`tokenize_adata`, `harmonize_tokenize_embed_pipeline`)
+        formats the examples while the dataset is generated instead of
+        rewriting the dataset with `map`, reads each cell's expression from
+        the sparse matrix arrays and ranks its genes once. On the same 20,000
+        cells it is 1.4x faster with 4 processes and 3x faster with 1; the
+        tokenized datasets are identical.
 -   The `hst_corpus_110m` model configs now use `attention_backend: flash`
     (and `use_flash_attention: True`, which flash requires).
 -   `stable_rank_ties` (unreleased) now orders equally ranked genes by token

@@ -3,6 +3,7 @@ Integration tests for the sparse and dense ranking paths of the cell
 tokenizers on a small synthetic spatial AnnData with many tied counts.
 """
 
+import copy
 import pickle
 
 import anndata as ad
@@ -322,3 +323,50 @@ def test_inference_cell_neigh_tokenizer_uses_model_split(
             cache_directory_path=str(tmp_path))
     assert captured['split_cell_neigh_equally'] is equal
     assert 'aggregate_own_neighbors' not in captured
+
+
+def test_sparse_path_expression_follows_its_tokens(
+        token_dictionary_file_path):
+    # Ranked once per cell, each gene token keeps its own expression value
+    _, adata_dict = _tokenize(
+        token_dictionary_file_path,
+        norm_kwargs={'count_count_norm_method': None})
+    counts = _make_adata().X.toarray()
+    for i, (tokens, expr) in enumerate(zip(adata_dict['gene_tokens_cell'],
+                                           adata_dict['gene_expr_cell'])):
+        np.testing.assert_array_equal(np.asarray(expr),
+                                      counts[i, np.asarray(tokens) - 2])
+
+
+@pytest.mark.parametrize('tokenizer', [CellGraphTokenizer,
+                                       CellNeighborhoodTokenizer])
+def test_generator_formats_examples_as_map_did(token_dictionary_file_path,
+                                               tokenizer, tmp_path):
+    # The examples are formatted while the dataset is generated; the
+    # dataset equals the generated dataset formatted with `map`, as before
+    from datasets import Dataset
+
+    tk = tokenizer(
+        model_input_size=MODEL_INPUT_SIZE, n_neighs=N_NEIGHS,
+        token_dictionary_file_path=token_dictionary_file_path,
+        include_special_tokens=False, rank_cell_norm_method=None,
+        rank_gene_norm_method=None, rank_count_norm_method=None,
+        count_cell_norm_method=None, count_gene_norm_method=None,
+        count_count_norm_method='shifted_log', nproc=1)
+    adata_dict = tk._tokenize_adata(adata=_make_adata())
+    dataset = tk._create_dataset(copy.deepcopy(adata_dict),
+                                 use_generator=True,
+                                 cache_directory_path=str(tmp_path / 'new'))
+
+    def unformatted_examples():
+        for i in range(len(adata_dict['cell_id'])):
+            yield {key: adata_dict[key][i] for key in adata_dict}
+    expected = Dataset.from_generator(
+        unformatted_examples, cache_dir=str(tmp_path / 'old')).map(
+            tk._format_examples)
+    assert dataset.num_rows == expected.num_rows == N_CELLS
+    assert dataset.column_names == expected.column_names
+    assert dataset.features == expected.features
+    for name in expected.column_names:
+        assert dataset.data.table.column(name).equals(
+            expected.data.table.column(name)), name

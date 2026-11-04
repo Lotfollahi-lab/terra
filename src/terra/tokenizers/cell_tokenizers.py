@@ -551,22 +551,30 @@ class CellBaseTokenizer(ABC):
         # Create Hugging Face dataset
         logger.info('Creating Hugging Face dataset...')
         if use_generator:
+            # Each example is formatted as it is generated, so the dataset is
+            # written once. (Formatting the generated dataset with `map`
+            # read and wrote all of it a second time; the result is the
+            # same: `map` also keeps the columns that `_format_examples`
+            # keeps, in the same order.)
+            format_example = self._format_examples
+
             def dict_generator():
                 for i in range(len(dataset_dict['cell_id'])):
-                    yield {k: dataset_dict[k][i] for k in dataset_dict.keys()}
+                    yield format_example(
+                        {k: dataset_dict[k][i] for k in dataset_dict.keys()})
             logger.info('Using generator for dataset creation.')
-            dataset = Dataset.from_generator(dict_generator,
-                                             num_proc=self.nproc,
-                                             keep_in_memory=keep_in_memory,
-                                             cache_dir=cache_directory_path)
-        else:
-            logger.info('Using dictionary for dataset creation.')
-            dataset = Dataset.from_dict(dataset_dict)
+            return Dataset.from_generator(dict_generator,
+                                          num_proc=self.nproc,
+                                          keep_in_memory=keep_in_memory,
+                                          cache_dir=cache_directory_path)
+
+        logger.info('Using dictionary for dataset creation.')
+        dataset = Dataset.from_dict(dataset_dict)
 
         logger.info('Formatting gene tokens...')
 
         formatted_dataset = dataset.map(
-            self._format_examples, 
+            self._format_examples,
             num_proc=self.nproc,
             keep_in_memory=keep_in_memory)
                 
@@ -1029,25 +1037,31 @@ class CellGraphTokenizer(CellBaseTokenizer):
                     norm_counts_cell_count = sp.csr_matrix(
                         X_count_coding[i : i + self.chunk_size])
 
-                    # Rank gene tokens and append across chunks (capped at
-                    # model_input_size -- the most any segment can consume).
-                    adata_dict['gene_tokens_cell'] += [
-                        rank_gene_tokens(
-                            norm_counts_cell_rank[j].data,
-                            coding_miRNA_tokens_cell[norm_counts_cell_rank[j].indices],
-                            n_tokens=self.model_input_size,
-                            stable=self.stable_rank_ties)
-                        for j in range(norm_counts_cell_rank.shape[0])]
-
-                    # Rank gene expression and append across chunks
-                    adata_dict['gene_expr_cell'] += [
-                        norm_counts_cell_count[j].data[
-                            rank_gene_order(
-                                norm_counts_cell_rank[j].data,
-                                coding_miRNA_tokens_cell[norm_counts_cell_rank[j].indices],
-                                stable=self.stable_rank_ties)][
-                                :self.model_input_size]
-                        for j in range(norm_counts_cell_count.shape[0])]
+                    # Each row's stored entries are read from the CSR arrays
+                    # (row j is data[indptr[j]:indptr[j + 1]], in storage
+                    # order, as csr[j] returns it, without building a one-row
+                    # matrix), and the genes are ranked once per cell for
+                    # both the tokens and the expression (the same,
+                    # deterministic ranking was computed twice before).
+                    r_ptr = norm_counts_cell_rank.indptr
+                    r_ind = norm_counts_cell_rank.indices
+                    r_dat = norm_counts_cell_rank.data
+                    c_ptr = norm_counts_cell_count.indptr
+                    c_dat = norm_counts_cell_count.data
+                    for j in range(norm_counts_cell_rank.shape[0]):
+                        row_scores = r_dat[r_ptr[j]:r_ptr[j + 1]]
+                        row_tokens = coding_miRNA_tokens_cell[
+                            r_ind[r_ptr[j]:r_ptr[j + 1]]]
+                        order = rank_gene_order(row_scores, row_tokens,
+                                                stable=self.stable_rank_ties)
+                        # Rank gene tokens (capped at model_input_size -- the
+                        # most any segment can consume)
+                        adata_dict['gene_tokens_cell'].append(
+                            row_tokens[order][:self.model_input_size])
+                        # Rank gene expression
+                        adata_dict['gene_expr_cell'].append(
+                            c_dat[c_ptr[j]:c_ptr[j + 1]][order][
+                                :self.model_input_size])
 
         else: # conversion to dense arrays which requires higher memory
             logger.info('Ranking gene tokens based on normalized counts (dense version).')
@@ -1186,9 +1200,21 @@ class CellGraphTokenizer(CellBaseTokenizer):
         # Loop through all cells to add neighbor cell gene tokens based on
         # position of neighbor cell compared to index cell. Gene tokens of cells
         # that are closer to the index cell will be added first.
+        # The neighbors of cell i are the stored nonzero entries of row i of
+        # a CSR connectivity matrix (what connectivities[i].nonzero()[1]
+        # returns, in storage order), read from its arrays without building
+        # a one-row matrix per cell
+        conn_csr = (sp.issparse(connectivities)
+                    and connectivities.format == 'csr')
         for i in range(len(adata_neigh)):
             # Collect all neighbors of cell i
-            neighbors_i = connectivities[i].nonzero()[1]
+            if conn_csr:
+                start = connectivities.indptr[i]
+                end = connectivities.indptr[i + 1]
+                neighbors_i = connectivities.indices[start:end][
+                    connectivities.data[start:end] != 0]
+            else:
+                neighbors_i = connectivities[i].nonzero()[1]
 
             # Take into account case where neighbor cells can have 0 distance
             if conn_nnz[i] != dist_nnz[i]:
