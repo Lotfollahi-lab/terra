@@ -125,6 +125,43 @@ class TestRankGeneTokens(unittest.TestCase):
 
         np.testing.assert_array_equal(ranked, expected)
 
+    def test_tie_break_values_order_ties_before_token_id(self):
+        # Tokens 11, 12 and 13 tie at 1.0: the lowest tie-break value (12)
+        # comes first, then 11 and 13 (equal values) by token id. The values
+        # do not reorder genes with different scores (14 stays last).
+        gene_scores = np.array([2.0, 1.0, 1.0, 1.0, 0.5])
+        gene_tokens = np.array([10, 13, 12, 11, 14])
+        tie_break_values = np.array([5.0, 0.3, 0.1, 0.3, 0.0])
+
+        ranked = rank_gene_tokens(gene_scores, gene_tokens, stable=True,
+                                  tie_break_values=tie_break_values)
+
+        np.testing.assert_array_equal(ranked, np.array([10, 12, 11, 13, 14]))
+
+    def test_tie_break_values_match_explicit_ordering(self):
+        # (score desc, value asc, token id asc), independent of input order
+        rng = np.random.default_rng(3)
+        scores = rng.integers(0, 4, 2000).astype(np.float64)
+        values = rng.integers(0, 50, 2000) / 7
+        tokens = np.arange(2000)
+        perm = rng.permutation(2000)
+
+        ranked = rank_gene_tokens(scores, tokens, n_tokens=300, stable=True,
+                                  tie_break_values=values)
+        ranked_perm = rank_gene_tokens(scores[perm], tokens[perm],
+                                       n_tokens=300, stable=True,
+                                       tie_break_values=values[perm])
+        expected = np.array(sorted(
+            tokens, key=lambda t: (-scores[t], values[t], t)))[:300]
+
+        np.testing.assert_array_equal(ranked, expected)
+        np.testing.assert_array_equal(ranked_perm, expected)
+
+    def test_tie_break_values_require_stable(self):
+        with self.assertRaises(ValueError):
+            rank_gene_tokens(np.ones(3), np.arange(3),
+                             tie_break_values=np.arange(3.0))
+
 
 class TestProcessGeneExpr(unittest.TestCase):
     def test_pads_with_zeros_to_length(self):

@@ -8,6 +8,7 @@ import pickle
 
 import anndata as ad
 import numpy as np
+import pandas as pd
 import pytest
 import scipy.sparse as sp
 
@@ -27,6 +28,23 @@ def token_dictionary_file_path(tmp_path):
     with open(path, 'wb') as f:
         pickle.dump(token_dict, f)
     return path
+
+
+@pytest.fixture
+def norm_factor_file_path(tmp_path):
+    # 10 distinct 'mean' values for 60 genes, so that genes tied in count and
+    # value fall back to the token id
+    values = np.random.default_rng(5).integers(1, 11, N_GENES) / 4
+    path = tmp_path / 'norm_factors.csv'
+    pd.DataFrame({'gene_id': [f'ENSG{i:011d}' for i in range(N_GENES)],
+                  'mean': values}).to_csv(path, index=False)
+    return path
+
+
+def _tie_break_values(norm_factor_file_path):
+    """'mean' of each token id."""
+    norm_factor_df = pd.read_csv(norm_factor_file_path)
+    return dict(zip(np.arange(N_GENES) + 2, norm_factor_df['mean']))
 
 
 def _make_adata(seed: int = 0, lam: float = 0.5) -> ad.AnnData:
@@ -106,8 +124,10 @@ def test_default_sparse_path_is_unchanged(token_dictionary_file_path):
 @pytest.mark.parametrize('tokenizer', [CellGraphTokenizer,
                                        CellNeighborhoodTokenizer])
 @pytest.mark.parametrize('dense', [False, True])
+@pytest.mark.parametrize('tie_break_norm_factor', [None, 'mean'])
 def test_stable_rank_ties_do_not_depend_on_gene_order(
-        token_dictionary_file_path, tokenizer, dense):
+        token_dictionary_file_path, norm_factor_file_path, tokenizer, dense,
+        tie_break_norm_factor):
     adata = _make_adata()
     permuted = adata[:, np.random.default_rng(1).permutation(N_GENES)].copy()
     # As if the genes had been stored in this order (sorted CSR indices)
@@ -119,10 +139,12 @@ def test_stable_rank_ties_do_not_depend_on_gene_order(
         tk = tokenizer(
             model_input_size=MODEL_INPUT_SIZE, n_neighs=N_NEIGHS,
             token_dictionary_file_path=token_dictionary_file_path,
+            norm_factor_file_path=norm_factor_file_path,
             include_special_tokens=False, rank_cell_norm_method=None,
             rank_gene_norm_method=None, rank_count_norm_method=None,
             count_cell_norm_method=None, count_gene_norm_method=None,
-            count_count_norm_method='shifted_log', stable_rank_ties=True)
+            count_count_norm_method='shifted_log', stable_rank_ties=True,
+            rank_tie_break_norm_factor=tie_break_norm_factor)
         # Same ranking through the dense (lexsort) path
         tk.rank_differs_from_count = dense
         adata_dict = tk._tokenize_adata(adata=data)
@@ -135,6 +157,93 @@ def test_stable_rank_ties_do_not_depend_on_gene_order(
                                       permuted_example['gene_tokens'])
         np.testing.assert_array_equal(example['gene_expr'],
                                       permuted_example['gene_expr'])
+
+
+@pytest.mark.parametrize('tokenizer', [CellGraphTokenizer,
+                                       CellNeighborhoodTokenizer])
+@pytest.mark.parametrize('dense', [False, True])
+def test_rank_tie_break_norm_factor_orders_tied_genes(
+        token_dictionary_file_path, norm_factor_file_path, tokenizer, dense):
+    tk = tokenizer(
+        model_input_size=MODEL_INPUT_SIZE, n_neighs=N_NEIGHS,
+        token_dictionary_file_path=token_dictionary_file_path,
+        norm_factor_file_path=norm_factor_file_path,
+        include_special_tokens=False, rank_cell_norm_method=None,
+        rank_gene_norm_method=None, rank_count_norm_method=None,
+        count_cell_norm_method=None, count_gene_norm_method=None,
+        count_count_norm_method='shifted_log', stable_rank_ties=True,
+        rank_tie_break_norm_factor='mean')
+    # Same ranking through the dense (lexsort) path
+    tk.rank_differs_from_count = dense
+    adata_dict = tk._tokenize_adata(adata=_make_adata())
+    value = _tie_break_values(norm_factor_file_path)
+    token_counts = _token_counts(_make_adata())
+    for i, tokens in enumerate(adata_dict['gene_tokens_cell']):
+        # Expressed genes by count (desc), 'mean' (asc), token id (asc)
+        expected = sorted(
+            (t for t, c in token_counts[i].items() if c > 0),
+            key=lambda t: (-token_counts[i][t], value[t], t))
+        kept = _expressed_prefix(tokens)
+        assert len(kept) == min(len(expected), len(tokens))
+        np.testing.assert_array_equal(kept, expected[:len(kept)])
+    if tokenizer is CellGraphTokenizer:
+        # Its neighborhood consists of the neighbors' own ranked genes
+        return
+    # Aggregated neighborhood counts: genes with the same value follow the
+    # same order
+    for tokens, expr in zip(adata_dict['gene_tokens_neighborhood'],
+                            adata_dict['gene_expr_neighborhood']):
+        tokens, expr = np.asarray(tokens), np.asarray(expr)
+        keys = [(-e, value[t], t)
+                for t, e in zip(tokens[tokens != 0], expr[tokens != 0])]
+        assert keys == sorted(keys)
+
+
+def test_mean_tie_break_keeps_genes_of_mean_normalized_counts(
+        token_dictionary_file_path, norm_factor_file_path):
+    # Raw-count ranks with ties ordered by ascending 'mean' (sparse path)
+    # keep and order the same genes as raw-count ranks with counts divided by
+    # 'mean' (dense path: ties ordered by the normalized count)
+    results = []
+    for tie_break_norm_factor in (None, 'mean'):
+        for count_gene_norm_method in (None, 'mean'):
+            tk, adata_dict = _tokenize(
+                token_dictionary_file_path,
+                norm_kwargs={'count_count_norm_method': None,
+                             'count_gene_norm_method': count_gene_norm_method},
+                norm_factor_file_path=norm_factor_file_path,
+                stable_rank_ties=True,
+                rank_tie_break_norm_factor=tie_break_norm_factor)
+            assert tk.rank_differs_from_count == (
+                count_gene_norm_method is not None)
+            results.append([_expressed_prefix(tokens).tolist()
+                            for tokens in adata_dict['gene_tokens_cell']])
+    token_id_raw, token_id_mean, mean_raw, mean_mean = results
+    assert token_id_raw != token_id_mean
+    assert mean_raw == mean_mean == token_id_mean
+
+
+def test_rank_tie_break_norm_factor_errors(
+        token_dictionary_file_path, norm_factor_file_path, tmp_path):
+    with pytest.raises(ValueError, match='stable_rank_ties'):
+        _tokenize(token_dictionary_file_path,
+                  norm_factor_file_path=norm_factor_file_path,
+                  rank_tie_break_norm_factor='mean')
+    with pytest.raises(ValueError, match='nonzero_mean'):
+        _tokenize(token_dictionary_file_path,
+                  norm_factor_file_path=norm_factor_file_path,
+                  stable_rank_ties=True,
+                  rank_tie_break_norm_factor='nonzero_mean')
+    # A vocabulary gene without a row, and one without a finite value
+    norm_factor_df = pd.read_csv(norm_factor_file_path)
+    norm_factor_df.loc[1, 'mean'] = np.nan
+    incomplete = tmp_path / 'incomplete_norm_factors.csv'
+    norm_factor_df.iloc[1:].to_csv(incomplete, index=False)
+    with pytest.raises(ValueError, match=r'^2 vocabulary genes .*'
+                       r"'ENSG00000000000', 'ENSG00000000001'"):
+        _tokenize(token_dictionary_file_path,
+                  norm_factor_file_path=incomplete, stable_rank_ties=True,
+                  rank_tie_break_norm_factor='mean')
 
 
 RESIDUAL_RANKS = {
@@ -263,7 +372,8 @@ def test_inference_tokenizer_reads_optional_settings(tmp_path, monkeypatch):
                 rank_count_norm_method=None, count_cell_norm_method=None,
                 count_gene_norm_method=None,
                 count_count_norm_method='shifted_log',
-                stable_rank_ties=True, gcrd_basis_target_read_depth=151.0,
+                stable_rank_ties=True, rank_tie_break_norm_factor='mean',
+                gcrd_basis_target_read_depth=151.0,
                 pad_empty_neighbors=True, eliminate_stored_zeros=True)
     with open(tmp_path / 'model_config.yaml', 'w') as f:
         yaml.safe_dump({'data': data}, f)
@@ -273,6 +383,7 @@ def test_inference_tokenizer_reads_optional_settings(tmp_path, monkeypatch):
             adata=None, model_folder_path=str(tmp_path),
             cache_directory_path=str(tmp_path))
     assert captured['stable_rank_ties'] is True
+    assert captured['rank_tie_break_norm_factor'] == 'mean'
     assert captured['gcrd_basis_target_read_depth'] == 151.0
     assert captured['pad_empty_neighbors'] is True
     assert captured['eliminate_stored_zeros'] is True

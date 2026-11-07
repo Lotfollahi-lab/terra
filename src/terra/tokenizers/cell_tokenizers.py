@@ -193,7 +193,8 @@ class CellBaseTokenizer(ABC):
         If `True`, include special tokens.
     stable_rank_ties:
         If `True`, genes with tied ranking values (and, on the dense path,
-        tied counts) are ordered by ascending token id on both ranking
+        tied counts) are ordered by ascending token id (after
+        `rank_tie_break_norm_factor`, if set) on both ranking
         paths. The tokenization then does not depend on the order of the
         genes (columns) of the input or on the numpy build, and both paths
         select the same genes when a cell has more expressed genes than fit
@@ -201,6 +202,13 @@ class CellBaseTokenizer(ABC):
         (numpy's default sort over the stored genes on the sparse path, the
         gene order on the dense path); this reproduces how existing data and
         models were tokenized.
+    rank_tie_break_norm_factor:
+        Column of `norm_factor_file_path` that orders tied genes before the
+        token id with `stable_rank_ties`, in ascending order. With 'mean' (the
+        mean count of a gene over the corpus cells that probe it), genes that
+        are rarer or lower expressed in the corpus come first. Every
+        vocabulary gene of the input needs a finite value in the column.
+        Default `None` orders tied genes by token id only.
     zero_expr_from_raw_counts:
         If `True` (and `include_zero_expr_genes` is `False`), the dense ranking
         path identifies non-expressed genes by their raw count of 0, ranks
@@ -288,6 +296,7 @@ class CellBaseTokenizer(ABC):
             include_special_tokens: bool = True,
             stream_per_file: bool = False,
             stable_rank_ties: bool = False,
+            rank_tie_break_norm_factor: str | None = None,
             zero_expr_from_raw_counts: bool = False,
             gcrd_basis_target_read_depth: float = 153.4768,
             gcrd_target_read_depth_per_gene: float = 0.0487,
@@ -315,6 +324,7 @@ class CellBaseTokenizer(ABC):
         self.include_special_tokens = include_special_tokens
         self.stream_per_file = stream_per_file
         self.stable_rank_ties = stable_rank_ties
+        self.rank_tie_break_norm_factor = rank_tie_break_norm_factor
         self.zero_expr_from_raw_counts = zero_expr_from_raw_counts
         self.gcrd_kwargs = dict(
             basis_target_read_depth=gcrd_basis_target_read_depth,
@@ -336,6 +346,29 @@ class CellBaseTokenizer(ABC):
                     "PER-FILE targets. This is correct only if the model was "
                     "trained with per-file targets; a frozen-trained model "
                     "will be mismatched.")
+
+        # Per-gene values that order tied genes before the token id
+        self.rank_tie_break_values = None
+        if self.rank_tie_break_norm_factor is not None:
+            if not self.stable_rank_ties:
+                raise ValueError("'rank_tie_break_norm_factor' requires "
+                                 "'stable_rank_ties=True'.")
+            norm_factor_df = pd.read_csv(self.norm_factor_file_path)
+            missing_columns = ({'gene_id', self.rank_tie_break_norm_factor}
+                               - set(norm_factor_df.columns))
+            if missing_columns:
+                raise ValueError(
+                    f"'{self.norm_factor_file_path}' has no column(s) "
+                    f"{sorted(missing_columns)} for "
+                    "'rank_tie_break_norm_factor'.")
+            # First row of a gene, as normalize_by_factor reads it
+            self.rank_tie_break_values = norm_factor_df.drop_duplicates(
+                'gene_id').set_index('gene_id')[
+                    self.rank_tie_break_norm_factor].astype(np.float64)
+            logger.info(
+                "Rank ties: ordered by ascending "
+                f"'{self.rank_tie_break_norm_factor}' of "
+                f"'{self.norm_factor_file_path}', then by token id.")
 
         # Define whether ranking differs from count-based ranking
         self.rank_differs_from_count = True
@@ -393,6 +426,37 @@ class CellBaseTokenizer(ABC):
             key for key in list(self.vocab) if 'ENS' in key]
         self.coding_miRNA_dict = dict(
             zip(self.coding_miRNA_ids, [True] * len(self.vocab)))
+
+    def _get_rank_tie_break_values(self,
+                                   gene_ids: pd.Series | np.ndarray,
+                                   ) -> np.ndarray | None:
+        """
+        Retrieve the `rank_tie_break_norm_factor` values of genes.
+
+        Parameters
+        ----------
+        gene_ids:
+            Ensembl IDs of the genes.
+
+        Returns
+        ----------
+        tie_break_values:
+            1D vector containing the value of each gene, or `None` without
+            `rank_tie_break_norm_factor`.
+        """
+        if self.rank_tie_break_values is None:
+            return None
+        gene_ids = np.asarray(gene_ids)
+        positions = self.rank_tie_break_values.index.get_indexer(gene_ids)
+        tie_break_values = self.rank_tie_break_values.to_numpy()[positions]
+        invalid = (positions < 0) | ~np.isfinite(tie_break_values)
+        if invalid.any():
+            raise ValueError(
+                f"{invalid.sum()} vocabulary genes have no finite "
+                f"'{self.rank_tie_break_norm_factor}' in "
+                f"'{self.norm_factor_file_path}' (e.g. "
+                f"{gene_ids[invalid][:5].tolist()}).")
+        return tie_break_values
 
     def _handle_stored_zeros(self,
                              adata: ad.AnnData,
@@ -974,6 +1038,10 @@ class CellGraphTokenizer(CellBaseTokenizer):
 
         coding_miRNA_tokens_cell = np.array(
             [self.token_dict[gene_id] for gene_id in coding_miRNA_ids])
+        # Values that order tied genes before the token id (`None` without
+        # rank_tie_break_norm_factor)
+        coding_miRNA_tie_values = self._get_rank_tie_break_values(
+            coding_miRNA_ids)
 
         # Add coordinate tokens of index cells. Use a float (0.0), not int:
         # relative coordinates are float position encodings and the dataset
@@ -1019,15 +1087,18 @@ class CellGraphTokenizer(CellBaseTokenizer):
                         rank_gene_tokens(norm_counts_cell_rank[j],
                         coding_miRNA_tokens_cell,
                         n_tokens=self.model_input_size,
-                        stable=self.stable_rank_ties)
+                        stable=self.stable_rank_ties,
+                        tie_break_values=coding_miRNA_tie_values)
                         for j in range(norm_counts_cell_rank.shape[0])]
 
                     # Rank gene expression and append across chunks
                     adata_dict['gene_expr_cell'] += [
                         norm_counts_cell_count[j][
-                            rank_gene_order(norm_counts_cell_rank[j],
-                                            coding_miRNA_tokens_cell,
-                                            stable=self.stable_rank_ties)][
+                            rank_gene_order(
+                                norm_counts_cell_rank[j],
+                                coding_miRNA_tokens_cell,
+                                stable=self.stable_rank_ties,
+                                tie_break_values=coding_miRNA_tie_values)][
                                 :self.model_input_size]
                         for j in range(norm_counts_cell_count.shape[0])]
 
@@ -1050,10 +1121,14 @@ class CellGraphTokenizer(CellBaseTokenizer):
                     c_dat = norm_counts_cell_count.data
                     for j in range(norm_counts_cell_rank.shape[0]):
                         row_scores = r_dat[r_ptr[j]:r_ptr[j + 1]]
-                        row_tokens = coding_miRNA_tokens_cell[
-                            r_ind[r_ptr[j]:r_ptr[j + 1]]]
-                        order = rank_gene_order(row_scores, row_tokens,
-                                                stable=self.stable_rank_ties)
+                        row_genes = r_ind[r_ptr[j]:r_ptr[j + 1]]
+                        row_tokens = coding_miRNA_tokens_cell[row_genes]
+                        order = rank_gene_order(
+                            row_scores, row_tokens,
+                            stable=self.stable_rank_ties,
+                            tie_break_values=(
+                                None if coding_miRNA_tie_values is None
+                                else coding_miRNA_tie_values[row_genes]))
                         # Rank gene tokens (capped at model_input_size -- the
                         # most any segment can consume)
                         adata_dict['gene_tokens_cell'].append(
@@ -1071,10 +1146,15 @@ class CellGraphTokenizer(CellBaseTokenizer):
             if mask_by_counts:
                 X_raw_coding = adata.X[:, coding_miRNA_idx]
             if self.stable_rank_ties:
-                # Arrange the genes by token id, so that the stable sorts
-                # below order tied genes by token id
-                token_order = np.argsort(coding_miRNA_tokens_cell,
-                                         kind='stable')
+                # Arrange the genes by token id (with
+                # rank_tie_break_norm_factor: by ascending value, then token
+                # id), so that the stable sorts below order tied genes that way
+                if coding_miRNA_tie_values is None:
+                    token_order = np.argsort(coding_miRNA_tokens_cell,
+                                             kind='stable')
+                else:
+                    token_order = np.lexsort((coding_miRNA_tokens_cell,
+                                              coding_miRNA_tie_values))
                 coding_miRNA_tokens_cell = coding_miRNA_tokens_cell[
                     token_order]
                 X_rank_coding = X_rank_coding[:, token_order]
@@ -1815,6 +1895,15 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
             [self.token_dict[gene_id] for gene_id in coding_miRNA_ids])
         coding_miRNA_tokens_neighborhood = np.array(
             [self.token_dict[gene_id] for gene_id in coding_miRNA_ids])
+        # Values that order tied genes before the token id (`None` without
+        # rank_tie_break_norm_factor); cell and neighborhood rank the same
+        # genes
+        coding_miRNA_tie_values = self._get_rank_tie_break_values(
+            coding_miRNA_ids)
+
+        def tie_values(gene_idx: np.ndarray) -> np.ndarray | None:
+            return (None if coding_miRNA_tie_values is None
+                    else coding_miRNA_tie_values[gene_idx])
 
         # Prepare gene tokens for cell and neighborhood for this file
         adata_dict['gene_tokens_cell'] = []
@@ -1844,26 +1933,32 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
                     adata_dict['gene_tokens_cell'] += [
                         rank_gene_tokens(norm_counts_cell_rank[j],
                         coding_miRNA_tokens_cell,
-                        stable=self.stable_rank_ties)
+                        stable=self.stable_rank_ties,
+                        tie_break_values=coding_miRNA_tie_values)
                         for j in range(norm_counts_cell_rank.shape[0])]
                     adata_dict['gene_tokens_neighborhood'] += [
                         rank_gene_tokens(norm_counts_neighborhood_rank[j],
                         coding_miRNA_tokens_neighborhood,
-                        stable=self.stable_rank_ties)
+                        stable=self.stable_rank_ties,
+                        tie_break_values=coding_miRNA_tie_values)
                         for j in range(norm_counts_neighborhood_rank.shape[0])]
 
                     # Rank gene expression and append across chunks
                     adata_dict['gene_expr_cell'] += [
                         norm_counts_cell_count[j][
-                            rank_gene_order(norm_counts_cell_rank[j],
-                                            coding_miRNA_tokens_cell,
-                                            stable=self.stable_rank_ties)]
+                            rank_gene_order(
+                                norm_counts_cell_rank[j],
+                                coding_miRNA_tokens_cell,
+                                stable=self.stable_rank_ties,
+                                tie_break_values=coding_miRNA_tie_values)]
                         for j in range(norm_counts_cell_count.shape[0])]
                     adata_dict['gene_expr_neighborhood'] += [
                         norm_counts_neighborhood_count[j][
-                            rank_gene_order(norm_counts_neighborhood_rank[j],
-                                            coding_miRNA_tokens_neighborhood,
-                                            stable=self.stable_rank_ties)]
+                            rank_gene_order(
+                                norm_counts_neighborhood_rank[j],
+                                coding_miRNA_tokens_neighborhood,
+                                stable=self.stable_rank_ties,
+                                tie_break_values=coding_miRNA_tie_values)]
                         for j in range(norm_counts_neighborhood_count.shape[0])]
 
                 else:
@@ -1886,14 +1981,18 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
                             norm_counts_cell_rank[j].data,
                             coding_miRNA_tokens_cell[
                                 norm_counts_cell_rank[j].indices],
-                            stable=self.stable_rank_ties)
+                            stable=self.stable_rank_ties,
+                            tie_break_values=tie_values(
+                                norm_counts_cell_rank[j].indices))
                         for j in range(norm_counts_cell_rank.shape[0])]
                     adata_dict['gene_tokens_neighborhood'] += [
                         rank_gene_tokens(
                             norm_counts_neighborhood_rank[j].data,
                             coding_miRNA_tokens_neighborhood[
                                 norm_counts_neighborhood_rank[j].indices],
-                            stable=self.stable_rank_ties)
+                            stable=self.stable_rank_ties,
+                            tie_break_values=tie_values(
+                                norm_counts_neighborhood_rank[j].indices))
                         for j in range(norm_counts_neighborhood_rank.shape[0])]
 
                     # Rank gene expression and append across chunks
@@ -1903,7 +2002,9 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
                                 norm_counts_cell_rank[j].data,
                                 coding_miRNA_tokens_cell[
                                     norm_counts_cell_rank[j].indices],
-                                stable=self.stable_rank_ties)]
+                                stable=self.stable_rank_ties,
+                                tie_break_values=tie_values(
+                                    norm_counts_cell_rank[j].indices))]
                         for j in range(norm_counts_cell_rank.shape[0])]
                     adata_dict['gene_expr_neighborhood'] += [
                         norm_counts_neighborhood_count[j].data[
@@ -1911,7 +2012,9 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
                                 norm_counts_neighborhood_rank[j].data,
                                 coding_miRNA_tokens_neighborhood[
                                     norm_counts_neighborhood_rank[j].indices],
-                                stable=self.stable_rank_ties)]
+                                stable=self.stable_rank_ties,
+                                tie_break_values=tie_values(
+                                    norm_counts_neighborhood_rank[j].indices))]
                         for j in range(norm_counts_neighborhood_rank.shape[0])]
 
         else:  # dense path with lexsort tie-breaking
@@ -1920,11 +2023,15 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
             # identify expressed genes
             mask_by_counts = (self.zero_expr_from_raw_counts
                               and not self.include_zero_expr_genes)
-            # Last tie-break: token id with stable_rank_ties, otherwise the
-            # gene order (lexsort is stable)
+            # Tie-breaks after rank and count (lexsort: last key first): with
+            # stable_rank_ties the rank_tie_break_norm_factor value (if set),
+            # then the token id, otherwise the gene order (lexsort is stable)
             cell_tie_keys, neigh_tie_keys = (
                 ((coding_miRNA_tokens_cell,), (coding_miRNA_tokens_neighborhood,))
                 if self.stable_rank_ties else ((), ()))
+            if coding_miRNA_tie_values is not None:
+                cell_tie_keys += (coding_miRNA_tie_values,)
+                neigh_tie_keys += (coding_miRNA_tie_values,)
             for i in range(0, len(adata), self.chunk_size):
                 # --- Cell ---
                 cell_rank_block = adata[

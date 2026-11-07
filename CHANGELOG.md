@@ -73,6 +73,13 @@ and this project adheres to [Semantic Versioning][].
     -   `seed` for `linear_classifier` and `linear_regressor`;
     -   `terra-hub upload --model-card` to upload a model card from a file.
 
+-   Tokenizer option `rank_tie_break_norm_factor`
+    (`data.rank_tie_break_norm_factor`, with `stable_rank_ties`): genes with
+    tied ranking values are ordered by a column of the norm-factor file
+    before the token id, e.g. `mean` to put genes that are rarer or lower
+    expressed in the corpus first. Off by default; inference reads it from the
+    model config.
+
 ### Changed
 
 -   Faster inference with the same results:

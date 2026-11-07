@@ -89,6 +89,7 @@ def process_gene_expr(gene_expr: list[float],
 def rank_gene_order(gene_scores: np.ndarray,
                     gene_tokens: np.ndarray,
                     stable: bool = False,
+                    tie_break_values: np.ndarray | None = None,
                     ) -> np.ndarray:
     """
     Return the indices that rank genes by descending gene score.
@@ -104,6 +105,11 @@ def rank_gene_order(gene_scores: np.ndarray,
         ranking does not depend on the order of the genes in the input.
         Default `False` uses numpy's default sort, whose order of tied genes
         is unspecified (it depends on the input order and the numpy build).
+    tie_break_values:
+        Optional 1D vector of per-gene values matching `gene_scores` (e.g. the
+        corpus mean of each gene). With `stable`, genes with tied scores are
+        ordered by ascending value first and by ascending token id after
+        that. Requires `stable=True`.
 
     Returns
     ----------
@@ -111,7 +117,11 @@ def rank_gene_order(gene_scores: np.ndarray,
         1D vector of indices into `gene_scores` from the highest to the
         lowest score.
     """
+    if tie_break_values is not None and not stable:
+        raise ValueError("'tie_break_values' requires 'stable=True'.")
     if stable:
+        if tie_break_values is not None:
+            return np.lexsort((gene_tokens, tie_break_values, -gene_scores))
         return np.lexsort((gene_tokens, -gene_scores))
     return np.argsort(-gene_scores)
 
@@ -120,6 +130,7 @@ def rank_gene_tokens(gene_scores: np.ndarray,
                      gene_tokens: np.ndarray,
                      n_tokens: int | None = None,
                      stable: bool = False,
+                     tie_break_values: np.ndarray | None = None,
                      ) -> np.ndarray:
     """
     Rank gene tokens based on matching gene scores (highest score ->
@@ -137,6 +148,9 @@ def rank_gene_tokens(gene_scores: np.ndarray,
         If `True`, order genes with tied scores by ascending token id (see
         `rank_gene_order`). Default `False` uses numpy's default sort, whose
         order of tied genes is unspecified.
+    tie_break_values:
+        Optional per-gene values that order tied genes before the token id
+        (see `rank_gene_order`). Requires `stable=True`.
 
     Returns
     ----------
@@ -144,7 +158,8 @@ def rank_gene_tokens(gene_scores: np.ndarray,
         1D vector containing gene tokens ranked by gene scores.
     """
     # Sort gene tokens by gene scores
-    sorted_indices = rank_gene_order(gene_scores, gene_tokens, stable=stable)
+    sorted_indices = rank_gene_order(gene_scores, gene_tokens, stable=stable,
+                                     tie_break_values=tie_break_values)
     ranked_gene_tokens = gene_tokens[sorted_indices][:n_tokens]
 
     return ranked_gene_tokens

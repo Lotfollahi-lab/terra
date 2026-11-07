@@ -46,6 +46,7 @@ logger = logging.getLogger(__name__)
 # (absent keys keep the tokenizer defaults, i.e. the previous behaviour)
 TOKENIZER_CONFIG_KEYS = (
     'stable_rank_ties',
+    'rank_tie_break_norm_factor',
     'zero_expr_from_raw_counts',
     'gcrd_basis_target_read_depth',
     'gcrd_target_read_depth_per_gene',
@@ -181,7 +182,8 @@ def tokenize_adata(adata: ad.AnnData,
               "'norm_factor_file_path' is not set in the model "
               "config['data'] -> gene-level norm factors will NOT be loaded. "
               "This is correct only if the model uses no gene-level norm "
-              "method (e.g. shifted_log / pflog1ppf).")
+              "method (e.g. shifted_log / pflog1ppf) and no "
+              "'rank_tie_break_norm_factor'.")
 
     if pf_targets_file_path:
         logger.info("PFlog1pPF: reading FROZEN corpus targets from "
