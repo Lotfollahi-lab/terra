@@ -279,7 +279,8 @@ def parse_arch_kwargs(args: dict) -> dict:
     Returns a dict suitable for direct ``**unpacking`` into
     ``init_model``. Covers: Laplacian PE (laplacian_k, laplacian_sigma),
     RoPE (rope_freq_scale, rope_rotation_augment), AdaLN (adaln_kwargs),
-    RDA, the special-token MoE and ``meta.fp32_position_encoding``. For any field missing from the config, the
+    RDA, the special-token MoE, ``meta.fp32_position_encoding`` and
+    ``meta.zero_fully_masked_attention_rows``. For any field missing from the config, the
     corresponding default in ``init_model``'s signature applies.
 
     Use this in every entry point that reconstructs a trained
@@ -403,6 +404,8 @@ def parse_arch_kwargs(args: dict) -> dict:
         'special_token_moe_kwargs': moe,
         'fp32_position_encoding': bool(
             meta.get('fp32_position_encoding', False)),
+        'zero_fully_masked_attention_rows': bool(
+            meta.get('zero_fully_masked_attention_rows', False)),
     }
 
 
@@ -698,6 +701,7 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
                rda_kwargs: dict | None = None,
                special_token_moe_kwargs: dict | None = None,
                fp32_position_encoding: bool = False,
+               zero_fully_masked_attention_rows: bool = False,
                ) -> tuple[gt.GeneTransformerBaseEncoder,
                           gt.GeneTransformerBasePredictor]:
     """
@@ -757,6 +761,12 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
         TERRA-96M was trained) they are computed in bf16 on GPU, which
         rounds coordinates of a few hundred units by about 1 rad, and in
         float32 on CPU, so GPU and CPU embeddings of such models differ.
+    zero_fully_masked_attention_rows:
+        If `True`, attention query rows whose keys are all masked (e.g. a
+        cell whose JEPA context is only padding) output zeros, with finite
+        gradients, instead of NaN, whatever the attention kernel; all other
+        rows are unchanged. Off by default, as the released models were
+        trained.
 
     Returns
     -----------
@@ -858,7 +868,8 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
         rope_rotation_augment=rope_rotation_augment,
         adaln_kwargs=adaln_kwargs_enc,
         rda_kwargs=rda_kwargs,
-        fp32_position_encoding=fp32_position_encoding)
+        fp32_position_encoding=fp32_position_encoding,
+        zero_fully_masked_attention_rows=zero_fully_masked_attention_rows)
     if api_version == 'v3' or api_version == 'v4':
         encoder = EncoderMultiMaskWrapper(encoder)
     predictor = gt.__dict__["init_gt_predictor"](
@@ -886,7 +897,8 @@ def init_model(gt_type: Literal['rank', 'count', 'combined'],
         rope_rotation_augment=rope_rotation_augment,
         adaln_kwargs=adaln_kwargs_pred,
         special_token_moe_kwargs=special_token_moe_kwargs,
-        fp32_position_encoding=fp32_position_encoding)
+        fp32_position_encoding=fp32_position_encoding,
+        zero_fully_masked_attention_rows=zero_fully_masked_attention_rows)
     if api_version == 'v3' or api_version == 'v4':
         predictor = PredictorMultiMaskWrapper(predictor)
 

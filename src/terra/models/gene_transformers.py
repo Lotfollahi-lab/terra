@@ -97,6 +97,9 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
         SDPA backend preference when `use_flash_attention` is
         `True`; one of `terra.models.modules.ATTENTION_BACKENDS`
         ('auto', 'flash', 'efficient', 'cudnn', 'math', 'torch').
+    zero_fully_masked_attention_rows:
+        If `True`, attention query rows without any valid key output zeros
+        instead of NaN (`meta.zero_fully_masked_attention_rows`).
     use_layer_norm:
         If `True`, use layer normalization, else use dynamic tanh
         normalization.
@@ -145,6 +148,7 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                  adaln_kwargs: dict | None = None,
                  rda_kwargs: dict | None = None,
                  fp32_position_encoding: bool = False,
+                 zero_fully_masked_attention_rows: bool = False,
                  **kwargs
                  ):
         super().__init__()
@@ -369,7 +373,9 @@ class GeneTransformerBaseEncoder(ABC, nn.Module):
                   attention_backend=attention_backend,
                   use_layer_norm=use_layer_norm,
                   rope=self.rope,
-                  cond_dim=_block_cond_dim)
+                  cond_dim=_block_cond_dim,
+                  zero_fully_masked_attention_rows=(
+                      zero_fully_masked_attention_rows))
             for i in range(depth)])
         self.norm = norm_layer(embed_dim)
 
@@ -1317,6 +1323,9 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
         SDPA backend preference when `use_flash_attention` is
         `True`; one of `terra.models.modules.ATTENTION_BACKENDS`
         ('auto', 'flash', 'efficient', 'cudnn', 'math', 'torch').
+    zero_fully_masked_attention_rows:
+        If `True`, attention query rows without any valid key output zeros
+        instead of NaN (`meta.zero_fully_masked_attention_rows`).
     use_layer_norm:
         If `True`, use layer normalization, else use dynamic tanh
         normalization.
@@ -1352,6 +1361,7 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
                  adaln_kwargs: dict | None = None,
                  special_token_moe_kwargs: dict | None = None,
                  fp32_position_encoding: bool = False,
+                 zero_fully_masked_attention_rows: bool = False,
                  **kwargs
                  ):
         super().__init__()
@@ -1601,7 +1611,9 @@ class GeneTransformerBasePredictor(ABC, nn.Module):
                   attention_backend=attention_backend,
                   use_layer_norm=use_layer_norm,
                   rope=self.rope,
-                  cond_dim=_block_cond_dim)
+                  cond_dim=_block_cond_dim,
+                  zero_fully_masked_attention_rows=(
+                      zero_fully_masked_attention_rows))
             for i in range(depth)])
         self.predictor_norm = norm_layer(predictor_embed_dim)
         self.predictor_proj = nn.Linear(predictor_embed_dim,

@@ -160,6 +160,45 @@ def log_attention_config(use_flash_attention: bool,
             "matrix and will substantially reduce the usable batch size.")
 
 
+def guard_fully_masked_rows(masks: torch.Tensor,
+                            ) -> tuple[torch.Tensor, torch.Tensor]:
+    """Let attention query rows without any valid key attend to one dummy key.
+
+    A query row whose keys are all masked gives NaN with the eager attention
+    (softmax over all -inf) and, depending on the PyTorch version and kernel,
+    with SDPA. Such rows attend to the first key instead, so the attention
+    stays finite in the forward and backward pass; the caller zeroes their
+    output with the returned `row_valid`. Rows with at least one valid key
+    keep their mask entries unchanged. No host synchronization.
+
+    Parameters
+    -----------
+    masks:
+        Bool or 0/1 mask (`False`/0 = masked) or additive float mask (-inf =
+        masked), broadcastable to (B, H, N_q, N_k).
+
+    Returns
+    -----------
+    masks:
+        The mask with key 0 unmasked in the fully masked rows (same shape and
+        dtype).
+    row_valid:
+        Bool tensor of shape (..., N_q, 1), `False` for the fully masked rows.
+    """
+    if masks.dtype in (torch.bool, torch.uint8):
+        valid = masks != 0
+    else:
+        valid = ~torch.isneginf(masks)
+    row_valid = valid.any(dim=-1, keepdim=True)
+    first_key = torch.arange(masks.shape[-1], device=masks.device) == 0
+    dummy = ~row_valid & first_key
+    if masks.dtype in (torch.bool, torch.uint8):
+        masks = masks | dummy.to(masks.dtype)
+    else:
+        masks = masks.masked_fill(dummy, 0.0)
+    return masks, row_valid
+
+
 class Attention(nn.Module):
     """
     Attention module used in transformer block, containing attention and
@@ -187,6 +226,10 @@ class Attention(nn.Module):
         `True`; one of :data:`ATTENTION_BACKENDS` (see
         ``_ATTENTION_BACKEND_PRESETS``). `'auto'` (default) excludes
         FlashAttention, `'flash'` allows it (lowest memory).
+    zero_fully_masked_attention_rows:
+        If `True`, a query row whose keys are all masked outputs zeros (with
+        finite gradients) instead of NaN on every attention path; all other
+        rows are unchanged. See :func:`guard_fully_masked_rows`.
     """
     def __init__(self,
                  dim: int,
@@ -198,6 +241,7 @@ class Attention(nn.Module):
                  use_flash_attention: bool = True,
                  rope: RoPE2D | None = None,
                  attention_backend: str = 'auto',
+                 zero_fully_masked_attention_rows: bool = False,
                  ):
         super().__init__()
         self.num_heads = num_heads
@@ -218,6 +262,8 @@ class Attention(nn.Module):
         # path), but only apply the preference when SDPA is actually used.
         _backends = resolve_sdpa_backends(attention_backend)
         self._sdpa_backends = _backends if use_flash_attention else None
+        self.zero_fully_masked_attention_rows = (
+            zero_fully_masked_attention_rows)
         # Optional 2D rotary position embedding. When set, q and k are
         # rotated based on the per-token (x, y) coordinates BEFORE the
         # SDPA call, so attention logits depend only on relative
@@ -268,6 +314,13 @@ class Attention(nn.Module):
                 coords, nan=0.0, posinf=0.0, neginf=0.0)
             q, k = self.rope(q, k, coords_clean)
 
+        # Query rows without any valid key (e.g. a cell whose context is
+        # only padding) attend to a dummy key, and their output is zeroed
+        # below, so they stay finite whatever the attention kernel
+        row_valid = None
+        if masks is not None and self.zero_fully_masked_attention_rows:
+            masks, row_valid = guard_fully_masked_rows(masks)
+
         if self.use_flash_attention:
             # SDPA, restricted to the backends selected by
             # `attention_backend` (resolved in __init__). SDPA uses the
@@ -291,6 +344,8 @@ class Attention(nn.Module):
                 else:
                     x = nn.functional.scaled_dot_product_attention(
                         q, k, v, scale=self.scale)
+            if row_valid is not None:
+                x = x.masked_fill(~row_valid, 0.0)
             attn = None
         else:
             attn = (q @ k.transpose(-2, -1)) * self.scale
@@ -303,6 +358,8 @@ class Attention(nn.Module):
                     # pre-softmax logits.
                     attn = attn + masks
             attn = attn.softmax(dim=-1)
+            if row_valid is not None:
+                attn = attn.masked_fill(~row_valid, 0.0)
             attn = self.attn_drop(attn)
             x = (attn @ v)
         x = x.transpose(1, 2).reshape(B, N, C)
@@ -346,6 +403,9 @@ class Block(nn.Module):
         instead of the manual (eager) attention implementation.
     attention_backend:
         SDPA backend preference; one of :data:`ATTENTION_BACKENDS`.
+    zero_fully_masked_attention_rows:
+        If `True`, query rows without any valid key output zeros instead of
+        NaN in the Attention module.
     """
     def __init__(self,
                  dim: int,
@@ -362,6 +422,7 @@ class Block(nn.Module):
                  rope: RoPE2D | None = None,
                  cond_dim: int | None = None,
                  attention_backend: str = 'auto',
+                 zero_fully_masked_attention_rows: bool = False,
                  ):
         super().__init__()
         # When `cond_dim` is provided the two norms become AdaLN (DiT-
@@ -391,7 +452,9 @@ class Block(nn.Module):
                               proj_drop=drop,
                               use_flash_attention=use_flash_attention,
                               rope=rope,
-                              attention_backend=attention_backend)
+                              attention_backend=attention_backend,
+                              zero_fully_masked_attention_rows=(
+                                  zero_fully_masked_attention_rows))
         self.norm2 = _make_norm()
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = MLP(in_features=dim,

@@ -350,6 +350,11 @@ def train(args: dict,
     # autocast. Off by default, as the released models were trained.
     fp32_position_encoding = bool(
         args['meta'].get('fp32_position_encoding', False))
+    # Opt-in: attention query rows without any valid key (e.g. a cell whose
+    # context is only padding, without a metatoken) output zeros instead of
+    # NaN, whatever the attention kernel. Off by default.
+    zero_fully_masked_attention_rows = bool(
+        args['meta'].get('zero_fully_masked_attention_rows', False))
 
     # Optional batch-correction kwargs (off by default; existing
     # behavior preserved). Two independent features:
@@ -977,7 +982,8 @@ def train(args: dict,
         adaln_kwargs=adaln_kwargs,
         rda_kwargs=rda_kwargs,
         special_token_moe_kwargs=moe_kwargs,
-        fp32_position_encoding=fp32_position_encoding)
+        fp32_position_encoding=fp32_position_encoding,
+        zero_fully_masked_attention_rows=zero_fully_masked_attention_rows)
     # Build the adversarial batch classifier head (returns None when
     # disabled, so default training is unchanged).
     batch_classifier = build_batch_classifier_head(

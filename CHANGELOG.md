@@ -81,6 +81,12 @@ and this project adheres to [Semantic Versioning][].
     longer orders tied genes), so a ranking of raw counts keeps the same genes
     whatever the count normalization. Off by default; inference reads it from
     the model config.
+-   `meta.zero_fully_masked_attention_rows`: an attention query row without
+    any valid key (e.g. a cell whose JEPA context is only padding when no
+    metatoken is used) outputs zeros with finite gradients instead of NaN, on
+    every attention path and whatever the SDPA kernel; all other rows are
+    unchanged. Off by default; finetuning and inference read it from the
+    model config.
 
 ### Changed
 
