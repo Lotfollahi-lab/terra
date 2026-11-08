@@ -138,6 +138,50 @@ def _meter_average_over_ranks(meter: AverageMeter,
     return float(totals[0] / totals[1]) if totals[1] > 0 else meter.avg
 
 
+def _any_over_ranks(flag: torch.Tensor, device: torch.device) -> bool:
+    """
+    Whether a boolean scalar tensor is true on any DDP rank. A collective,
+    like `_mean_over_ranks`, so that all ranks take the same decision; the
+    flag itself without distributed training.
+    """
+    import torch.distributed as dist
+    if not (dist.is_available() and dist.is_initialized()):
+        return bool(flag)
+    if dist.get_world_size() == 1:
+        return bool(flag)
+    flag = flag.to(device=_reduction_device(device), dtype=torch.int32)
+    dist.all_reduce(flag, op=dist.ReduceOp.MAX)
+    return bool(flag)
+
+
+def _nonfinite_state_entries(state: dict,
+                             device: torch.device) -> list[str]:
+    """
+    Names of the floating-point tensors with NaN or infinite values in a
+    (nested) state dict, e.g. of the models and the optimizer, checked with a
+    single host synchronization.
+    """
+    names, finite = [], []
+
+    def collect(obj, name):
+        if torch.is_tensor(obj):
+            if obj.is_floating_point():
+                names.append(name)
+                finite.append(torch.isfinite(obj).all().to(device))
+        elif isinstance(obj, dict):
+            for key, value in obj.items():
+                collect(value, f'{name}.{key}' if name else str(key))
+        elif isinstance(obj, (list, tuple)):
+            for i, value in enumerate(obj):
+                collect(value, f'{name}.{i}')
+
+    collect(state, '')
+    if not finite:
+        return []
+    finite = torch.stack(finite).cpu()
+    return [name for name, ok in zip(names, finite.tolist()) if not ok]
+
+
 os.environ["NCCL_ASYNC_ERROR_HANDLING"] = "1" # Better error propagation
 
 _GLOBAL_SEED = 0
@@ -1274,6 +1318,17 @@ def train(args: dict,
                      'lr': lr}
         if iter_number is not None:
             save_dict['iter_number'] = iter_number
+        # Never overwrite a checkpoint with a non-finite state (every rank
+        # saves a checkpoint here, so all ranks stop together)
+        nonfinite = _nonfinite_state_entries(
+            {key: save_dict[key] for key in (
+                'encoder', 'predictor', 'target_encoder', 'opt')}, device)
+        if _any_over_ranks(torch.tensor(bool(nonfinite)), device):
+            raise FloatingPointError(
+                f"Non-finite model or optimizer state at epoch {epoch} on at "
+                f"least one rank (this rank: {nonfinite[:5] or 'none'}"
+                f"{' ...' if len(nonfinite) > 5 else ''}). The checkpoint "
+                "was not saved.")
         if rank == 0:
             # Write to a temporary file and rename it, so that a job killed
             # while saving keeps the previous checkpoint instead of leaving
@@ -1858,22 +1913,41 @@ def train(args: dict,
                 _pred_norm = torch.nn.utils.clip_grad_norm_(
                     predictor.parameters(), clip_grad)
 
+            # Global gradient norms before clipping (as returned by
+            # clip_grad_norm_), also without clipping
+            if _enc_norm is None:
+                _enc_norm = _grad_global_norm(encoder.parameters())
+                _pred_norm = _grad_global_norm(predictor.parameters())
+
             # Gradient statistics for logging, read before the gradients are
             # zeroed (they were read after zero_grad, and without clipping,
             # e.g. during warmup, the global norms were logged as 0). The
             # global norms are those before clipping.
             if compute_grad_stats:
                 grad_stats = grad_logger(encoder.named_parameters())
-                grad_stats.global_norm = float(
-                    _enc_norm if _enc_norm is not None
-                    else _grad_global_norm(encoder.parameters()))
+                grad_stats.global_norm = float(_enc_norm)
                 grad_stats_pred = grad_logger(predictor.named_parameters())
-                grad_stats_pred.global_norm = float(
-                    _pred_norm if _pred_norm is not None
-                    else _grad_global_norm(predictor.parameters()))
+                grad_stats_pred.global_norm = float(_pred_norm)
             else:
                 grad_stats = None
                 grad_stats_pred = None
+
+            # Stop at the first non-finite loss or gradient norm, before the
+            # optimizer step writes it into the weights (the loss was checked
+            # only after the step). The flag is reduced over the ranks, so
+            # all ranks stop at the same step instead of waiting for each
+            # other at the next collective.
+            nonfinite = ~(torch.isfinite(loss.detach())
+                          & torch.isfinite(_enc_norm.to(loss.device))
+                          & torch.isfinite(_pred_norm.to(loss.device)))
+            if _any_over_ranks(nonfinite, device):
+                raise FloatingPointError(
+                    f"Non-finite loss or gradient norm at epoch {epoch}, "
+                    f"iteration {itr} on at least one rank (this rank: loss "
+                    f"{float(loss)}, gradient norms: encoder "
+                    f"{float(_enc_norm)}, predictor {float(_pred_norm)}). "
+                    "Training stopped before the optimizer step; the "
+                    "checkpoints are unchanged.")
 
             optimizer.step()
             optimizer.zero_grad(set_to_none=True)
@@ -1984,7 +2058,6 @@ def train(args: dict,
                 if loss_cov is not None:
                     log_payload["vicreg/cov_loss"] = float(loss_cov.detach())
                 wandb.log(log_payload)
-            assert not np.isnan(float(loss)), 'loss is nan'
             # Mid-epoch checkpoint k after k * checkpoint_freq_iter iterations
             # of the epoch (`itr % checkpoint_freq_iter == 0` also saved one
             # after the first iteration of every epoch, a near copy of the

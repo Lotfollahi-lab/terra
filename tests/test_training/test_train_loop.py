@@ -29,6 +29,11 @@ group.
   pass ran for a zero loss. Rank models had no check that the swapped
   labels, written into the special token ids, stay inside the token
   dictionary.
+* Non-finite values: the loss was checked for NaN only after the optimizer
+  step, on each rank separately, and a non-finite state could be saved over
+  the last checkpoint. Training now stops before the step at the first
+  non-finite loss or gradient norm on any rank, and never saves a non-finite
+  model or optimizer state.
 """
 
 import copy
@@ -54,14 +59,17 @@ SEQ_LEN_NEIGHBORHOOD = SEQ_LEN_CELL * (N_SEGMENTS - 1)
 ITERATIONS_PER_EPOCH = N_CELLS // BATCH_SIZE
 
 
-def _dataset() -> Dataset:
+def _dataset(one_gene_cells=()) -> Dataset:
+    # Cells in `one_gene_cells` have a single gene, in their own segment
     rng = torch.Generator().manual_seed(4)
     rows = {'gene_tokens': [], 'gene_expr': [], 'n_nonzero_tokens': [],
             'batch_value': [], 'cell_id': []}
     for cell in range(N_CELLS):
         tokens, values = [], []
-        for _ in range(N_SEGMENTS):
+        for segment in range(N_SEGMENTS):
             n = int(torch.randint(3, SEQ_LEN_CELL + 1, (1,), generator=rng))
+            if cell in one_gene_cells:
+                n = int(segment == 0)
             tokens += (torch.randperm(500, generator=rng)[:n] + 107).tolist()
             tokens += [0] * (SEQ_LEN_CELL - n)
             values += sorted(torch.randint(1, 50, (n,), generator=rng)
@@ -135,7 +143,7 @@ def run_train(tmp_path, monkeypatch):
     dist.init_process_group('gloo', init_method=f"file://{tmp_path / 'pg'}",
                             rank=0, world_size=1)
 
-    def run(vocab_size=700, **overrides):
+    def run(vocab_size=700, dataset=None, **overrides):
         folder = tmp_path / 'run'
         folder.mkdir(exist_ok=True)
         token_dict_path = str(tmp_path / 'token_dictionary.pkl')
@@ -175,7 +183,8 @@ def run_train(tmp_path, monkeypatch):
         monkeypatch.setattr(T.copy, 'deepcopy', record_deepcopy)
 
         T.train(_args(folder, token_dict_path, overrides),
-                train_dataset=_dataset(), save_folder_path=str(folder),
+                train_dataset=_dataset() if dataset is None else dataset,
+                save_folder_path=str(folder),
                 LOCAL_RANK=0, WORLD_RANK=0)
         return result
 
@@ -298,3 +307,58 @@ def test_cycle_consistency_checks_rank_labels_against_token_dictionary(
                            meta={'gt_type': 'rank'},
                            special_token_correction=cycle)
         assert any('cycle/loss' in payload for payload in result['logged'])
+
+
+# Batches in dataset order with two one-gene cells each, no metatoken and
+# masks padded to the longest cell: with mask ratio 0.6 the one gene of these
+# cells is a target, so their context is only padding (fully masked
+# attention rows in the context encoder)
+EMPTY_CONTEXT = dict(
+    dataset=_dataset(one_gene_cells=range(0, N_CELLS, 4)),
+    data={'use_sampler': False},
+    meta={'special_tokens': [], 'use_flash_attention': False},
+    mask={'sample_segments': False, 'pad_masks_to_batch_max': True})
+
+
+def _saved_checkpoints(tmp_path):
+    return sorted(p.name for p in (tmp_path / 'run').glob('*.pth.tar*'))
+
+
+def test_nonfinite_loss_stops_training_before_the_optimizer_step(
+        run_train, tmp_path):
+    # The eager attention gives NaN for the fully masked rows
+    with pytest.raises(FloatingPointError,
+                       match='Non-finite loss or gradient norm at epoch 0, '
+                             'iteration 0'):
+        run_train(**EMPTY_CONTEXT)
+    assert _saved_checkpoints(tmp_path) == []
+
+
+def test_zero_fully_masked_attention_rows_keeps_training_finite(run_train):
+    config = copy.deepcopy(EMPTY_CONTEXT)
+    config['meta']['zero_fully_masked_attention_rows'] = True
+    result = run_train(**config)
+    assert len(result['logged']) == 2 * ITERATIONS_PER_EPOCH
+    assert all(torch.isfinite(torch.tensor(payload['loss']))
+               for payload in result['logged'])
+
+
+def test_nonfinite_state_is_not_saved(run_train, tmp_path, monkeypatch):
+    # Finite loss and gradients, but the last step of epoch 0 leaves a NaN
+    # weight: the end-of-epoch checkpoint is not written
+    step = torch.optim.AdamW.step
+    n_steps = []
+
+    def corrupting_step(self, *args, **kwargs):
+        out = step(self, *args, **kwargs)
+        n_steps.append(1)
+        if len(n_steps) == ITERATIONS_PER_EPOCH:
+            with torch.no_grad():
+                self.param_groups[0]['params'][0].fill_(float('nan'))
+        return out
+    monkeypatch.setattr(torch.optim.AdamW, 'step', corrupting_step)
+
+    with pytest.raises(FloatingPointError,
+                       match='Non-finite model or optimizer state at epoch 0'):
+        run_train()
+    assert _saved_checkpoints(tmp_path) == []

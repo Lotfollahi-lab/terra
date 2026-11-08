@@ -164,6 +164,10 @@ and this project adheres to [Semantic Versioning][].
 -   Resuming multi-GPU training from the latest checkpoint
     (`read_checkpoint: null`) now resumes every rank, not only rank 0. The
     latest checkpoint is written atomically.
+-   Pretraining stops with a clear error, on all GPUs at the same step, at
+    the first non-finite loss or gradient norm, before the optimizer step
+    (the loss was checked only after the step, on each GPU separately), and
+    never saves a non-finite model or optimizer state over a checkpoint.
 -   Inference tokenizes cell-neighborhood models with the cell/neighborhood
     split recorded in their config. The tokenizer default changed in April
     2026.
