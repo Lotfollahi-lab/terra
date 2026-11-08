@@ -125,6 +125,11 @@ and this project adheres to [Semantic Versioning][].
 -   The training launcher honours `WANDB_MODE` (e.g. `offline` or
     `disabled`) instead of always logging to wandb online; without it, runs
     log online as before.
+-   Pretraining DataLoader workers are started with `fork` on Linux (the
+    platform default elsewhere), set explicitly. This is what ran so far
+    (the `spawn` start method requested in `train` never took effect after
+    loading the dataset from disk), and it keeps working from Python 3.14,
+    whose `forkserver` default fails with large datasets.
 -   Importing TERRA no longer configures the root logger; TERRA's log records
     are shown once the application configures logging (e.g.
     `logging.basicConfig(level="INFO")`).

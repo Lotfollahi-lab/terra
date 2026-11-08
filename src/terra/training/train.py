@@ -30,9 +30,9 @@ import numpy as np
 import pandas as pd
 import pickle
 import random
+import sys
 import warnings
 import torch
-import torch.multiprocessing as mp
 import torch.nn.functional as F
 import torch.profiler
 from datasets import load_from_disk
@@ -264,6 +264,24 @@ _GLOBAL_SEED = 0
 
 
 logger = logging.getLogger(__name__)
+
+
+def _dataloader_start_method(num_workers: int) -> str | None:
+    """
+    Start method of the DataLoader workers, set explicitly: 'fork' on Linux
+    (and the other platforms where it is Python's default up to 3.13), the
+    platform default ('spawn') on macOS and Windows, and `None` without
+    workers.
+
+    This is what ran so far: the ``mp.set_start_method('spawn')`` train()
+    called never took effect when training from main.py, as
+    ``load_from_disk`` had already fixed the default context. From Python
+    3.14 the default is 'forkserver', which pickles the dataset into every
+    worker in every epoch.
+    """
+    if num_workers == 0 or sys.platform in ('darwin', 'win32'):
+        return None
+    return 'fork'
 
 
 def _grad_global_norm(parameters) -> torch.Tensor:
@@ -912,12 +930,8 @@ def train(args: dict,
                     f"special values of the model (n_special_values "
                     f"{n_special_values} + 2)"))
 
-    # Set multiprocessing start method
-    try:
-        mp.set_start_method("spawn")
-    except Exception:
-        logger.info(f'Multiprocessing not started.')
-    
+    multiprocessing_context = _dataloader_start_method(num_workers)
+
     # Initialize torch distributed backend
     world_size, rank = init_distributed()
     logger.info(f'Initialized (rank/world-size) {rank}/{world_size}.')
@@ -1218,6 +1232,7 @@ def train(args: dict,
                 drop_last=True,
                 prefetch_factor=(4 if num_workers > 0 else None),
                 persistent_workers=False,
+                multiprocessing_context=multiprocessing_context,
                 mega_batch_mult_max=mega_batch_mult_max,
                 seed=seed)
             train_loaders.append(train_loader)
@@ -1236,6 +1251,7 @@ def train(args: dict,
             drop_last=True,
             prefetch_factor=(4 if num_workers > 0 else None),
             persistent_workers=False,
+            multiprocessing_context=multiprocessing_context,
             mega_batch_mult_max=mega_batch_mult_max,
             seed=seed)
 

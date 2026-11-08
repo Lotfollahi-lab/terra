@@ -134,7 +134,6 @@ def run_train(tmp_path, monkeypatch):
     checkpoints.
     """
     # train() sets process-wide options; restore them afterwards
-    monkeypatch.setattr(T.mp, 'set_start_method', lambda *a, **k: None)
     precision = torch.get_float32_matmul_precision()
     backend_flags = (torch.backends.cudnn.deterministic,
                      torch.backends.cudnn.benchmark,
@@ -495,3 +494,29 @@ def test_nonfinite_loss_on_one_rank_stops_all_ranks(tmp_path):
     for output in outputs:
         assert output.strip().endswith(
             'Non-finite loss or gradient norm at epoch 0, iteration 1')
+
+
+@pytest.mark.parametrize('platform, num_workers, expected', [
+    ('linux', 4, 'fork'), ('linux', 0, None), ('darwin', 4, None),
+    ('win32', 4, None)])
+def test_dataloader_start_method(monkeypatch, platform, num_workers,
+                                 expected):
+    monkeypatch.setattr(T.sys, 'platform', platform)
+    assert T._dataloader_start_method(num_workers) == expected
+
+
+def test_dataloader_gets_the_start_method(run_train, monkeypatch):
+    class Stop(Exception):
+        pass
+
+    def capture(**kwargs):
+        captured.update(kwargs)
+        raise Stop
+    captured = {}
+    monkeypatch.setattr(T, '_dataloader_start_method',
+                        lambda num_workers: f'method for {num_workers}')
+    monkeypatch.setattr(T, 'init_dataloader_and_sampler', capture)
+    with pytest.raises(Stop):
+        run_train(data={'num_workers': 3})
+    assert captured['num_workers'] == 3
+    assert captured['multiprocessing_context'] == 'method for 3'
