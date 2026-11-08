@@ -110,6 +110,30 @@ def test_guard_does_not_change_attention_without_fully_masked_rows():
     assert torch.equal(unmasked, unmasked_reference)
 
 
+@pytest.mark.parametrize('use_flash_attention', [False, True])
+def test_guard_saves_no_extra_tensors_for_the_backward_pass(
+        use_flash_attention):
+    def saved_bytes(guard):
+        attention = _attention(use_flash_attention).train()
+        attention.zero_fully_masked_attention_rows = guard
+        x = torch.randn(3, N_TOKENS, 16, requires_grad=True)
+        saved = {}
+
+        def pack(t):
+            saved[t.data_ptr()] = t.numel() * t.element_size()
+            return t
+        with torch.autograd.graph.saved_tensors_hooks(pack, lambda t: t):
+            _, attn = attention(x, masks=_masks('key_padding'))
+        return sum(saved.values()), attn
+
+    reference, _ = saved_bytes(False)
+    guarded, attn = saved_bytes(True)
+    # Only the (B, 1, N, 1) row mask is added
+    assert guarded - reference <= 3 * N_TOKENS
+    if not use_flash_attention:
+        assert (attn[1] == 0).all()
+
+
 CONFIG = {
     'data': {'seq_len_cell': 4, 'seq_len_neighborhood': 12, 'n_segments': 4,
              'tokenizer_type': 'cell_graph', 'n_special_values': 8},

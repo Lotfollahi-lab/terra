@@ -358,10 +358,14 @@ class Attention(nn.Module):
                     # pre-softmax logits.
                     attn = attn + masks
             attn = attn.softmax(dim=-1)
-            if row_valid is not None:
-                attn = attn.masked_fill(~row_valid, 0.0)
             attn = self.attn_drop(attn)
             x = (attn @ v)
+            if row_valid is not None:
+                # Zero the output rather than the weights the matmul keeps
+                # for the backward pass, so no second (B, H, N, N) tensor
+                # is saved; the returned weights are zeroed as well
+                x = x.masked_fill(~row_valid, 0.0)
+                attn = attn.masked_fill(~row_valid, 0.0)
         x = x.transpose(1, 2).reshape(B, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
