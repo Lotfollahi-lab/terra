@@ -287,12 +287,16 @@ def _dataloader_start_method(num_workers: int) -> str | None:
 def _grad_global_norm(parameters) -> torch.Tensor:
     """
     Global L2 norm of the gradients of `parameters`, as returned by
-    ``clip_grad_norm_``, without modifying them.
+    ``clip_grad_norm_``, without modifying them. Computed every step, so it
+    uses the same fused (foreach) kernels as ``clip_grad_norm_`` where
+    available (PyTorch >= 2.6).
     """
-    norms = [torch.linalg.vector_norm(p.grad.detach(), 2.0)
-             for p in parameters if p.grad is not None]
-    if not norms:
+    grads = [p.grad for p in parameters if p.grad is not None]
+    if not grads:
         return torch.tensor(0.)
+    if hasattr(torch.nn.utils, 'get_total_norm'):
+        return torch.nn.utils.get_total_norm(grads, 2.0)
+    norms = [torch.linalg.vector_norm(g.detach(), 2.0) for g in grads]
     return torch.linalg.vector_norm(torch.stack(norms), 2.0)
 
 

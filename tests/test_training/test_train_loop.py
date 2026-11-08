@@ -513,6 +513,24 @@ def test_nonfinite_loss_on_one_rank_stops_all_ranks(tmp_path):
             'Non-finite loss or gradient norm at epoch 0, iteration 1')
 
 
+@pytest.mark.parametrize('fused', [True, False])
+def test_grad_global_norm_matches_clip_grad_norm(monkeypatch, fused):
+    torch.manual_seed(0)
+    module = torch.nn.Sequential(torch.nn.Linear(5, 4), torch.nn.Linear(4, 3))
+    module[0].bias.requires_grad_(False)
+    module(torch.randn(6, 5)).square().sum().backward()
+    with_grad = [p for p in module.parameters() if p.grad is not None]
+    grads = [p.grad.clone() for p in with_grad]
+    if not fused:
+        monkeypatch.delattr(torch.nn.utils, 'get_total_norm', raising=False)
+
+    norm = T._grad_global_norm(module.parameters())
+    # The gradients are not modified
+    assert all(torch.equal(p.grad, g) for p, g in zip(with_grad, grads))
+    torch.testing.assert_close(norm, torch.nn.utils.clip_grad_norm_(
+        module.parameters(), float('inf')), rtol=0 if fused else 1e-6, atol=0)
+
+
 @pytest.mark.parametrize('platform, num_workers, expected', [
     ('linux', 4, 'fork'), ('linux', 0, None), ('darwin', 4, None),
     ('win32', 4, None)])
