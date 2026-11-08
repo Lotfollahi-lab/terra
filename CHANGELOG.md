@@ -77,8 +77,10 @@ and this project adheres to [Semantic Versioning][].
     (`data.rank_tie_break_norm_factor`, with `stable_rank_ties`): genes with
     tied ranking values are ordered by a column of the norm-factor file
     before the token id, e.g. `mean` to put genes that are rarer or lower
-    expressed in the corpus first. Off by default; inference reads it from the
-    model config.
+    expressed in the corpus first, on both ranking paths (the count value no
+    longer orders tied genes), so a ranking of raw counts keeps the same genes
+    whatever the count normalization. Off by default; inference reads it from
+    the model config.
 
 ### Changed
 

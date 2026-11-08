@@ -223,6 +223,50 @@ def test_mean_tie_break_keeps_genes_of_mean_normalized_counts(
     assert mean_raw == mean_mean == token_id_mean
 
 
+@pytest.mark.parametrize('tokenizer', [CellGraphTokenizer,
+                                       CellNeighborhoodTokenizer])
+def test_mean_tie_break_keeps_genes_whatever_the_count_normalization(
+        token_dictionary_file_path, tmp_path, tokenizer):
+    # With rank_tie_break_norm_factor the dense path does not order tied
+    # genes by their count value: raw-count ranks keep and order the same
+    # genes with raw counts (sparse path) and with counts divided by a factor
+    # whose order differs from the tie-break column (dense path)
+    rng = np.random.default_rng(5)
+    norm_factor_file_path = tmp_path / 'norm_factors.csv'
+    nonzero_mean = rng.integers(1, 11, N_GENES) / 2
+    pd.DataFrame({'gene_id': [f'ENSG{i:011d}' for i in range(N_GENES)],
+                  'mean': rng.integers(1, 11, N_GENES) / 4,
+                  'nonzero_mean': nonzero_mean,
+                  # Factors of the aggregated neighborhood counts
+                  'nonzero_mean_neighborhood': nonzero_mean[::-1] * 5,
+                  }).to_csv(norm_factor_file_path, index=False)
+    results = {}
+    for tie_break_norm_factor in (None, 'mean'):
+        for count_gene_norm_method in (None, 'nonzero_mean'):
+            tk = tokenizer(
+                model_input_size=MODEL_INPUT_SIZE, n_neighs=N_NEIGHS,
+                token_dictionary_file_path=token_dictionary_file_path,
+                norm_factor_file_path=norm_factor_file_path,
+                include_special_tokens=False, rank_cell_norm_method=None,
+                rank_gene_norm_method=None, rank_count_norm_method=None,
+                count_cell_norm_method=None,
+                count_gene_norm_method=count_gene_norm_method,
+                count_count_norm_method=None, stable_rank_ties=True,
+                rank_tie_break_norm_factor=tie_break_norm_factor)
+            assert tk.rank_differs_from_count == (
+                count_gene_norm_method is not None)
+            adata_dict = tk._tokenize_adata(adata=_make_adata())
+            results[tie_break_norm_factor, count_gene_norm_method] = {
+                part: [_expressed_prefix(tokens).tolist()
+                       for tokens in adata_dict[f'gene_tokens_{part}']]
+                for part in ('cell', 'neighborhood')
+                if f'gene_tokens_{part}' in adata_dict}
+    # Token-id ties: the count value orders tied genes on the dense path
+    assert (results[None, None]['cell']
+            != results[None, 'nonzero_mean']['cell'])
+    assert results['mean', None] == results['mean', 'nonzero_mean']
+
+
 def test_rank_tie_break_norm_factor_errors(
         token_dictionary_file_path, norm_factor_file_path, tmp_path):
     with pytest.raises(ValueError, match='stable_rank_ties'):

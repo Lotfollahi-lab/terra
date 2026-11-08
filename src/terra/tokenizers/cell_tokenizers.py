@@ -192,10 +192,10 @@ class CellBaseTokenizer(ABC):
     include_special_tokens:
         If `True`, include special tokens.
     stable_rank_ties:
-        If `True`, genes with tied ranking values (and, on the dense path,
-        tied counts) are ordered by ascending token id (after
-        `rank_tie_break_norm_factor`, if set) on both ranking
-        paths. The tokenization then does not depend on the order of the
+        If `True`, genes with tied ranking values (and, on the dense path
+        without `rank_tie_break_norm_factor`, tied counts) are ordered by
+        ascending token id (after `rank_tie_break_norm_factor`, if set) on
+        both ranking paths. The tokenization then does not depend on the order of the
         genes (columns) of the input or on the numpy build, and both paths
         select the same genes when a cell has more expressed genes than fit
         into its segment. Default `False` keeps the previous tie order
@@ -206,9 +206,13 @@ class CellBaseTokenizer(ABC):
         Column of `norm_factor_file_path` that orders tied genes before the
         token id with `stable_rank_ties`, in ascending order. With 'mean' (the
         mean count of a gene over the corpus cells that probe it), genes that
-        are rarer or lower expressed in the corpus come first. Every
-        vocabulary gene of the input needs a finite value in the column.
-        Default `None` orders tied genes by token id only.
+        are rarer or lower expressed in the corpus come first. The dense path
+        (ranking and count values normalized differently) then no longer
+        orders tied genes by their count value, so both paths order tied genes
+        the same way, and a ranking of raw counts keeps the same genes
+        whatever the count normalization. Every vocabulary gene of the input
+        needs a finite value in the column. Default `None` orders tied genes
+        by token id only.
     zero_expr_from_raw_counts:
         If `True` (and `include_zero_expr_genes` is `False`), the dense ranking
         path identifies non-expressed genes by their raw count of 0, ranks
@@ -1181,10 +1185,17 @@ class CellGraphTokenizer(CellBaseTokenizer):
                 # equals a STABLE argsort by -count followed by a STABLE
                 # argsort by -rank, done row-wise with axis=1 -- byte-identical
                 # to the per-row np.lexsort (verified, incl. ties).
-                idx_sec = np.argsort(-count_block, axis=1, kind='stable')
-                rank_bysec = np.take_along_axis(rank_block, idx_sec, axis=1)
-                idx_pri = np.argsort(-rank_bysec, axis=1, kind='stable')
-                order = np.take_along_axis(idx_sec, idx_pri, axis=1)
+                if coding_miRNA_tie_values is None:
+                    idx_sec = np.argsort(-count_block, axis=1, kind='stable')
+                    rank_bysec = np.take_along_axis(rank_block, idx_sec,
+                                                    axis=1)
+                    idx_pri = np.argsort(-rank_bysec, axis=1, kind='stable')
+                    order = np.take_along_axis(idx_sec, idx_pri, axis=1)
+                else:
+                    # rank_tie_break_norm_factor: no count tie-break; tied
+                    # genes keep the column order (ascending value, then
+                    # token id), as on the sparse path
+                    order = np.argsort(-rank_block, axis=1, kind='stable')
 
                 if mask_by_counts:
                     raw_block = X_raw_coding[i:i+self.chunk_size]
@@ -2025,13 +2036,16 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
                               and not self.include_zero_expr_genes)
             # Tie-breaks after rank and count (lexsort: last key first): with
             # stable_rank_ties the rank_tie_break_norm_factor value (if set),
-            # then the token id, otherwise the gene order (lexsort is stable)
+            # then the token id, otherwise the gene order (lexsort is stable).
+            # With rank_tie_break_norm_factor there is no count tie-break, as
+            # on the sparse path.
             cell_tie_keys, neigh_tie_keys = (
                 ((coding_miRNA_tokens_cell,), (coding_miRNA_tokens_neighborhood,))
                 if self.stable_rank_ties else ((), ()))
             if coding_miRNA_tie_values is not None:
                 cell_tie_keys += (coding_miRNA_tie_values,)
                 neigh_tie_keys += (coding_miRNA_tie_values,)
+            use_count_key = coding_miRNA_tie_values is None
             for i in range(0, len(adata), self.chunk_size):
                 # --- Cell ---
                 cell_rank_block = adata[
@@ -2078,15 +2092,19 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
                     # --- Cell: lexsort with tie-breaking ---
                     cell_rank_row = cell_rank_block[j]
                     cell_count_row = cell_count_block[j]
+                    cell_count_key = ((-cell_count_row,) if use_count_key
+                                      else ())
 
                     if mask_by_counts:
-                        # Expressed genes first, then rank, then count
-                        cell_order = np.lexsort(cell_tie_keys + (
-                            -cell_count_row, -cell_rank_row,
-                            ~cell_expressed_block[j]))
+                        # Expressed genes first, then rank, then count (if
+                        # used)
+                        cell_order = np.lexsort(
+                            cell_tie_keys + cell_count_key
+                            + (-cell_rank_row, ~cell_expressed_block[j]))
                     else:
-                        cell_order = np.lexsort(cell_tie_keys + (
-                            -cell_count_row, -cell_rank_row))
+                        cell_order = np.lexsort(
+                            cell_tie_keys + cell_count_key
+                            + (-cell_rank_row,))
 
                     sorted_cell_tokens = coding_miRNA_tokens_cell[
                         cell_order].copy()
@@ -2110,14 +2128,17 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
                     # --- Neighborhood: lexsort with tie-breaking ---
                     neigh_rank_row = neigh_rank_block[j]
                     neigh_count_row = neigh_count_block[j]
+                    neigh_count_key = ((-neigh_count_row,) if use_count_key
+                                       else ())
 
                     if mask_by_counts:
-                        neigh_order = np.lexsort(neigh_tie_keys + (
-                            -neigh_count_row, -neigh_rank_row,
-                            ~neigh_expressed_block[j]))
+                        neigh_order = np.lexsort(
+                            neigh_tie_keys + neigh_count_key
+                            + (-neigh_rank_row, ~neigh_expressed_block[j]))
                     else:
-                        neigh_order = np.lexsort(neigh_tie_keys + (
-                            -neigh_count_row, -neigh_rank_row))
+                        neigh_order = np.lexsort(
+                            neigh_tie_keys + neigh_count_key
+                            + (-neigh_rank_row,))
 
                     sorted_neigh_tokens = coding_miRNA_tokens_neighborhood[
                         neigh_order].copy()
