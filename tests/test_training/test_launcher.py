@@ -8,6 +8,8 @@ Tests for the training launcher ``terra.training.main``.
   SLURM allocation the SLURM branch required ``WORLD_SIZE``.
 * ``TORCH_DISTRIBUTED_DEBUG`` was forced to ``DETAIL`` (expensive checks of
   every collective), overriding the job environment; it is now opt-in.
+* wandb was always initialized online, overriding ``WANDB_MODE``; offline
+  and disabled modes are now honoured.
 """
 
 import importlib
@@ -81,3 +83,29 @@ def test_main_leaves_torch_distributed_debug_to_the_environment(
     with pytest.raises(SystemExit):
         runpy.run_path(main.__file__, run_name='__main__')
     assert os.environ.get('TORCH_DISTRIBUTED_DEBUG') == debug
+
+
+class _WandbInitCalled(Exception):
+    pass
+
+
+@pytest.mark.parametrize('mode', [None, 'offline', 'disabled'])
+def test_main_honours_wandb_mode(launcher_env, monkeypatch, mode):
+    main = launcher_env(LOCAL_RANK='0', RANK='0', WORLD_SIZE='1')
+    if mode is None:
+        monkeypatch.delenv('WANDB_MODE', raising=False)
+    else:
+        monkeypatch.setenv('WANDB_MODE', mode)
+    init_kwargs = {}
+
+    def init(**kwargs):
+        init_kwargs.update(kwargs)
+        raise _WandbInitCalled
+    monkeypatch.setattr(main, 'wandb', types.SimpleNamespace(
+        init=init, Settings=lambda **kwargs: kwargs))
+    monkeypatch.setattr(main, 'create_params_from_YAML_wandb_config',
+                        lambda *args: {})
+    monkeypatch.setattr(sys, 'argv', ['main.py'])
+    with pytest.raises(_WandbInitCalled):
+        main.main()
+    assert init_kwargs['mode'] == (mode or 'online')

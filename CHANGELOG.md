@@ -122,6 +122,9 @@ and this project adheres to [Semantic Versioning][].
     shown regardless of the logging configuration.
 -   The training launcher no longer forces `TORCH_DISTRIBUTED_DEBUG=DETAIL`;
     set it in the job environment to enable it.
+-   The training launcher honours `WANDB_MODE` (e.g. `offline` or
+    `disabled`) instead of always logging to wandb online; without it, runs
+    log online as before.
 -   Importing TERRA no longer configures the root logger; TERRA's log records
     are shown once the application configures logging (e.g.
     `logging.basicConfig(level="INFO")`).

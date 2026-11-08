@@ -122,13 +122,15 @@ def main():
     logger.info(f'Called with params from {args.fname}.')
     logger.info(f'Params: {params}.')
     if WORLD_RANK==0:
+        # WANDB_MODE (e.g. 'offline' or 'disabled') is honoured; init
+        # arguments override the environment, so it is passed on here
         wandb.init(
             settings=wandb.Settings(init_timeout=120),
             project='terra-pretraining',
             id=run_id,
             resume="allow",
             group="multi_node_training",
-            mode='online')
+            mode=os.environ.get('WANDB_MODE', 'online'))
         artifact_folder_path = '../terra-reproducibility/artifacts'
         current_timestamp = (
             datetime.now().strftime("%d%m%Y_%H%M%S") +
