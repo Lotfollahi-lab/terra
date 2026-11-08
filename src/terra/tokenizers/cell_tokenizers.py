@@ -198,10 +198,12 @@ class CellBaseTokenizer(ABC):
         both ranking paths. The tokenization then does not depend on the order of the
         genes (columns) of the input or on the numpy build, and both paths
         select the same genes when a cell has more expressed genes than fit
-        into its segment. Default `False` keeps the previous tie order
-        (numpy's default sort over the stored genes on the sparse path, the
-        gene order on the dense path); this reproduces how existing data and
-        models were tokenized.
+        into its segment. Equidistant neighbors of the cell graph tokenizer
+        keep the order of the distance matrix row. Default `False` keeps the
+        previous tie order (numpy's default sort over the stored genes on the
+        sparse path, the gene order on the dense path, and numpy's default
+        sort over the neighbor distances); this reproduces how existing data
+        and models were tokenized.
     rank_tie_break_norm_factor:
         Column of `norm_factor_file_path` that orders tied genes before the
         token id with `stable_rank_ties`, in ascending order. With 'mean' (the
@@ -1321,7 +1323,12 @@ class CellGraphTokenizer(CellBaseTokenizer):
             cell_end = distances.indptr[i+1]
             cell_distances = distances.data[cell_start:cell_end]
 
-            sorted_indices = np.argsort(cell_distances)
+            # With stable_rank_ties, equidistant neighbors keep the order of
+            # the distance row, whatever the CPU (numpy's default sort is not
+            # stable and differs between CPU types for ties)
+            sorted_indices = np.argsort(
+                cell_distances,
+                kind='stable' if self.stable_rank_ties else None)
             assert len(neighbors_i) == len(cell_distances), (
                 'Number of neighbors does not equal number of distances.')
             ordered_neighbors = neighbors_i[sorted_indices]

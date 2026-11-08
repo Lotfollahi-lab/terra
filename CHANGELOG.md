@@ -113,7 +113,9 @@ and this project adheres to [Semantic Versioning][].
     (and `use_flash_attention: True`, which flash requires).
 -   `stable_rank_ties` (unreleased) now orders equally ranked genes by token
     ID on both ranking paths, so tokenization no longer depends on the order
-    of the gene columns in the input.
+    of the gene columns in the input. With it, the cell graph tokenizer also
+    orders equidistant neighbors with a stable sort, so their segments do not
+    depend on the CPU type.
 -   `embed_dataset(agg_type='softmax')` applies the softmax once, over the
     aggregated genes only, so outputs of this option change. It was not used
     for published results; the default `agg_type='avg'` is unchanged.

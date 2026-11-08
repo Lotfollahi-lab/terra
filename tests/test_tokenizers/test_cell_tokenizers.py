@@ -525,3 +525,37 @@ def test_generator_formats_examples_as_map_did(token_dictionary_file_path,
     for name in expected.column_names:
         assert dataset.data.table.column(name).equals(
             expected.data.table.column(name)), name
+
+
+@pytest.mark.parametrize('stable_rank_ties', [False, True])
+def test_stable_rank_ties_order_equidistant_neighbors_stably(
+        token_dictionary_file_path, monkeypatch, stable_rank_ties):
+    # Cells on a lattice have equidistant neighbors. numpy's default sort is
+    # not stable and orders ties differently on some CPUs; emulate that with a
+    # default sort that reverses ties.
+    adata = _make_adata()
+    adata.obsm['spatial'] = np.stack(np.unravel_index(
+        np.arange(N_CELLS), (5, 8)), axis=1).astype(float)
+
+    def tokenize():
+        _, adata_dict = _tokenize(token_dictionary_file_path, adata=adata,
+                                  stable_rank_ties=stable_rank_ties)
+        return [np.concatenate([adata_dict[key][i] for key in (
+                    'gene_tokens_neighborhood', 'rel_x_coord',
+                    'rel_y_coord')])
+                for i in range(N_CELLS)]
+
+    neighbors = tokenize()
+    argsort = np.argsort
+
+    def unstable_argsort(a, axis=-1, kind=None, **kwargs):
+        a = np.asarray(a)
+        if kind in (None, 'quicksort') and a.ndim == 1:
+            return np.lexsort((-np.arange(len(a)), a))
+        return argsort(a, axis=axis, kind=kind, **kwargs)
+    monkeypatch.setattr(np, 'argsort', unstable_argsort)
+    neighbors_other_cpu = tokenize()
+
+    same = all(np.array_equal(a, b)
+               for a, b in zip(neighbors, neighbors_other_cpu))
+    assert same is stable_rank_ties
