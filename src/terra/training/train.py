@@ -1381,15 +1381,24 @@ def train(args: dict,
     rng_states = None
     # Load training checkpoint
     if load_model:
-        encoder, predictor, target_encoder, optimizer, scaler, start_epoch, iter_number = load_checkpoint(
-            device=device,
-            r_path=load_path,
-            encoder=encoder,
-            predictor=predictor,
-            target_encoder=target_encoder,
-            opt=optimizer,
-            scaler=scaler,
-            raise_on_error=not allow_checkpoint_load_failure)
+        try:
+            encoder, predictor, target_encoder, optimizer, scaler, start_epoch, iter_number = load_checkpoint(
+                device=device,
+                r_path=load_path,
+                encoder=encoder,
+                predictor=predictor,
+                target_encoder=target_encoder,
+                opt=optimizer,
+                scaler=scaler)
+            checkpoint_loaded = True
+        except RuntimeError as e:
+            if not allow_checkpoint_load_failure:
+                raise
+            # Start like a fresh run, including its random streams
+            logger.warning(
+                f'{e}. Continuing WITHOUT the checkpoint (randomly '
+                'initialized modules, epoch 0).')
+            start_epoch, iter_number, checkpoint_loaded = 0, None, False
         for _ in range(start_epoch*ipe):
             scheduler.step()
             wd_scheduler.step()
@@ -1402,7 +1411,8 @@ def train(args: dict,
             raise RuntimeError(
                 "The ranks resumed from different epochs (epoch, iteration "
                 f"checkpoint per rank: {start_epochs}).")
-        rng_states = _load_rng_states(load_path)
+        rng_states = (_load_rng_states(load_path) if checkpoint_loaded
+                      else None)
         if rng_states is not None and len(rng_states) != world_size:
             logger.warning(
                 f"The checkpoint holds the random number generator states "

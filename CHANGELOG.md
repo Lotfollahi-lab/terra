@@ -184,7 +184,9 @@ and this project adheres to [Semantic Versioning][].
     instead of repeating that of epoch 0; resuming from the end of an epoch
     gives the same training as an uninterrupted run, up to GPU
     nondeterminism. Checkpoints without these states are still accepted,
-    with a warning. All GPUs must resume from the same epoch.
+    with a warning. All GPUs must resume from the same epoch. A run that
+    starts afresh because its checkpoint could not be loaded
+    (`allow_checkpoint_load_failure`) keeps the random stream of a fresh run.
 -   Inference tokenizes cell-neighborhood models with the cell/neighborhood
     split recorded in their config. The tokenizer default changed in April
     2026.

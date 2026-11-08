@@ -417,6 +417,23 @@ def test_resume_from_checkpoint_without_rng_state_warns(run_train, tmp_path):
     assert not _same_training_state(_final_state(tmp_path), uninterrupted)
 
 
+def test_failed_checkpoint_load_keeps_the_fresh_random_streams(
+        run_train, tmp_path):
+    run_train()
+    fresh = _final_state(tmp_path)
+    # A checkpoint whose modules cannot be loaded, but with RNG states
+    checkpoint = torch.load(tmp_path / 'run' / 'terra-ep0.pth.tar',
+                            weights_only=False)
+    del checkpoint['encoder']
+    torch.save(checkpoint, tmp_path / 'run' / 'terra-broken.pth.tar')
+    state = {'load_checkpoint': True, 'read_checkpoint': 'terra-broken.pth.tar'}
+    with pytest.raises(RuntimeError, match='Could not load checkpoint'):
+        run_train(state=state)
+
+    run_train(state={**state, 'allow_checkpoint_load_failure': True})
+    assert _same_training_state(_final_state(tmp_path), fresh)
+
+
 def test_ranks_resuming_from_different_epochs_raise(
         run_train, tmp_path, monkeypatch):
     run_train()
