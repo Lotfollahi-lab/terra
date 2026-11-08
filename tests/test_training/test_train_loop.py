@@ -44,6 +44,7 @@ import copy
 import importlib
 import os
 import pickle
+import subprocess
 import sys
 import types
 
@@ -426,3 +427,71 @@ def test_ranks_resuming_from_different_epochs_raise(
     with pytest.raises(RuntimeError, match='different epochs'):
         run_train(**RESUME)
 
+
+_TWO_RANK_WORKER = """
+import pickle
+import subprocess
+import sys
+import types
+
+import torch
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel
+
+sys.path.insert(0, sys.argv[4])
+import test_train_loop as harness
+
+T = harness.T
+rank, init_file, folder = int(sys.argv[1]), sys.argv[2], sys.argv[3]
+sys.modules['wandb'] = types.SimpleNamespace(log=lambda *a, **k: None)
+T.DistributedDataParallel = lambda module, **kw: DistributedDataParallel(
+    module, **{k: v for k, v in kw.items()
+               if k not in ('device_ids', 'output_device')})
+# Rank 1 gets a NaN loss with finite gradients at its second step
+smooth_l1_loss = torch.nn.functional.smooth_l1_loss
+n_calls = []
+
+def nan_loss(*args, **kwargs):
+    loss = smooth_l1_loss(*args, **kwargs)
+    n_calls.append(1)
+    if rank == 1 and len(n_calls) == 2:
+        loss = loss + float('nan') * loss.detach()
+    return loss
+torch.nn.functional.smooth_l1_loss = nan_loss
+
+dist.init_process_group('gloo', init_method=f'file://{init_file}',
+                        rank=rank, world_size=2)
+token_dict_path = f'{folder}/token_dictionary.pkl'
+if rank == 0:
+    with open(token_dict_path, 'wb') as f:
+        pickle.dump({f't{i}': i for i in range(700)}, f)
+dist.barrier()
+try:
+    T.train(harness._args(folder, token_dict_path,
+                          {'meta': {'loss_fn_type': 'smooth_l1'}}),
+            train_dataset=harness._dataset(), save_folder_path=folder,
+            LOCAL_RANK=rank, WORLD_RANK=rank)
+except FloatingPointError as e:
+    print(str(e).split(' on at least')[0])
+"""
+
+
+def test_nonfinite_loss_on_one_rank_stops_all_ranks(tmp_path):
+    script = tmp_path / 'worker.py'
+    script.write_text(_TWO_RANK_WORKER)
+    (tmp_path / 'run').mkdir()
+    procs = [subprocess.Popen(
+        [sys.executable, str(script), str(rank), str(tmp_path / 'init'),
+         str(tmp_path / 'run'), os.path.dirname(__file__)],
+        stdout=subprocess.PIPE, text=True) for rank in range(2)]
+    try:
+        # Without a consistent decision, rank 0 waits at the next collective
+        outputs = [proc.communicate(timeout=120)[0] for proc in procs]
+    finally:
+        for proc in procs:
+            proc.kill()
+    assert [proc.returncode for proc in procs] == [0, 0]
+    # Both ranks stop at the same step (the loss is computed once per step)
+    for output in outputs:
+        assert output.strip().endswith(
+            'Non-finite loss or gradient norm at epoch 0, iteration 1')
