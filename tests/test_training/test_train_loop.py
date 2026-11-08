@@ -34,6 +34,10 @@ group.
   the last checkpoint. Training now stops before the step at the first
   non-finite loss or gradient norm on any rank, and never saves a non-finite
   model or optimizer state.
+* Resume: the checkpoint held no random number generator states, so a
+  resumed run drew the masks and DataLoader worker seeds of epoch 0 again.
+  Checkpoints now hold the states of every rank, and a run resumed from the
+  end of an epoch continues exactly like the uninterrupted run.
 """
 
 import copy
@@ -362,3 +366,63 @@ def test_nonfinite_state_is_not_saved(run_train, tmp_path, monkeypatch):
                        match='Non-finite model or optimizer state at epoch 0'):
         run_train()
     assert _saved_checkpoints(tmp_path) == []
+
+
+def _final_state(tmp_path):
+    return torch.load(tmp_path / 'run' / 'terra-latest.pth.tar',
+                      weights_only=False)
+
+
+def _same_training_state(a, b):
+    """Bit-identical models and optimizer state."""
+    tensors = []
+    for key in ('encoder', 'predictor', 'target_encoder'):
+        assert a[key].keys() == b[key].keys()
+        tensors += [(a[key][name], b[key][name]) for name in a[key]]
+    for state_a, state_b in zip(a['opt']['state'].values(),
+                                b['opt']['state'].values()):
+        tensors += [(state_a[name], state_b[name]) for name in state_a]
+    return all(torch.equal(x, y) for x, y in tensors)
+
+
+RESUME = {'state': {'load_checkpoint': True,
+                    'read_checkpoint': 'terra-ep0.pth.tar'}}
+
+
+def test_resumed_run_continues_the_uninterrupted_run(run_train, tmp_path):
+    run_train()
+    uninterrupted = _final_state(tmp_path)
+    rng_states = uninterrupted['rng_state']
+    assert len(rng_states) == 1
+    assert set(rng_states[0]) == {'python', 'numpy', 'torch', 'cuda'}
+
+    # Resume from the end of epoch 0: epoch 1 draws the same masks
+    result = run_train(**RESUME)
+    assert len(result['logged']) == ITERATIONS_PER_EPOCH
+    assert _same_training_state(_final_state(tmp_path), uninterrupted)
+
+
+def test_resume_from_checkpoint_without_rng_state_warns(run_train, tmp_path):
+    run_train()
+    uninterrupted = _final_state(tmp_path)
+    checkpoint = torch.load(tmp_path / 'run' / 'terra-ep0.pth.tar',
+                            weights_only=False)
+    del checkpoint['rng_state']
+    torch.save(checkpoint, tmp_path / 'run' / 'terra-old.pth.tar')
+
+    with pytest.warns(UserWarning, match='no random number generator'):
+        run_train(state={'load_checkpoint': True,
+                         'read_checkpoint': 'terra-old.pth.tar'})
+    # Same state after epoch 0, but different masks in epoch 1
+    assert not _same_training_state(_final_state(tmp_path), uninterrupted)
+
+
+def test_ranks_resuming_from_different_epochs_raise(
+        run_train, tmp_path, monkeypatch):
+    run_train()
+    # Another rank resumed from epoch 2
+    monkeypatch.setattr(T, '_all_gather_objects', lambda obj: (
+        [obj, (2, None)] if isinstance(obj, tuple) else [obj]))
+    with pytest.raises(RuntimeError, match='different epochs'):
+        run_train(**RESUME)
+

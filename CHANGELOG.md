@@ -168,6 +168,13 @@ and this project adheres to [Semantic Versioning][].
     the first non-finite loss or gradient norm, before the optimizer step
     (the loss was checked only after the step, on each GPU separately), and
     never saves a non-finite model or optimizer state over a checkpoint.
+-   Pretraining checkpoints hold the random number generator states of every
+    GPU, and a resumed run restores them, so it continues the random stream
+    (masks, segment counts, DataLoader worker seeds) of the interrupted run
+    instead of repeating that of epoch 0; resuming from the end of an epoch
+    gives the same training as an uninterrupted run, up to GPU
+    nondeterminism. Checkpoints without these states are still accepted,
+    with a warning. All GPUs must resume from the same epoch.
 -   Inference tokenizes cell-neighborhood models with the cell/neighborhood
     split recorded in their config. The tokenizer default changed in April
     2026.

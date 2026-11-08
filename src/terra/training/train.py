@@ -29,6 +29,8 @@ import datasets
 import numpy as np
 import pandas as pd
 import pickle
+import random
+import warnings
 import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
@@ -180,6 +182,80 @@ def _nonfinite_state_entries(state: dict,
         return []
     finite = torch.stack(finite).cpu()
     return [name for name, ok in zip(names, finite.tolist()) if not ok]
+
+
+def _rng_state(device: torch.device) -> dict:
+    """
+    State of the Python, NumPy, torch CPU and (on GPU) CUDA random number
+    generators of this process, in types that `torch.load` reads with
+    `weights_only=True`.
+    """
+    np_state = np.random.get_state(legacy=False)
+    return {
+        'python': random.getstate(),
+        'numpy': {'bit_generator': np_state['bit_generator'],
+                  'key': np_state['state']['key'].tolist(),
+                  'pos': int(np_state['state']['pos']),
+                  'has_gauss': int(np_state['has_gauss']),
+                  'gauss': float(np_state['gauss'])},
+        'torch': torch.get_rng_state(),
+        'cuda': (torch.cuda.get_rng_state(device)
+                 if device.type == 'cuda' else None),
+    }
+
+
+def _set_rng_state(state: dict, device: torch.device) -> None:
+    """Restore random number generator states saved by `_rng_state`."""
+    random.setstate(state['python'])
+    np_state = state['numpy']
+    np.random.set_state({
+        'bit_generator': np_state['bit_generator'],
+        'state': {'key': np.asarray(np_state['key'], dtype=np.uint32),
+                  'pos': np_state['pos']},
+        'has_gauss': np_state['has_gauss'],
+        'gauss': np_state['gauss']})
+    torch.set_rng_state(state['torch'].cpu())
+    if device.type == 'cuda' and state['cuda'] is not None:
+        torch.cuda.set_rng_state(state['cuda'].cpu(), device)
+
+
+def _load_rng_states(path: str) -> list | None:
+    """
+    Per-rank random number generator states of a training checkpoint, or
+    `None` (with a warning) for checkpoints saved without them. The
+    checkpoint is memory-mapped, so its weights are not read again.
+    """
+    try:
+        rng_states = torch.load(
+            path, map_location='cpu', mmap=True).get('rng_state')
+    except Exception as e:
+        logger.warning(
+            f"Could not read the random number generator states of "
+            f"checkpoint '{path}': {e}.")
+        return None
+    if rng_states is None:
+        warnings.warn(
+            f"Checkpoint '{path}' has no random number generator states "
+            "(saved by an earlier TERRA version). The resumed run draws its "
+            "masks and DataLoader worker seeds as from the start of a run "
+            "instead of continuing the random stream of the interrupted "
+            "run.", UserWarning, stacklevel=2)
+    return rng_states
+
+
+def _all_gather_objects(obj) -> list:
+    """
+    ``obj`` of every DDP rank, in rank order (a collective); ``[obj]``
+    without distributed training.
+    """
+    import torch.distributed as dist
+    if not (dist.is_available() and dist.is_initialized()):
+        return [obj]
+    if dist.get_world_size() == 1:
+        return [obj]
+    objs = [None] * dist.get_world_size()
+    dist.all_gather_object(objs, obj)
+    return objs
 
 
 os.environ["NCCL_ASYNC_ERROR_HANDLING"] = "1" # Better error propagation
@@ -1286,6 +1362,7 @@ def train(args: dict,
         f"momentum {end_values['ema_momentum']:.6f} (final {ema[1]}).")
 
     start_epoch = 0
+    rng_states = None
     # Load training checkpoint
     if load_model:
         encoder, predictor, target_encoder, optimizer, scaler, start_epoch, iter_number = load_checkpoint(
@@ -1302,6 +1379,20 @@ def train(args: dict,
             wd_scheduler.step()
             next(momentum_scheduler)
             #mask_collator.step()
+        # Every rank loads the same checkpoint; make sure they all resume
+        # from the same epoch
+        start_epochs = _all_gather_objects((start_epoch, iter_number))
+        if len(set(start_epochs)) > 1:
+            raise RuntimeError(
+                "The ranks resumed from different epochs (epoch, iteration "
+                f"checkpoint per rank: {start_epochs}).")
+        rng_states = _load_rng_states(load_path)
+        if rng_states is not None and len(rng_states) != world_size:
+            logger.warning(
+                f"The checkpoint holds the random number generator states "
+                f"of {len(rng_states)} ranks, but the run has {world_size}; "
+                "they are not restored.")
+            rng_states = None
 
     def save_checkpoint(epoch, iter_number=None):
         save_dict = {'encoder': encoder.state_dict(),
@@ -1315,7 +1406,10 @@ def train(args: dict,
                      'loss': _meter_average_over_ranks(loss_meter, device),
                      'batch_size': batch_size,
                      'world_size': world_size,
-                     'lr': lr}
+                     'lr': lr,
+                     # Random number generator states of every rank, so a
+                     # resumed run continues the random stream
+                     'rng_state': _all_gather_objects(_rng_state(device))}
         if iter_number is not None:
             save_dict['iter_number'] = iter_number
         # Never overwrite a checkpoint with a non-finite state (every rank
@@ -1360,6 +1454,14 @@ def train(args: dict,
     # don't need this dance.
     if hasattr(train, '_adv_range_logged'):
         train._adv_range_logged = False
+
+    # Continue the random streams of the checkpointed run (masks, segment
+    # counts, metatoken drops, DataLoader worker seeds), after the start-up
+    # seeding and the model initialization
+    if rng_states is not None:
+        _set_rng_state(rng_states[rank], device)
+        logger.info('Restored the random number generator states of the '
+                    'checkpoint.')
 
     # Run training loop
     for epoch in range(start_epoch, num_epochs):
