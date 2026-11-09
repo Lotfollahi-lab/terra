@@ -204,6 +204,14 @@ and this project adheres to [Semantic Versioning][].
     the matrix (sorted indices, duplicate entries summed), without modifying
     the input AnnData. Matrices already in canonical form, such as those
     returned by `harmonize_adata`, tokenize as before.
+-   `CellNeighborhoodTokenizer` with `aggregate_own_neighbors=True` and
+    `count_count_norm_method='shifted_log'` as its only normalization no
+    longer attaches neighborhood values to the wrong genes for counts that
+    are not float32 (e.g. integer counts), even in canonical form:
+    `construct_neighbor_graph` stores the aggregated neighborhood counts with
+    sorted indices. With `aggregate_own_neighbors=True` and
+    `stable_rank_ties=False`, tied neighborhood genes can come in a different
+    order.
 -   Finetuning rebuilds the pretrained model from its saved config, as
     inference does. Supervised finetuning of TERRA-96M previously dropped the
     value-MLP biases of the pretrained model, and TERRA-112M could not be

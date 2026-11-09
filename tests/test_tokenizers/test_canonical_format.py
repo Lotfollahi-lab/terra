@@ -12,6 +12,13 @@ row of a cell was longer than its count row (an ``IndexError``). Normalizations
 that keep duplicate entries (e.g. shifted-log of float32 counts) tokenized such
 a gene twice. The tokenizers now tokenize the canonical form of such a matrix
 (sorted indices, duplicates summed), without modifying the caller's AnnData.
+
+The neighborhood counts that the cell-neighborhood tokenizer aggregates (a
+sparse product of the connectivities and the counts) had unsorted indices even
+for canonical counts. With ``aggregate_own_neighbors`` (a CSR product; the
+default CSC product gets sorted indices when converted to CSR), shifted-log
+values of counts that are not float32 were thus attached to the wrong
+neighborhood genes. ``construct_neighbor_graph`` now sorts the indices.
 """
 
 import pickle
@@ -21,6 +28,7 @@ import numpy as np
 import pytest
 import scipy.sparse as sp
 
+from terra.preprocessors import construct_neighbor_graph
 from terra.tokenizers import CellGraphTokenizer, CellNeighborhoodTokenizer
 from terra.tokenizers.cell_tokenizers import _canonical_X
 
@@ -94,14 +102,14 @@ def _adata(x) -> ad.AnnData:
 
 
 def _tokenize(token_dictionary_file_path, tokenizer, count_count_norm_method,
-              adata=None, adata_file_path=None):
+              adata=None, adata_file_path=None, **tokenizer_kwargs):
     tk = tokenizer(
         model_input_size=MODEL_INPUT_SIZE, n_neighs=N_NEIGHS,
         token_dictionary_file_path=token_dictionary_file_path,
         include_special_tokens=False, rank_cell_norm_method=None,
         rank_gene_norm_method=None, rank_count_norm_method=None,
         count_cell_norm_method=None, count_gene_norm_method=None,
-        count_count_norm_method=count_count_norm_method)
+        count_count_norm_method=count_count_norm_method, **tokenizer_kwargs)
     adata_dict = tk._tokenize_adata(adata=adata,
                                     adata_file_path=adata_file_path)
     keys = ('gene_tokens_cell', 'gene_expr_cell', 'gene_tokens_neighborhood',
@@ -113,21 +121,34 @@ def _tokenize(token_dictionary_file_path, tokenizer, count_count_norm_method,
             np.stack([example['gene_expr'] for example in examples]))
 
 
-# Rank by raw counts (sparse ranking path); the cell-neighborhood tokenizer
-# has no PFlog1pPF
-NORMS = [(CellGraphTokenizer, 'shifted_log', np.int64),
-         (CellGraphTokenizer, 'shifted_log', np.float32),
-         (CellGraphTokenizer, 'pflog1ppf', np.int64),
-         (CellGraphTokenizer, 'pflog1ppf', np.float32),
-         (CellNeighborhoodTokenizer, 'shifted_log', np.int64),
-         (CellNeighborhoodTokenizer, 'shifted_log', np.float32)]
+# Rank by raw counts (sparse ranking path), with further tokenizer keyword
+# arguments; the cell-neighborhood tokenizer has no PFlog1pPF
+OWN_NEIGHBORS = {'aggregate_own_neighbors': True}
+NORMS = [(CellGraphTokenizer, 'shifted_log', np.int64, {}),
+         (CellGraphTokenizer, 'shifted_log', np.float32, {}),
+         (CellGraphTokenizer, 'pflog1ppf', np.int64, {}),
+         (CellGraphTokenizer, 'pflog1ppf', np.float32, {}),
+         (CellNeighborhoodTokenizer, 'shifted_log', np.int64, {}),
+         (CellNeighborhoodTokenizer, 'shifted_log', np.float32, {}),
+         (CellNeighborhoodTokenizer, 'shifted_log', np.int64, OWN_NEIGHBORS),
+         (CellNeighborhoodTokenizer, 'shifted_log', np.float32,
+          OWN_NEIGHBORS)]
+
+
+def _tokenizer_kwargs_id(value):
+    """Test id of the tokenizer keyword arguments in NORMS; `None` (pytest's
+    default id) for the other parameters."""
+    if isinstance(value, dict):
+        return '-'.join(value) or 'defaults'
 
 
 @pytest.mark.parametrize('layout', LAYOUTS)
-@pytest.mark.parametrize('tokenizer, count_count_norm_method, dtype', NORMS)
+@pytest.mark.parametrize(
+    'tokenizer, count_count_norm_method, dtype, tokenizer_kwargs', NORMS,
+    ids=_tokenizer_kwargs_id)
 def test_counts_tokenize_like_their_canonical_csr_form(
         token_dictionary_file_path, tokenizer, count_count_norm_method, dtype,
-        layout):
+        tokenizer_kwargs, layout):
     canonical = _counts(dtype)
     x = LAYOUTS[layout](canonical)
     if sp.issparse(x) and layout != 'csc':
@@ -136,10 +157,11 @@ def test_counts_tokenize_like_their_canonical_csr_form(
               if sp.issparse(x) else [x.copy()])
     adata = _adata(x)
     tokens, values = _tokenize(token_dictionary_file_path, tokenizer,
-                               count_count_norm_method, adata=adata)
+                               count_count_norm_method, adata=adata,
+                               **tokenizer_kwargs)
     expected_tokens, expected_values = _tokenize(
         token_dictionary_file_path, tokenizer, count_count_norm_method,
-        adata=_adata(canonical))
+        adata=_adata(canonical), **tokenizer_kwargs)
     np.testing.assert_array_equal(tokens, expected_tokens)
     np.testing.assert_array_equal(values, expected_values)
     # The caller's matrix is unchanged
@@ -179,3 +201,39 @@ def test_only_non_canonical_matrices_are_copied():
         assert not x.has_canonical_format
         for before, after in zip(stored, [x.data, x.indices, x.indptr]):
             np.testing.assert_array_equal(after, before)
+
+
+@pytest.mark.parametrize('dtype', [np.int64, np.float32, np.float64])
+@pytest.mark.parametrize('aggregate_own_neighbors', [False, True])
+def test_neighborhood_values_are_the_shifted_log_of_the_aggregated_counts(
+        token_dictionary_file_path, aggregate_own_neighbors, dtype):
+    counts = _counts(dtype)
+    tk = CellNeighborhoodTokenizer(
+        model_input_size=MODEL_INPUT_SIZE, n_neighs=N_NEIGHS,
+        token_dictionary_file_path=token_dictionary_file_path,
+        include_special_tokens=False, rank_cell_norm_method=None,
+        rank_gene_norm_method=None, rank_count_norm_method=None,
+        count_cell_norm_method=None, count_gene_norm_method=None,
+        count_count_norm_method='shifted_log',
+        aggregate_own_neighbors=aggregate_own_neighbors)
+    adata_dict = tk._tokenize_adata(adata=_adata(counts))
+    # Aggregated counts from the dense connectivities, independent of the
+    # storage order of the sparse product
+    connectivities = construct_neighbor_graph(
+        _adata(counts), n_neighs=tk.n_neighs, radius=tk.radius,
+        delaunay=tk.delaunay, include_self_loop=True,
+    ).obsp['spatial_connectivities'].toarray()
+    if not aggregate_own_neighbors:
+        connectivities = connectivities.T
+    for stream, x in (('cell', counts.toarray()),
+                      ('neighborhood', connectivities @ counts.toarray())):
+        for i in range(N_CELLS):
+            genes = np.asarray(adata_dict[f'gene_tokens_{stream}'][i]) - 2
+            # Every expressed gene, by descending count, with the shifted log
+            # of its own count
+            np.testing.assert_array_equal(np.sort(genes),
+                                          np.flatnonzero(x[i]))
+            assert np.all(np.diff(x[i, genes]) <= 0)
+            np.testing.assert_allclose(
+                adata_dict[f'gene_expr_{stream}'][i],
+                np.log1p(x[i, genes].astype(np.float32)), rtol=1e-6)
