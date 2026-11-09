@@ -42,8 +42,10 @@ group.
 
 import copy
 import importlib
+import math
 import os
 import pickle
+import re
 import subprocess
 import sys
 import types
@@ -335,6 +337,50 @@ def test_nonfinite_loss_stops_training_before_the_optimizer_step(
                        match='Non-finite loss or gradient norm at epoch 0, '
                              'iteration 0'):
         run_train(**EMPTY_CONTEXT)
+    assert _saved_checkpoints(tmp_path) == []
+
+
+@pytest.mark.parametrize('warmup', [1, 0])
+@pytest.mark.parametrize('module, parameter', [
+    ('encoder', 'backbone.norm.weight'),
+    ('predictor', 'backbone.predictor_proj.weight')])
+def test_nonfinite_gradient_norm_stops_training_before_the_optimizer_step(
+        run_train, tmp_path, monkeypatch, warmup, module, parameter):
+    # Finite loss, but a NaN gradient of one parameter at the second step.
+    # Warmup 1: global norm of the unclipped gradients; warmup 0: the second
+    # step is clipped, so the norm is the one clip_grad_norm_ returns
+    init_model = T.init_model
+    n_gradients = []
+
+    def nan_at_second_step(grad):
+        n_gradients.append(1)
+        return grad * float('nan') if len(n_gradients) == 2 else grad
+
+    def init_model_with_nan_gradient(**kwargs):
+        models = dict(zip(('encoder', 'predictor'), init_model(**kwargs)))
+        dict(models[module].named_parameters())[parameter].register_hook(
+            nan_at_second_step)
+        return models['encoder'], models['predictor']
+    monkeypatch.setattr(T, 'init_model', init_model_with_nan_gradient)
+
+    step = torch.optim.AdamW.step
+    n_steps = []
+
+    def counting_step(self, *args, **kwargs):
+        n_steps.append(1)
+        return step(self, *args, **kwargs)
+    monkeypatch.setattr(torch.optim.AdamW, 'step', counting_step)
+
+    with pytest.raises(FloatingPointError,
+                       match='Non-finite loss or gradient norm at epoch 0, '
+                             'iteration 1 ') as error:
+        run_train(optimization={'warmup': warmup})
+    message = str(error.value)
+    assert math.isfinite(float(
+        re.search(r'this rank: loss (\S+),', message).group(1)))
+    assert f'{module} nan' in message
+    # Only the optimizer step of the first iteration ran
+    assert len(n_steps) == 1
     assert _saved_checkpoints(tmp_path) == []
 
 
