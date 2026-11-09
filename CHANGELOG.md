@@ -195,6 +195,13 @@ and this project adheres to [Semantic Versioning][].
     the sparse path, e.g. for the TERRA-96M/112M data.
 -   Tokenizing with Pearson-residual ranks and shifted-log counts no longer
     fails with an `IndexError`.
+-   Tokenizing a sparse count matrix whose gene indices are not sorted within
+    each cell, or that stores a gene more than once in a cell, no longer
+    attaches values to the wrong genes (PFlog1pPF, and shifted-log of counts
+    that are not float32) or tokenizes a gene twice: the tokenizers use the
+    canonical form of the matrix (sorted indices, duplicate entries summed),
+    without modifying the input AnnData. Matrices already in canonical form,
+    such as those returned by `harmonize_adata`, tokenize as before.
 -   Finetuning rebuilds the pretrained model from its saved config, as
     inference does. Supervised finetuning of TERRA-96M previously dropped the
     value-MLP biases of the pretrained model, and TERRA-112M could not be

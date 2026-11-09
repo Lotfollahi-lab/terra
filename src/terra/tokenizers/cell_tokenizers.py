@@ -135,6 +135,40 @@ def _working_copy(adata: ad.AnnData) -> ad.AnnData:
         varp=dict(adata.varp))
 
 
+def _canonical_X(X: sp.csr_matrix | sp.csc_matrix | np.ndarray,
+                 ) -> sp.csr_matrix | sp.csc_matrix | np.ndarray:
+    """
+    Count matrix with sorted indices and no duplicate entries.
+
+    The sparse ranking paths read the rank and count values of a cell by
+    storage position, but normalizers that cast the counts to another dtype
+    (PFlog1pPF, shifted-log of counts that are not float32) return them with
+    sorted indices (scipy's `astype` sums duplicate entries, which sorts the
+    indices). Unsorted indices would thus attach values to the wrong genes,
+    and duplicate entries of a gene would be tokenized as separate genes.
+    A sparse matrix that is not in this canonical format is canonicalized in
+    a copy, so the caller's matrix is not modified. A canonical sparse matrix
+    and a dense array are returned as they are.
+
+    Parameters
+    ----------
+    X:
+        Count matrix (CSR, CSC or dense) to be tokenized.
+
+    Returns
+    ----------
+    X:
+        `X`, or a canonical copy of it.
+    """
+    if not sp.issparse(X) or X.has_canonical_format:
+        return X
+    logger.info('Sorting the indices and summing the duplicate entries of '
+                'the sparse adata.X.')
+    X = X.copy()
+    X.sum_duplicates()
+    return X
+
+
 class CellBaseTokenizer(ABC):
     """
     CellBaseTokenizer class.
@@ -835,6 +869,11 @@ class CellGraphTokenizer(CellBaseTokenizer):
                     'Specify either `adata` or `adata_file_path`, not both.')
             # The caller's AnnData is not modified
             adata = _working_copy(adata)
+
+        # Sorted indices and no duplicate entries in a sparse adata.X (the
+        # ranking paths read the values by storage position). adata is not
+        # the caller's AnnData here, and its matrix is copied if changed.
+        adata.X = _canonical_X(adata.X)
 
         logger.info('Filtering cells...')
         # Filter cells based on adata.obs['filter_pass']
@@ -1684,6 +1723,11 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
                     'Specify either `adata` or `adata_file_path`, not both.')
             # The caller's AnnData is not modified
             adata = _working_copy(adata)
+
+        # Sorted indices and no duplicate entries in a sparse adata.X (the
+        # ranking paths read the values by storage position). adata is not
+        # the caller's AnnData here, and its matrix is copied if changed.
+        adata.X = _canonical_X(adata.X)
 
         logger.info('Filtering cells.')
         # Filter to remove poor quality cells
