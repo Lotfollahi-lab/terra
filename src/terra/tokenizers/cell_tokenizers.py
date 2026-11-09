@@ -145,7 +145,9 @@ def _canonical_X(X: sp.csr_matrix | sp.csc_matrix | np.ndarray,
     (PFlog1pPF, shifted-log of counts that are not float32) return them with
     sorted indices (scipy's `astype` sums duplicate entries, which sorts the
     indices). Unsorted indices would thus attach values to the wrong genes,
-    and duplicate entries of a gene would be tokenized as separate genes.
+    and duplicate entries would make the rank row of a cell longer than its
+    count row (an `IndexError`), or be tokenized as separate genes if the
+    normalization keeps them.
     A sparse matrix that is not in this canonical format is canonicalized in
     a copy, so the caller's matrix is not modified. A canonical sparse matrix
     and a dense array are returned as they are.

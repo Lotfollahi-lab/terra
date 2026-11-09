@@ -7,10 +7,11 @@ position. PFlog1pPF, and shifted-log of counts that are not float32, cast the
 count layer with scipy's ``astype``, which sums duplicate entries and thereby
 sorts the indices, while the rank layer kept the stored order: with unsorted
 indices (e.g. after ``adata[:, genes]`` with the genes in another order) the
-values were attached to the wrong genes. Duplicate entries were tokenized as
-separate genes or misaligned the values. The tokenizers now tokenize the
-canonical form of such a matrix (sorted indices, duplicates summed), without
-modifying the caller's AnnData.
+values were attached to the wrong genes, and with duplicate entries the rank
+row of a cell was longer than its count row (an ``IndexError``). Normalizations
+that keep duplicate entries (e.g. shifted-log of float32 counts) tokenized such
+a gene twice. The tokenizers now tokenize the canonical form of such a matrix
+(sorted indices, duplicates summed), without modifying the caller's AnnData.
 """
 
 import pickle
