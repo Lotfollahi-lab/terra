@@ -57,6 +57,7 @@ from terra.masks.block_masking  import BlockMaskCollator
 from terra.masks.cell_masking import CellMaskCollator
 from terra.masks.utils import apply_masks, padding_key_masks
 from terra.models.utils import repeat_interleave_batch
+from terra.tokenizers.params import reconcile_tokenizer_params
 from terra.utils.distributed import init_distributed
 from terra.utils.schedulers import (ema_momentum_schedule,
                                     schedule_values_at_step)
@@ -326,6 +327,28 @@ def resolve_seed(args: dict) -> int:
     """
     seed = args.get('seed')
     return _GLOBAL_SEED if seed is None else int(seed)
+
+
+def _check_n_nonzero_lengths(length_lists: list,
+                             datasets_: list,
+                             file_path: str):
+    """
+    Raise when a precomputed n_nonzero_tokens list does not have one entry per
+    row of the training split it is used with: the sampler would pair lengths
+    with the wrong cells, drop cells or index past the split.
+    """
+    if len(length_lists) != len(datasets_):
+        raise ValueError(
+            f"The n_nonzero_tokens file '{file_path}' holds "
+            f"{len(length_lists)} lists, but there are {len(datasets_)} "
+            "training splits.")
+    for lengths, dataset in zip(length_lists, datasets_):
+        if len(lengths) != len(dataset):
+            raise ValueError(
+                f"The n_nonzero_tokens list '{file_path}' has {len(lengths)} "
+                f"entries, but the training split has {len(dataset)} cells, so "
+                "lengths would be paired with the wrong cells. Rebuild the "
+                "list from the split it is used with.")
 
 
 def train(args: dict,
@@ -772,6 +795,10 @@ def train(args: dict,
     # Opt-in: pad context/target masks to the longest cell in the batch
     # instead of trimming them to the shortest (see BlockMaskCollator)
     pad_masks_to_batch_max = args['mask'].get('pad_masks_to_batch_max', False)
+    # Opt-in: every cell with more than this many gene tokens keeps at least
+    # this many of them in the context (0: previous behaviour, where a cell
+    # with 1-2 gene tokens has all of them as targets)
+    min_context_genes = int(args['mask'].get('min_context_genes', 0))
 
     warmup = args['optimization']['warmup']
     num_epochs = args['optimization']['epochs']
@@ -832,11 +859,19 @@ def train(args: dict,
     use_profiler = args['state'].get('use_profiler', False)
 
     if 'precomputed_epoch_n_nonzero_tokens' in args['data'].keys():
-        with open(args['data']['precomputed_epoch_n_nonzero_tokens'], "rb") as f: 
+        with open(args['data']['precomputed_epoch_n_nonzero_tokens'], "rb") as f:
             epoch_n_nonzero_tokens = pickle.load(f)
+        _check_n_nonzero_lengths(
+            epoch_n_nonzero_tokens,
+            (train_dataset if isinstance(train_dataset, list)
+             else [train_dataset] * len(epoch_n_nonzero_tokens)),
+            args['data']['precomputed_epoch_n_nonzero_tokens'])
     elif args['data']['precomputed_n_nonzero_tokens']:
-        with open(args['data']['precomputed_n_nonzero_tokens'], "rb") as f: 
+        with open(args['data']['precomputed_n_nonzero_tokens'], "rb") as f:
             n_nonzero_tokens = pickle.load(f)
+        _check_n_nonzero_lengths(
+            [n_nonzero_tokens], [train_dataset],
+            args['data']['precomputed_n_nonzero_tokens'])
     else:
         n_nonzero_tokens = None
 
@@ -1039,6 +1074,11 @@ def train(args: dict,
             args['data'].get(_src_key)
             or args.get('paths', {}).get(_src_key))
 
+    # Check the config against the tokenizer settings recorded with the
+    # dataset and record them in it: inference tokenizes new data with the
+    # saved config's settings
+    reconcile_tokenizer_params(args['data'])
+
     # Store config file with model
     if rank==0:
         dump = os.path.join(save_folder_path, 'params.yaml')
@@ -1072,8 +1112,11 @@ def train(args: dict,
     latest_path = os.path.join(save_folder_path, f'{write_tag}-latest.pth.tar')
     load_path = None
     if load_model:
+        # read_checkpoint is a file in state.folder_path or, if that is not
+        # set, in the run folder (os.path.join(None, ...) raised a TypeError)
         load_path = os.path.join(
-            load_folder_path, r_file) if r_file is not None else latest_path
+            load_folder_path or save_folder_path,
+            r_file) if r_file is not None else latest_path
 
     # Initialize csv logger
     #if rank==0:
@@ -1153,6 +1196,22 @@ def train(args: dict,
             raise ValueError(
                 'mask.pad_masks_to_batch_max is not supported with: '
                 f'{", ".join(unsupported)}.')
+        # Without metatokens in the context (none configured, or padded), a
+        # cell whose gene tokens are all targets (1-2 gene tokens at ratio
+        # 0.6) has no valid context entry: its attention rows are fully
+        # masked, which gives NaN unless such rows are zeroed
+        # (mask.allow_empty_context: true skips this check, e.g. to test the
+        # non-finite stop)
+        if ((n_special_tokens == 0 or special_token_pad_ratio > 0)
+                and not zero_fully_masked_attention_rows
+                and not args['mask'].get('allow_empty_context', False)):
+            raise ValueError(
+                'mask.pad_masks_to_batch_max without metatokens in every '
+                'context (meta.special_tokens empty, or '
+                'mask.special_token_pad_ratio > 0) requires '
+                'meta.zero_fully_masked_attention_rows: true. Without it, a '
+                'cell with 1-2 gene tokens has no context entry, and the NaN '
+                'of its fully masked attention rows stops training.')
 
     # Initialize mask collator
     if block_masking:
@@ -1168,7 +1227,8 @@ def train(args: dict,
             sample_gene_masks=True,
             restrict_special_attention=restrict_special_attention,
             special_token_pad_ratio=special_token_pad_ratio,
-            pad_masks_to_batch_max=pad_masks_to_batch_max)
+            pad_masks_to_batch_max=pad_masks_to_batch_max,
+            min_context_genes=min_context_genes)
     elif cell_masking:
        mask_collator = CellMaskCollator(
             n_targets=n_targets,

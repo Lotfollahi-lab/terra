@@ -87,6 +87,25 @@ and this project adheres to [Semantic Versioning][].
     every attention path and whatever the SDPA kernel; all other rows are
     unchanged. Off by default; finetuning and inference read it from the
     model config.
+-   Safeguards for pretraining data (November 2026 pre-retraining review):
+    -   `terra.datasets.utils.save_precomputed_split` writes a precomputed
+        split together with the number of rows and the cell ids of evenly
+        spaced rows of its dataset; such a split is refused when applied to
+        another tokenization (e.g. after the corpus was re-tokenized and its
+        row order changed). Bare lists of row numbers are still accepted,
+        with a warning.
+    -   `tokenize_data` records the settings that determine the tokens
+        (normalizations, tie and neighbor options, normalization files) in
+        `terra_tokenizer_params.json` inside the saved dataset. Training
+        checks the model config against this record, raises on a mismatch
+        and adds the settings the config leaves out, so that inference
+        tokenizes new data as the training data were tokenized.
+    -   `mask.min_context_genes`: a cell with more gene tokens than this
+        keeps at least that many of them in the JEPA context (at mask ratio
+        0.6 a cell with one or two gene tokens otherwise has all of them as
+        targets). 0 by default (previous behaviour).
+    -   Tokenizer option `special_tokens`: only these special token values
+        are read (the others are stored as padding).
 
 ### Changed
 
@@ -164,6 +183,32 @@ and this project adheres to [Semantic Versioning][].
     Hugging Face Hub), and warns when a bundle has no gene mapping or no
     `gene_count_dictionary.pkl` (previously it silently looked the genes up
     in an Ensembl release or skipped the occurrence filter).
+-   Tokenizing a directory gives the same row order in every run: files are
+    tokenized in sorted path order, and in parallel mode their results are
+    assembled in that order instead of the order in which they finish.
+    Precomputed splits and `n_nonzero_tokens` lists refer to row numbers.
+    Existing tokenized datasets are not affected.
+-   Training raises instead of silently training on the wrong cells when:
+    -   a precomputed split (or per-epoch split) selects cells of
+        `data.test_batch_ids` / `data.val_batch_ids`. Remove the batches from
+        these lists if training is meant to include them (e.g. TERRA-112M),
+        or set `data.allow_heldout_in_split: true`;
+    -   a precomputed `n_nonzero_tokens` list does not have one entry per
+        cell of the training split;
+    -   `mask.pad_masks_to_batch_max` is used without metatokens in every
+        context (no special tokens, or `mask.special_token_pad_ratio` > 0)
+        and without `meta.zero_fully_masked_attention_rows`: a cell with one
+        or two gene tokens would have no context, and its NaN would stop
+        training.
+-   The launcher raises when `state.load_checkpoint` is set without
+    `state.folder_path` (every launch otherwise writes to a new timestamped
+    folder that holds no checkpoint), and logs the absolute run folder. A
+    `read_checkpoint` without `folder_path` is read from the run folder
+    (previously a `TypeError`).
+-   With `keep_special_tokens=True`, inference reads and checks only the
+    model's own special tokens: a model with an assay token keeps it on a
+    batch it was not trained on, and TERRA-112M needs only the dataset and
+    batch entries of `adata.uns`. Embeddings are unchanged.
 
 ### Fixed
 

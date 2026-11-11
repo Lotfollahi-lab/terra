@@ -43,7 +43,7 @@ from terra.utils.embedding import (create_binary_selection_mask,
                                        batch_rowwise_distances)
 from terra.utils.logging import CSVLogger
 from .harmonize import harmonize_adata
-from .tokenize import tokenize_adata
+from .tokenize import special_tokens_to_read, tokenize_adata
 from typing import Dict, List
 
 
@@ -62,6 +62,7 @@ SPECIAL_TOKEN_UNS_KEYS = ('dataset_id', 'batch', 'assay', 'species', 'tissue')
 
 def _check_special_token_metadata(adata: ad.AnnData,
                                   token_dict: dict,
+                                  special_tokens: list[str] | None = None,
                                   ) -> None:
     """
     Check that `adata` has the special token values the tokenizer reads.
@@ -69,9 +70,9 @@ def _check_special_token_metadata(adata: ad.AnnData,
     With ``include_special_tokens=True`` the tokenizer reads the batch from
     ``adata.uns['dataset_id']`` and ``adata.uns['batch']`` (token
     ``spv_<dataset_id>_<batch>``) and the assay, species and tissue from
-    ``adata.uns`` (tokens ``spv_<value>``). Their tokens exist only for values
-    seen in training: there is no metatoken for a batch the model was not
-    trained on.
+    ``adata.uns`` (tokens ``spv_<value>``), for the model's special tokens.
+    Their tokens exist only for values seen in training: there is no
+    metatoken for a batch the model was not trained on.
 
     Parameters
     -----------
@@ -79,26 +80,38 @@ def _check_special_token_metadata(adata: ad.AnnData,
         AnnData object to be tokenized with its special tokens.
     token_dict:
         Token dictionary of the model.
+    special_tokens:
+        The model's special tokens (``meta.special_tokens``); only their
+        values are checked. `None` checks all of them.
 
     Raises
     -----------
     ValueError:
         If a key is missing from ``adata.uns`` or a value has no token.
     """
-    missing = [key for key in SPECIAL_TOKEN_UNS_KEYS if key not in adata.uns]
+    uns_keys = {'batch': ('dataset_id', 'batch'), 'assay': ('assay',),
+                'species': ('species',), 'tissue': ('tissue',)}
+    if special_tokens is not None:
+        uns_keys = {name: keys for name, keys in uns_keys.items()
+                    if name in special_tokens}
+    required = [key for key in SPECIAL_TOKEN_UNS_KEYS
+                if any(key in keys for keys in uns_keys.values())]
+    missing = [key for key in required if key not in adata.uns]
     if missing:
         raise ValueError(
             "keep_special_tokens=True reads the special token values from "
             "adata.uns, which has no "
             f"{', '.join(repr(key) for key in missing)} (required: "
-            f"{', '.join(repr(key) for key in SPECIAL_TOKEN_UNS_KEYS)}; the "
+            f"{', '.join(repr(key) for key in required)}; the "
             "batch token is spv_<dataset_id>_<batch>). Set them to the values "
             "of the training data, or use keep_special_tokens=False.")
     tokens = {
-        'batch': f"spv_{adata.uns['dataset_id']}_{adata.uns['batch']}",
-        'assay': f"spv_{adata.uns['assay']}",
-        'species': f"spv_{adata.uns['species']}",
-        'tissue': f"spv_{adata.uns['tissue']}"}
+        'batch': lambda: f"spv_{adata.uns['dataset_id']}_{adata.uns['batch']}",
+        'assay': lambda: f"spv_{adata.uns['assay']}",
+        'species': lambda: f"spv_{adata.uns['species']}",
+        'tissue': lambda: f"spv_{adata.uns['tissue']}"}
+    tokens = {name: token() for name, token in tokens.items()
+              if name in uns_keys}
     unknown = [f'{name} ({token})' for name, token in tokens.items()
                if token not in token_dict]
     if unknown:
@@ -830,7 +843,9 @@ def harmonize_tokenize_embed_pipeline(
         keep_special_tokens and bool(model_config['meta']['special_tokens']))
     if include_special_tokens:
         with open(Path(model_folder_path) / 'token_dictionary.pkl', 'rb') as file:
-            _check_special_token_metadata(adata, pickle.load(file))
+            _check_special_token_metadata(
+                adata, pickle.load(file),
+                special_tokens=special_tokens_to_read(model_config))
     datasets = []
     if sample_key:
         logger.info(f"Harmonizing AnnData...")

@@ -45,8 +45,12 @@ def test_keep_without_special_token_columns(tiny):
 
 
 def test_pipeline_keep_names_missing_metadata(tiny, tmp_path):
+    # TERRA-112M's only special token is the batch: only its metadata is
+    # required
     bundle = tiny.bundle('112M')
-    with pytest.raises(ValueError, match="'dataset_id', 'batch', 'assay'"):
+    with pytest.raises(ValueError,
+                       match=r"no 'dataset_id', 'batch' \(required: "
+                             r"'dataset_id', 'batch';"):
         _pipeline(bundle, tiny.adata(), tmp_path,
                   keep_special_tokens=True)
 

@@ -109,3 +109,22 @@ def test_main_honours_wandb_mode(launcher_env, monkeypatch, mode):
     with pytest.raises(_WandbInitCalled):
         main.main()
     assert init_kwargs['mode'] == (mode or 'online')
+
+
+def test_main_refuses_to_resume_without_a_run_folder(launcher_env,
+                                                      monkeypatch):
+    # Without state.folder_path every launch writes to a new timestamped
+    # folder, which holds no checkpoint to resume from
+    main = launcher_env(LOCAL_RANK='0', RANK='0', WORLD_SIZE='1')
+
+    def init(**kwargs):
+        raise _WandbInitCalled
+    monkeypatch.setattr(main, 'wandb', types.SimpleNamespace(
+        init=init, Settings=lambda **kwargs: kwargs))
+    monkeypatch.setattr(
+        main, 'create_params_from_YAML_wandb_config',
+        lambda *args: {'state': {'load_checkpoint': True,
+                                 'folder_path': None}})
+    monkeypatch.setattr(sys, 'argv', ['main.py'])
+    with pytest.raises(ValueError, match='state.folder_path'):
+        main.main()

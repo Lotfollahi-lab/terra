@@ -56,6 +56,155 @@ def get_ensembl_ids(gene_names: list[str],
         response.raise_for_status()
 
 
+# Format tag of the precomputed split files written by `save_precomputed_split`
+PRECOMPUTED_SPLIT_FORMAT = 'terra_precomputed_split_v1'
+# Number of evenly spaced rows whose cell ids identify the split's dataset
+N_SPLIT_IDENTITY_ROWS = 1000
+
+
+def _batch_ids_from_cell_ids(cell_ids: np.ndarray) -> np.ndarray:
+    """Map cell ids '<part0>_<part1>_...' to batch ids '<part0>_<part1>'."""
+    p1 = np.char.partition(cell_ids, '_')
+    p2 = np.char.partition(p1[:, 2], '_')
+    return np.char.add(np.char.add(p1[:, 0], '_'), p2[:, 0])
+
+
+def _identity_positions(n_rows: int) -> list[int]:
+    if n_rows == 0:
+        return []
+    n = min(N_SPLIT_IDENTITY_ROWS, n_rows)
+    return sorted(set(
+        np.linspace(0, n_rows - 1, num=n, dtype=np.int64).tolist()))
+
+
+def _cell_ids_at(ds: datasets.Dataset, positions: list[int]) -> list[str]:
+    return list(ds.select_columns(['cell_id']).select(positions)['cell_id'])
+
+
+def save_precomputed_split(dataset: datasets.Dataset,
+                           indices: list,
+                           file_path: str):
+    """
+    Save row indices of a tokenized dataset as a precomputed split.
+
+    Besides the indices, the file records the dataset's number of rows and the
+    cell ids of evenly spaced rows, so that `prepare_dataset` refuses the split
+    when it is applied to another tokenization (e.g. after the corpus was
+    re-tokenized and its row order changed).
+
+    Parameters
+    ----------
+    dataset:
+        The tokenized dataset (with its `cell_id` column) the indices refer to.
+    indices:
+        Row indices of the split (`data.precomputed_split`), or one list of
+        row indices per epoch (`data.precomputed_epoch_splits`).
+    file_path:
+        Path of the pickle file to write.
+    """
+    positions = _identity_positions(len(dataset))
+    record = {
+        'format': PRECOMPUTED_SPLIT_FORMAT,
+        'n_rows': len(dataset),
+        'identity_positions': positions,
+        'identity_cell_ids': _cell_ids_at(dataset, positions),
+        'indices': indices,
+    }
+    with open(file_path, 'wb') as f:
+        pickle.dump(record, f)
+
+
+def load_precomputed_split(file_path: str, dataset: datasets.Dataset):
+    """
+    Load the row indices of a precomputed split for `dataset`.
+
+    Files written by `save_precomputed_split` are checked against the dataset
+    (number of rows and the recorded cell ids) and a mismatch raises. A bare
+    pickled list of row numbers (the legacy format) cannot be checked and is
+    used as it is, with a warning.
+
+    Parameters
+    ----------
+    file_path:
+        Path of the pickle file.
+    dataset:
+        The tokenized dataset the split is applied to, with its `cell_id`
+        column.
+
+    Returns
+    ----------
+    indices:
+        The row indices (or one list of row indices per epoch).
+    """
+    with open(file_path, 'rb') as f:
+        split = pickle.load(f)
+    if (isinstance(split, dict)
+            and split.get('format') == PRECOMPUTED_SPLIT_FORMAT):
+        if split['n_rows'] != len(dataset):
+            raise ValueError(
+                f"The precomputed split '{file_path}' was made for a dataset "
+                f"with {split['n_rows']} rows, but the dataset has "
+                f"{len(dataset)} rows. Rebuild the split from this dataset.")
+        if 'cell_id' in dataset.column_names:
+            cell_ids = _cell_ids_at(dataset, split['identity_positions'])
+            n_diff = sum(a != b for a, b in
+                         zip(cell_ids, split['identity_cell_ids']))
+            if n_diff:
+                raise ValueError(
+                    f"The precomputed split '{file_path}' was made for "
+                    f"another tokenization of the data: {n_diff} of "
+                    f"{len(cell_ids)} recorded rows hold other cells (e.g. "
+                    "the dataset was re-tokenized and its row order "
+                    "changed). Rebuild the split from this dataset.")
+        return split['indices']
+    logger.warning(
+        f"The precomputed split '{file_path}' is a bare list of row numbers, "
+        "which cannot be checked against the dataset: if the dataset was "
+        "re-tokenized since, its rows may hold other cells. Write splits with "
+        "terra.datasets.utils.save_precomputed_split to have them checked.")
+    return split
+
+
+def _check_split_excludes_heldout(args: dict,
+                                  ds: datasets.Dataset,
+                                  index_lists: list,
+                                  file_path: str,
+                                  chunk_size: int = 1_000_000):
+    """
+    Raise when a precomputed training split selects cells of the test or
+    validation batches (`data.test_batch_ids` / `data.val_batch_ids`).
+    """
+    heldout = (set(args['data'].get('test_batch_ids') or [])
+               | set(args['data'].get('val_batch_ids') or []))
+    if not heldout or args['data'].get('allow_heldout_in_split', False):
+        return
+    if 'cell_id' not in ds.column_names:
+        logger.warning(
+            f"Cannot check that the precomputed split '{file_path}' excludes "
+            "the test and validation batches: the dataset has no cell_id "
+            "column.")
+        return
+    heldout_arr = np.array(sorted(heldout), dtype='U')
+    ids = ds.select_columns(['cell_id'])
+    heldout_mask = np.zeros(len(ds), dtype=bool)
+    for start in range(0, len(ds), chunk_size):
+        stop = min(start + chunk_size, len(ds))
+        cell_ids = np.asarray(ids[start:stop]['cell_id'], dtype='U')
+        heldout_mask[start:stop] = np.isin(
+            _batch_ids_from_cell_ids(cell_ids), heldout_arr)
+    for idx in index_lists:
+        n_heldout = int(heldout_mask[np.asarray(idx, dtype=np.int64)].sum())
+        if n_heldout:
+            raise ValueError(
+                f"{n_heldout} of the {len(idx)} rows that the precomputed "
+                f"split '{file_path}' selects for training belong to test or "
+                "validation batches (data.test_batch_ids / "
+                "data.val_batch_ids). The split does not fit this dataset or "
+                "these batch lists: rebuild it from this dataset. If training "
+                "is meant to include these batches, remove them from the "
+                "batch lists or set data.allow_heldout_in_split: true.")
+
+
 def prepare_dataset(args: dict, train_mode: bool = False):
     data_path = args['data']['tokenized_data_folder_path']
     ds = load_from_disk(data_path)
@@ -81,8 +230,10 @@ def prepare_dataset(args: dict, train_mode: bool = False):
 
     # Early outs with precomputed splits
     if args['data'].get('precomputed_epoch_splits'):
-        with open(args['data']['precomputed_epoch_splits'], 'rb') as f:
-            epoch_indices = pickle.load(f)
+        file_path = args['data']['precomputed_epoch_splits']
+        epoch_indices = load_precomputed_split(file_path, ds)
+        if train_mode:
+            _check_split_excludes_heldout(args, ds, epoch_indices, file_path)
         splits = [ds.select(idx) for idx in epoch_indices]
         # Drop cell_id if training
         if train_mode and 'cell_id' in splits[0].column_names:
@@ -93,8 +244,10 @@ def prepare_dataset(args: dict, train_mode: bool = False):
             splits[i].set_format(type="torch", columns=cols, output_all_columns=False)
         return splits, None, None
     if args['data'].get('precomputed_split'):
-        with open(args['data']['precomputed_split'], 'rb') as f:
-            indices = pickle.load(f)
+        file_path = args['data']['precomputed_split']
+        indices = load_precomputed_split(file_path, ds)
+        if train_mode:
+            _check_split_excludes_heldout(args, ds, [indices], file_path)
         ds = ds.select(indices)
         # Drop cell_id if training
         if train_mode and 'cell_id' in ds.column_names:
@@ -119,12 +272,7 @@ def prepare_dataset(args: dict, train_mode: bool = False):
 
     # Vectorized batch_id extraction
     cell_ids = np.asarray(ds['cell_id'], dtype='U')  # zero-copy from Arrow buffers
-    p1 = np.char.partition(cell_ids, '_')
-    first = p1[:, 0]
-    rest = p1[:, 2]
-    p2 = np.char.partition(rest, '_')
-    second = p2[:, 0]
-    batch_ids = np.char.add(np.char.add(first, '_'), second)  # "<part0>_<part1>"
+    batch_ids = _batch_ids_from_cell_ids(cell_ids)  # "<part0>_<part1>"
 
     # Masks -> indices (single pass)
     test_mask = np.isin(batch_ids, np.fromiter(test_set, dtype=batch_ids.dtype)) if test_set else np.zeros(len(batch_ids), dtype=bool)

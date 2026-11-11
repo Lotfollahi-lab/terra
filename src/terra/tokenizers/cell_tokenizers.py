@@ -58,6 +58,7 @@ file to '.h5ad' format prior to initializing the cell tokenizer.
 
 from __future__ import annotations
 
+import collections
 import concurrent
 import logging
 import pickle
@@ -89,6 +90,7 @@ from ..preprocessors.normalizers import normalize_by_read_depth
 from ..preprocessors.normalizers import normalize_by_seurat
 from ..preprocessors.normalizers import normalize_by_shifted_log
 from ..preprocessors.normalizers import normalize_by_pflog1ppf
+from .params import write_tokenizer_params
 from .tokenize import (process_gene_expr, process_gene_tokens,
                        rank_gene_order, rank_gene_tokens)
 
@@ -99,6 +101,9 @@ warnings.filterwarnings('ignore', message=".*The 'nopython' keyword.*") # noqa
 base_path = Path(__file__).parent.parent.parent.parent
 norm_factor_file_path = base_path / 'norm_factors.csv'
 token_dictionary_file_path = base_path / 'token_dictionary.pkl'
+
+# Special tokens whose values the tokenizers store, in column order
+SPECIAL_TOKEN_NAMES = ('batch', 'gene_panel', 'assay', 'species', 'tissue')
 
 
 def _working_copy(adata: ad.AnnData) -> ad.AnnData:
@@ -191,6 +196,15 @@ class CellBaseTokenizer(ABC):
         If `True`, add neighbor cell IDs.
     include_special_tokens:
         If `True`, include special tokens.
+    special_tokens:
+        With `include_special_tokens`, the special tokens whose values are
+        read ('batch', 'gene_panel', 'assay', 'species', 'tissue'); the others
+        get 0, the padding value, and need no `adata.uns` entry. `None`
+        (default) reads all five, which needs `adata.uns['dataset_id']`,
+        `['batch']`, `['assay']`, `['species']` and `['tissue']`, all with
+        tokens in the token dictionary. Inference passes the model's
+        `meta.special_tokens`, so that e.g. an assay-only model can keep its
+        assay token on a batch it was not trained on.
     stable_rank_ties:
         If `True`, genes with tied ranking values (and, on the dense path
         without `rank_tie_break_norm_factor`, tied counts) are ordered by
@@ -300,6 +314,7 @@ class CellBaseTokenizer(ABC):
             token_dictionary_file_path: Path | str = token_dictionary_file_path,
             add_neigh_cell_ids: bool = False,
             include_special_tokens: bool = True,
+            special_tokens: list[str] | None = None,
             stream_per_file: bool = False,
             stable_rank_ties: bool = False,
             rank_tie_break_norm_factor: str | None = None,
@@ -328,6 +343,13 @@ class CellBaseTokenizer(ABC):
         self.token_dictionary_file_path = token_dictionary_file_path
         self.add_neigh_cell_ids = add_neigh_cell_ids
         self.include_special_tokens = include_special_tokens
+        if special_tokens is not None:
+            unknown = set(special_tokens) - set(SPECIAL_TOKEN_NAMES)
+            if unknown:
+                raise ValueError(
+                    f"Unknown special tokens {sorted(unknown)}; known: "
+                    f"{list(SPECIAL_TOKEN_NAMES)}.")
+        self.special_tokens = special_tokens
         self.stream_per_file = stream_per_file
         self.stable_rank_ties = stable_rank_ties
         self.rank_tie_break_norm_factor = rank_tie_break_norm_factor
@@ -528,6 +550,40 @@ class CellBaseTokenizer(ABC):
                 f's2(logsum)={self._pf_targets_cache[1]:.6f}.')
         return self._pf_targets_cache
 
+    def _special_token_values(self,
+                              adata: ad.AnnData,
+                              n_cells: int) -> dict:
+        """
+        Per-cell special token values of `adata` (special value embedding
+        indices, leaving space for <pad>, the zero count embedding and the
+        <cls> tokens). Special tokens not in `self.special_tokens` get 0, the
+        padding value, and are not looked up.
+        """
+        spv_dict = {
+            k: v for k, v in self.token_dict.items() if k.startswith('spv_')}
+        spv_start_idx = min(spv_dict.values())
+        spv_idx_subtract = spv_start_idx - 2 - self.max_cls_tokens
+        read = (SPECIAL_TOKEN_NAMES if self.special_tokens is None
+                else self.special_tokens)
+        values = {}
+        for name in SPECIAL_TOKEN_NAMES:
+            if name not in read:
+                value = 0
+            elif name == 'batch':
+                batch_id_key = (
+                    f"{adata.uns['dataset_id']}_{adata.uns['batch']}")
+                value = (self.token_dict[f'spv_{batch_id_key}']
+                         - spv_idx_subtract)
+            elif name == 'gene_panel':
+                value = self.token_dict.get(
+                    f'spv_gene_panel{len(adata.var_names)}',
+                    spv_idx_subtract) - spv_idx_subtract
+            else:
+                value = (self.token_dict[f'spv_{adata.uns[name]}']
+                         - spv_idx_subtract)
+            values[f'{name}_value'] = [value] * n_cells
+        return values
+
     def tokenize_data(self,
                       input_directory: Path | str,
                       output_directory: Path | str,
@@ -590,6 +646,9 @@ class CellBaseTokenizer(ABC):
             (Path(output_directory) / output_file_prefix).with_suffix(
                 '.dataset'))
         tokenized_dataset.save_to_disk(output_path, num_shards=num_shards)
+        # Record the settings that determine the tokens with the dataset;
+        # train() checks them against the model config
+        write_tokenizer_params(self, output_path)
         logger.info(f"Tokenized dataset saved to '{output_path}'.")
 
     def _create_dataset(self,
@@ -674,8 +733,8 @@ class CellBaseTokenizer(ABC):
         dataset_dict = {}
 
         # Accumulate every file's per-cell lists into a single dict (legacy
-        # behaviour). Order matches _iter_file_dicts (glob order for
-        # sequential, completion order for parallel).
+        # behaviour). Order matches _iter_file_dicts (sorted file paths in
+        # both processing modes).
         for file_dataset_dict in self._iter_file_dicts(
                 data_directory, file_format):
             for k in file_dataset_dict.keys():
@@ -696,30 +755,36 @@ class CellBaseTokenizer(ABC):
         (`tokenize_data` when `stream_per_file=True`).
         """
         data_directory = Path(data_directory)
-        file_found = 0
+        # Sorted, so that the row order of the tokenized dataset does not
+        # depend on the file system's listing order: precomputed splits and
+        # n_nonzero_tokens lists refer to row numbers
+        file_paths = sorted(data_directory.glob(f'**/*.{file_format}'))
         tokenize_file_fn = self._tokenize_adata
 
         # Loop through data directory to tokenize `.h5ad` files
         if self.processing_mode == 'sequential':
             logger.info('Tokenizing files sequentially...')
-            for file_path in data_directory.glob(f'**/*.{file_format}'):
-                file_found = 1
+            for file_path in file_paths:
                 logger.info(f"Tokenizing '{file_path}'...")
                 yield tokenize_file_fn(file_path)
         elif self.processing_mode == 'parallel':
             logger.info('Tokenizing files in parallel...')
+            # Results are yielded in file order, not in completion order, so
+            # every run gives the same row order; at most 2 * nproc files are
+            # in flight, which bounds the memory held by finished files
             with concurrent.futures.ProcessPoolExecutor(
             max_workers=self.nproc) as executor:
-                futures = []
-                for file_path in data_directory.glob(f'**/*.{file_format}'):
-                    file_found = 1
+                pending = collections.deque()
+                for file_path in file_paths:
                     logger.info(f"Tokenizing '{file_path}'...")
-                    futures.append(
+                    pending.append(
                         executor.submit(tokenize_file_fn, file_path))
-                for future in concurrent.futures.as_completed(futures):
-                    yield future.result()
+                    if len(pending) >= 2 * self.nproc:
+                        yield pending.popleft().result()
+                while pending:
+                    yield pending.popleft().result()
 
-        if file_found == 0:
+        if not file_paths:
             logger.error(
                 f"No '.{file_format}' files found in directory "
                 f"'{data_directory}'.")
@@ -1447,23 +1512,7 @@ class CellGraphTokenizer(CellBaseTokenizer):
         # Leave space for <pad>, (optional) zero count embedding, and
         # <cls> tokens
         if self.include_special_tokens:
-            batch_id_key = f"{adata.uns['dataset_id']}_{adata.uns['batch']}"
-            spv_dict = {
-                k: v for k, v in self.token_dict.items() if k.startswith('spv_')}
-            spv_start_idx = min(spv_dict.values())
-            spv_idx_subtract = spv_start_idx - 2 - self.max_cls_tokens
-            adata_dict['batch_value'] = [
-                self.token_dict[f'spv_{batch_id_key}'] - spv_idx_subtract] * n_cells
-            adata_dict['gene_panel_value'] = [self.token_dict.get(
-                f'spv_gene_panel{len(adata.var_names)}', spv_idx_subtract)
-                - spv_idx_subtract] * n_cells
-            adata_dict['assay_value'] = [
-                self.token_dict[
-                    f'spv_{adata.uns["assay"]}'] - spv_idx_subtract] * n_cells
-            adata_dict['species_value'] = [self.token_dict[
-                f'spv_{adata.uns["species"]}'] - spv_idx_subtract] * n_cells
-            adata_dict['tissue_value'] = [self.token_dict[
-                f'spv_{adata.uns["tissue"]}'] - spv_idx_subtract] * n_cells
+            adata_dict.update(self._special_token_values(adata, n_cells))
 
         return adata_dict
             
@@ -2201,24 +2250,7 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
         # Store values with right embedding index for count tokenizer
         # Leave space for <pad>, <mask> and <cls> tokens
         if self.include_special_tokens:
-            batch_id_key = f"{adata.uns['dataset_id']}_{adata.uns['batch']}"
-            spv_dict = {
-                k: v for k, v in self.token_dict.items() if k.startswith('spv_')}
-            spv_start_idx = min(spv_dict.values())
-            spv_idx_subtract = (spv_start_idx - 2 - self.max_cls_tokens)
-
-            adata_dict['batch_value'] = [
-                self.token_dict[f'spv_{batch_id_key}'] - spv_idx_subtract] * n_cells
-            adata_dict['gene_panel_value'] = [self.token_dict.get(
-                f'spv_gene_panel{len(adata.var_names)}', spv_idx_subtract)
-                - spv_idx_subtract] * n_cells
-            adata_dict['assay_value'] = [
-                self.token_dict[
-                    f'spv_{adata.uns["assay"]}'] - spv_idx_subtract] * n_cells
-            adata_dict['species_value'] = [self.token_dict[
-                f'spv_{adata.uns["species"]}'] - spv_idx_subtract] * n_cells
-            adata_dict['tissue_value'] = [self.token_dict[
-                f'spv_{adata.uns["tissue"]}'] - spv_idx_subtract] * n_cells
+            adata_dict.update(self._special_token_values(adata, n_cells))
 
         return adata_dict
             

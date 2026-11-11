@@ -55,6 +55,21 @@ TOKENIZER_CONFIG_KEYS = (
 )
 
 
+def special_tokens_to_read(model_config: dict) -> list[str] | None:
+    """
+    The special tokens whose values inference reads for a model: its
+    `meta.special_tokens`, or all of them (None) when an enabled
+    special-token correction mechanism (AdaLN, adversarial classifier, ...)
+    may read other values.
+    """
+    correction = (model_config.get('special_token_correction')
+                  or model_config.get('batch_correction') or {})
+    if any(isinstance(block, dict) and block.get('enabled', False)
+           for block in correction.values()):
+        return None
+    return list(model_config['meta'].get('special_tokens') or [])
+
+
 def _normalization_file(model_folder_path: Path | str,
                         model_config: dict,
                         config_key: str,
@@ -197,6 +212,11 @@ def tokenize_adata(adata: ad.AnnData,
     logger.info('STEP 2: TOKENIZING ANNDATA OBJECT...')
     # Tokenize adata
     tokenizer_kwargs = {}
+    if include_special_tokens:
+        # Read only the special tokens the model uses, so that e.g. an
+        # assay-only model can keep its assay token on a new batch
+        tokenizer_kwargs['special_tokens'] = special_tokens_to_read(
+            model_config)
     if model_config['data']['tokenizer_type'] == 'cell_neigh':
         Tokenizer = cell_tokenizers.CellNeighborhoodTokenizer
         # Split the input between index cell and neighborhood as in the

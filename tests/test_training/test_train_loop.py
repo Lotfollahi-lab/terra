@@ -316,12 +316,15 @@ def test_cycle_consistency_checks_rank_labels_against_token_dictionary(
 # Batches in dataset order with two one-gene cells each, no metatoken and
 # masks padded to the longest cell: with mask ratio 0.6 the one gene of these
 # cells is a target, so their context is only padding (fully masked
-# attention rows in the context encoder)
+# attention rows in the context encoder). train() refuses this setting
+# without meta.zero_fully_masked_attention_rows unless
+# mask.allow_empty_context is set, as here, to reach the non-finite stop
 EMPTY_CONTEXT = dict(
     dataset=_dataset(one_gene_cells=range(0, N_CELLS, 4)),
     data={'use_sampler': False},
     meta={'special_tokens': [], 'use_flash_attention': False},
-    mask={'sample_segments': False, 'pad_masks_to_batch_max': True})
+    mask={'sample_segments': False, 'pad_masks_to_batch_max': True,
+          'allow_empty_context': True})
 
 
 def _saved_checkpoints(tmp_path):
@@ -555,3 +558,46 @@ def test_dataloader_gets_the_start_method(run_train, monkeypatch):
         run_train(data={'num_workers': 3})
     assert captured['num_workers'] == 3
     assert captured['multiprocessing_context'] == 'method for 3'
+
+
+@pytest.mark.parametrize('overrides', [
+    # No metatoken: a one-gene cell has no context entry
+    {},
+    # Metatokens padded in some batches
+    {'meta': {'special_tokens': ['batch'], 'use_flash_attention': False},
+     'mask': {'special_token_pad_ratio': 0.5}},
+])
+def test_padded_masks_without_metatokens_need_the_attention_guard(
+        run_train, overrides):
+    config = copy.deepcopy(EMPTY_CONTEXT)
+    del config['mask']['allow_empty_context']
+    for section, values in overrides.items():
+        config[section].update(values)
+    with pytest.raises(ValueError, match='zero_fully_masked_attention_rows'):
+        run_train(**config)
+
+
+def test_n_nonzero_list_must_match_the_training_split(run_train, tmp_path):
+    # A list made for another split would pair lengths with the wrong cells
+    path = tmp_path / 'n_nonzero_tokens.pkl'
+    with open(path, 'wb') as f:
+        pickle.dump([8, 8, 8], f)
+    with pytest.raises(ValueError, match='n_nonzero_tokens list'):
+        run_train(data={'precomputed_n_nonzero_tokens': str(path)})
+
+
+def test_train_records_the_reconciled_tokenizer_settings(run_train, tmp_path,
+                                                         monkeypatch):
+    # The settings recorded with the dataset reach the saved model config,
+    # which inference tokenizes new data with
+    calls = []
+
+    def reconcile(data_config):
+        calls.append(data_config)
+        data_config['stable_rank_ties'] = True
+    monkeypatch.setattr(T, 'reconcile_tokenizer_params', reconcile)
+    run_train(optimization={'epochs': 1})
+    assert len(calls) == 1
+    import yaml
+    with open(tmp_path / 'run' / 'params.yaml') as f:
+        assert yaml.safe_load(f)['data']['stable_rank_ties'] is True

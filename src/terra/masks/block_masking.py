@@ -53,6 +53,12 @@ class BlockMaskCollator:
         ``'masks_enc_valid'`` / ``'masks_pred_valid'`` (shape
         ``[n_masks, B, L]``) that the training loop applies as attention key
         masks and to the loss.
+    min_context_genes:
+        If > 0, a cell with more than `min_context_genes` gene tokens keeps at
+        least that many of them in the context (fewer targets than the mask
+        ratio gives, if needed). With 0 (default), the number of targets is
+        ceil(ratio * K) for K gene tokens, so a cell with 1-2 gene tokens has
+        all of them as targets and, with padded metatokens, no context.
     """
     def __init__(self,
                  n_targets: int,
@@ -67,7 +73,8 @@ class BlockMaskCollator:
                  special_token_pad_ratio: float = 0.,
                  sample_gene_masks: bool = True,
                  restrict_special_attention: bool = False,
-                 pad_masks_to_batch_max: bool = False):
+                 pad_masks_to_batch_max: bool = False,
+                 min_context_genes: int = 0):
         self.n_targets = n_targets
         self.n_contexts = n_contexts
         self.n_segments = n_segments
@@ -82,6 +89,7 @@ class BlockMaskCollator:
         self.cell_segment_sampling_ratio = cell_segment_sampling_ratio
         self.special_token_pad_ratio = special_token_pad_ratio
         self.pad_masks_to_batch_max = pad_masks_to_batch_max
+        self.min_context_genes = min_context_genes
 
     @staticmethod
     def _pad_masks(mask_list: list[list[torch.Tensor]],
@@ -161,6 +169,12 @@ class BlockMaskCollator:
         context_keep = torch.zeros(L, dtype=torch.bool)
         context_keep[nz] = True
 
+        # Targets left before fewer than min_context_genes gene tokens would
+        # stay in the context (opt-in; cells with K <= min_context_genes are
+        # masked as before)
+        target_budget = (K - self.min_context_genes
+                         if 0 < self.min_context_genes < K else K)
+
         target_masks: list[torch.Tensor] = []
         for b in blocks:
             block_size = b.numel()
@@ -169,7 +183,8 @@ class BlockMaskCollator:
                 continue
             num_to_mask = min(
                 int((block_size * mask_ratio) + 0.9999),
-                block_size) # ceil
+                block_size, target_budget) # ceil
+            target_budget -= num_to_mask
             if num_to_mask == 0:
                 target_masks.append(torch.empty(0, dtype=torch.long))
                 continue

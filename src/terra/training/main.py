@@ -121,6 +121,14 @@ def main():
         logger)
     logger.info(f'Called with params from {args.fname}.')
     logger.info(f'Params: {params}.')
+    # Resuming needs the run's folder: without state.folder_path every launch
+    # writes to a new timestamped folder, which holds no checkpoint
+    state = params.get('state') or {}
+    if state.get('load_checkpoint') and not state.get('folder_path'):
+        raise ValueError(
+            "state.load_checkpoint is set, but state.folder_path is not. Set "
+            "state.folder_path to the folder of the run to resume: without "
+            "it, every launch writes to a new timestamped folder.")
     if WORLD_RANK==0:
         # WANDB_MODE (e.g. 'offline' or 'disabled') is honoured; init
         # arguments override the environment, so it is passed on here
@@ -131,7 +139,10 @@ def main():
             resume="allow",
             group="multi_node_training",
             mode=os.environ.get('WANDB_MODE', 'online'))
-        artifact_folder_path = '../terra-reproducibility/artifacts'
+        # Relative to the working directory of the launch (state.folder_path
+        # sets the run folder explicitly)
+        artifact_folder_path = os.path.abspath(
+            '../terra-reproducibility/artifacts')
         current_timestamp = (
             datetime.now().strftime("%d%m%Y_%H%M%S") +
             f"_{datetime.now().microsecond // 1000:03d}")
@@ -144,6 +155,7 @@ def main():
                                        current_timestamp)
         else:
             folder_path = params['state']['folder_path']
+        logger.info(f'Run folder: {os.path.abspath(folder_path)}.')
     else:
         folder_path=None
 
