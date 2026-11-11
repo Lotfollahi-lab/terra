@@ -102,3 +102,40 @@ def test_epoch_splits_are_checked(tmp_path):
                  test_batch_ids=['1_batch1'])
     with pytest.raises(ValueError, match='1 of the 2 rows'):
         prepare_dataset(args, train_mode=True)
+
+
+def test_split_recording_its_excluded_batches_is_not_scanned(tmp_path,
+                                                             monkeypatch):
+    # The training split of split_dataset.py records the held-out batches it
+    # excludes; training then skips the scan of every cell id
+    ds = _dataset()
+    ds.save_to_disk(tmp_path / 'ds')
+    train_rows = [i for i, c in enumerate(CELL_IDS)
+                  if not c.startswith('1_batch1_')]
+    save_precomputed_split(ds, train_rows, tmp_path / 'split.pkl',
+                           excluded_batch_ids=['1_batch1', '2_batch2'])
+    import terra.datasets.utils as U
+
+    def no_scan(*args, **kwargs):
+        raise AssertionError('scanned')
+    monkeypatch.setattr(U, '_heldout_row_mask', no_scan)
+    args = _args(tmp_path / 'ds', precomputed_split=str(tmp_path / 'split.pkl'),
+                 test_batch_ids=['1_batch1'])
+    assert len(prepare_dataset(args, train_mode=True)[0]) == 20
+    # Batches the record does not list are scanned
+    args['data']['val_batch_ids'] = ['2_batch0']
+    with pytest.raises(AssertionError, match='scanned'):
+        prepare_dataset(args, train_mode=True)
+
+
+def test_vectorized_heldout_scan_matches_the_batch_id_rule():
+    from terra.datasets.utils import _heldout_row_mask
+    cell_ids = CELL_IDS + ['1_batch10_0', '1_batch1', 'x-1_batch1_0', 'nobatch']
+    ds = _dataset(cell_ids)
+    heldout = {'1_batch1', 'x-1_batch1'}
+    fast = _heldout_row_mask(ds, heldout)                     # Arrow column
+    slow = _heldout_row_mask(ds.select(range(len(ds))), heldout)  # indices
+    assert fast.tolist() == slow.tolist()
+    assert [c for c, m in zip(cell_ids, fast) if m] == [
+        '1_batch1_0', '1_batch1_1', '1_batch1_2', '1_batch1_3', '1_batch1',
+        'x-1_batch1_0']

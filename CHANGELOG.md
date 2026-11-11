@@ -93,7 +93,10 @@ and this project adheres to [Semantic Versioning][].
         spaced rows of its dataset; such a split is refused when applied to
         another tokenization (e.g. after the corpus was re-tokenized and its
         row order changed). Bare lists of row numbers are still accepted,
-        with a warning.
+        with a warning. A split saved with `excluded_batch_ids` (as
+        terra-reproducibility's `split_dataset.py` does for the training
+        split) is not scanned for held-out cells at start-up; other splits
+        are checked with one vectorized pass over the cell ids.
     -   `tokenize_data` records the settings that determine the tokens
         (normalizations, tie and neighbor options, normalization files) in
         `terra_tokenizer_params.json` inside the saved dataset. Training
