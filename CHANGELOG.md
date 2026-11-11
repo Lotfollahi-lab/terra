@@ -212,6 +212,12 @@ and this project adheres to [Semantic Versioning][].
 
 ### Fixed
 
+-   Mixed wildcard and specific-cell requests in `perturb_dataset` now apply
+    all eligible rows in their original order, including neighborhood edits;
+    wildcard rows were silently skipped while flags/filtering still included
+    their targets. Mixed requests support final per-segment position packing,
+    and neighbor IDs are required only for specific-neighbor edits. Existing
+    standalone-scope behavior and pre-edit eligibility masks are preserved.
 -   A checkpoint that cannot be loaded now raises an error instead of
     silently leaving the model randomly initialized (training, finetuning and
     inference). For training, `state.allow_checkpoint_load_failure: true`

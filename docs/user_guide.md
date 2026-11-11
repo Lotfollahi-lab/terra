@@ -219,7 +219,29 @@ emb = embed_dataset(perturbed, model_folder_path=model_dir)
 # Compare emb["cell_emb"] / emb["neighborhood_emb"] against the unperturbed run.
 ```
 
-Pass `return_only_perturbed_cells=True` to get back just the edited cells. See
+Wildcard and specific-cell rows can be mixed. For example, halve one gene in
+every cell, then double it again in cell A:
+
+```python
+perturb_df = pd.DataFrame([
+    {"perturbed_cell_id": "all", "perturbed_ensembl_id": "ENSG00000136997",
+     "perturbation_target": "cell", "perturbation_type": "foldchange", "foldchange": 0.5},
+    {"perturbed_cell_id": "A", "perturbed_ensembl_id": "ENSG00000136997",
+     "perturbation_target": "cell", "perturbation_type": "foldchange", "foldchange": 2.0},
+])
+perturbed = perturb_dataset(dataset, perturb_df, model_folder_path=model_dir)
+```
+
+Replace `"A"` with an actual `cell_id` and use a gene from the model vocabulary.
+Mixed requests follow DataFrame row order, including repeated rows. With
+`adjust_positions=True`, they pack token/value pairs within each fixed cell or
+neighbor segment after all edits; neighbor IDs stay unchanged. Specific-cell
+`neighborhood` rows require `add_neigh_cell_ids=True`; wildcard neighborhood
+rows do not. Optional `pert_flag_idx_i` flags describe eligibility in the
+original dataset, so later rows can remain flagged after an earlier knockout.
+Filtering uses the union of these pre-edit masks.
+
+Pass `return_only_perturbed_cells=True` to get back just the eligible cells. See
 the {doc}`tutorials` (downstream analysis) for a worked before/after comparison.
 
 ## Citation
