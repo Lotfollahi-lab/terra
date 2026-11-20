@@ -349,6 +349,49 @@ def test_zero_expr_from_raw_counts_excludes_zero_count_genes(
         assert np.all(tokens[:len(kept)] != 0)
 
 
+@pytest.mark.parametrize('tokenizer', [CellGraphTokenizer,
+                                       CellNeighborhoodTokenizer])
+@pytest.mark.parametrize('stable_rank_ties', [False, True])
+@pytest.mark.parametrize('rank', RESIDUAL_RANKS)
+def test_zero_expr_from_raw_counts_keeps_the_rank_order(
+        token_dictionary_file_path, tokenizer, stable_rank_ties, rank):
+    # ~52 expressed genes per cell: more than the 40 stored tokens of the
+    # cell graph tokenizer, and more than the 16 elements up to which numpy's
+    # default sort happens to be stable
+    adata = _make_adata(lam=2.0)
+    norm_kwargs = dict(rank_cell_norm_method=None, rank_gene_norm_method=None,
+                       rank_count_norm_method=None,
+                       count_cell_norm_method=None,
+                       count_gene_norm_method=None,
+                       count_count_norm_method='shifted_log')
+    norm_kwargs.update(RESIDUAL_RANKS[rank])
+    tokens = {}
+    for zero_expr_from_raw_counts in (False, True):
+        tk = tokenizer(
+            # Reference: the ranking of every gene of the panel
+            model_input_size=(MODEL_INPUT_SIZE if zero_expr_from_raw_counts
+                              else N_GENES * (N_NEIGHS + 1)),
+            n_neighs=N_NEIGHS,
+            token_dictionary_file_path=token_dictionary_file_path,
+            include_special_tokens=False, stable_rank_ties=stable_rank_ties,
+            zero_expr_from_raw_counts=zero_expr_from_raw_counts,
+            include_zero_expr_genes=not zero_expr_from_raw_counts,
+            **norm_kwargs)
+        # Both through the dense (lexsort) path
+        tk.rank_differs_from_count = True
+        tokens[zero_expr_from_raw_counts] = tk._tokenize_adata(
+            adata=adata)['gene_tokens_cell']
+    token_counts = _token_counts(adata)
+    for i, (ranking, cell_tokens) in enumerate(zip(tokens[False],
+                                                   tokens[True])):
+        # The expressed genes in the order of the ranking of all genes
+        expected = [t for t in ranking if token_counts[i][t] > 0]
+        cell_tokens = np.asarray(cell_tokens)
+        kept = cell_tokens[cell_tokens != 0]
+        assert len(kept) == min(len(expected), len(cell_tokens))
+        np.testing.assert_array_equal(kept, expected[:len(kept)])
+
+
 def test_n_nonzero_tokens_counts_expressed_genes_on_dense_path(
         token_dictionary_file_path):
     # Same data through the sparse and the dense path: n_nonzero_tokens must

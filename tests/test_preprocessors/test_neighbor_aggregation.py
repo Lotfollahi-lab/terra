@@ -9,6 +9,7 @@ own neighbors (``C @ X``).
 
 import anndata as ad
 import numpy as np
+import pytest
 import scipy.sparse as sp
 
 from terra.preprocessors import construct_neighbor_graph
@@ -43,3 +44,23 @@ def test_aggregate_own_neighbors():
     # Every cell aggregates itself and its 2 nearest neighbors
     np.testing.assert_array_equal(x_neigh.sum(axis=1), np.full(5, 3))
     np.testing.assert_array_equal(x_neigh[4], [0, 0, 1, 1, 1])
+
+
+@pytest.mark.parametrize('aggregate_own_neighbors', [False, True])
+def test_aggregated_counts_have_sorted_indices(aggregate_own_neighbors):
+    # The sparse product leaves the indices unsorted, but the sparse ranking
+    # paths of the tokenizers read the values of a cell by storage position
+    rng = np.random.default_rng(0)
+    counts = rng.poisson(1.0, (40, 60))
+    adata = construct_neighbor_graph(
+        ad.AnnData(X=sp.csr_matrix(counts),
+                   obsm={'spatial': rng.uniform(0, 100, (40, 2))}),
+        n_neighs=4, delaunay=False, include_self_loop=True,
+        compute_neighbor_counts=True,
+        aggregate_own_neighbors=aggregate_own_neighbors)
+    conn = adata.obsp['spatial_connectivities'].toarray()
+    x_neigh = adata.layers['X_neighborhood']
+    assert x_neigh.has_canonical_format
+    np.testing.assert_array_equal(
+        x_neigh.toarray(),
+        (conn if aggregate_own_neighbors else conn.T) @ counts)

@@ -42,8 +42,10 @@ group.
 
 import copy
 import importlib
+import math
 import os
 import pickle
+import re
 import subprocess
 import sys
 import types
@@ -51,6 +53,7 @@ import types
 import pytest
 import torch
 import torch.distributed as dist
+import torch.nn.functional as F
 from datasets import Dataset
 from torch.nn.parallel import DistributedDataParallel
 
@@ -341,6 +344,50 @@ def test_nonfinite_loss_stops_training_before_the_optimizer_step(
     assert _saved_checkpoints(tmp_path) == []
 
 
+@pytest.mark.parametrize('warmup', [1, 0])
+@pytest.mark.parametrize('module, parameter', [
+    ('encoder', 'backbone.norm.weight'),
+    ('predictor', 'backbone.predictor_proj.weight')])
+def test_nonfinite_gradient_norm_stops_training_before_the_optimizer_step(
+        run_train, tmp_path, monkeypatch, warmup, module, parameter):
+    # Finite loss, but a NaN gradient of one parameter at the second step.
+    # Warmup 1: global norm of the unclipped gradients; warmup 0: the second
+    # step is clipped, so the norm is the one clip_grad_norm_ returns
+    init_model = T.init_model
+    n_gradients = []
+
+    def nan_at_second_step(grad):
+        n_gradients.append(1)
+        return grad * float('nan') if len(n_gradients) == 2 else grad
+
+    def init_model_with_nan_gradient(**kwargs):
+        models = dict(zip(('encoder', 'predictor'), init_model(**kwargs)))
+        dict(models[module].named_parameters())[parameter].register_hook(
+            nan_at_second_step)
+        return models['encoder'], models['predictor']
+    monkeypatch.setattr(T, 'init_model', init_model_with_nan_gradient)
+
+    step = torch.optim.AdamW.step
+    n_steps = []
+
+    def counting_step(self, *args, **kwargs):
+        n_steps.append(1)
+        return step(self, *args, **kwargs)
+    monkeypatch.setattr(torch.optim.AdamW, 'step', counting_step)
+
+    with pytest.raises(FloatingPointError,
+                       match='Non-finite loss or gradient norm at epoch 0, '
+                             'iteration 1 ') as error:
+        run_train(optimization={'warmup': warmup})
+    message = str(error.value)
+    assert math.isfinite(float(
+        re.search(r'this rank: loss (\S+),', message).group(1)))
+    assert f'{module} nan' in message
+    # Only the optimizer step of the first iteration ran
+    assert len(n_steps) == 1
+    assert _saved_checkpoints(tmp_path) == []
+
+
 def test_zero_fully_masked_attention_rows_keeps_training_finite(run_train):
     config = copy.deepcopy(EMPTY_CONTEXT)
     config['meta']['zero_fully_masked_attention_rows'] = True
@@ -369,6 +416,57 @@ def test_nonfinite_state_is_not_saved(run_train, tmp_path, monkeypatch):
                        match='Non-finite model or optimizer state at epoch 0'):
         run_train()
     assert _saved_checkpoints(tmp_path) == []
+
+
+@pytest.mark.parametrize('excl_spc_from_loss, loss_fn_type', [
+    (False, 'l1'), (True, 'l1'), (True, 'smooth_l1')])
+def test_padded_masks_loss_is_the_mean_over_valid_target_entries(
+        run_train, monkeypatch, excl_spc_from_loss, loss_fn_type):
+    # Record the targets, the target masks and their validity, and the
+    # predictor outputs of every step
+    steps = []
+    apply_masks, padding_key_masks = T.apply_masks, T.padding_key_masks
+    init_model = T.init_model
+
+    def record_targets(x, masks, concat=True):
+        out = apply_masks(x, masks, concat=concat)
+        steps.append({'h': out[0].detach().clone(), 'masks': masks[0]})
+        return out
+
+    def record_validity(masks_enc_valid, masks_pred_valid, **kwargs):
+        steps[-1]['valid'] = masks_pred_valid
+        return padding_key_masks(masks_enc_valid, masks_pred_valid, **kwargs)
+
+    def record_predictions(**kwargs):
+        encoder, predictor = init_model(**kwargs)
+        predictor.register_forward_hook(lambda module, args, output: (
+            steps[-1].update(z=output[0].detach().clone())))
+        return encoder, predictor
+    monkeypatch.setattr(T, 'apply_masks', record_targets)
+    monkeypatch.setattr(T, 'padding_key_masks', record_validity)
+    monkeypatch.setattr(T, 'init_model', record_predictions)
+
+    result = run_train(
+        optimization={'epochs': 1},
+        meta={'excl_spc_from_loss': excl_spc_from_loss,
+              'loss_fn_type': loss_fn_type},
+        mask={'pad_masks_to_batch_max': True})
+    assert len(steps) == len(result['logged']) == ITERATIONS_PER_EPOCH
+    # The cells of a batch have target masks of different lengths
+    assert any(not step['valid'].all() for step in steps)
+    for step, payload in zip(steps, result['logged']):
+        z, h = step['z'].double(), step['h'].double()
+        if loss_fn_type == 'l1':
+            token_loss = (z - h).abs()
+        else:
+            token_loss = F.smooth_l1_loss(z, h, reduction='none')
+        # Mean over the valid target entries of all cells, without the
+        # metatoken (index 0) if it is excluded from the loss
+        scored = step['valid'].clone()
+        if excl_spc_from_loss:
+            scored &= step['masks'] > 0
+        assert payload['loss'] == pytest.approx(
+            float(token_loss[scored].mean()), rel=1e-5)
 
 
 def _final_state(tmp_path):

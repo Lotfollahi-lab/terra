@@ -111,7 +111,8 @@ def construct_neighbor_graph(adata: ad.AnnData,
         graph computation and then concatenate.
     compute_neighbor_counts:
         If 'True', aggregate counts across neighborhood and store in
-        `adata.layers['X_neighborhood']`.
+        `adata.layers['X_neighborhood']` (with sorted indices if `adata.X`
+        is sparse).
     aggregate_own_neighbors:
         If 'True', aggregate the counts of each cell's own neighbors
         (`C @ X`, row i of the connectivities `C` holds cell i's neighbors).
@@ -164,8 +165,16 @@ def construct_neighbor_graph(adata: ad.AnnData,
     if compute_neighbor_counts:
         connectivities = adata.obsp['spatial_connectivities']
         if aggregate_own_neighbors:
-            adata.layers['X_neighborhood'] = connectivities @ adata.X
+            x_neighborhood = connectivities @ adata.X
         else:
-            adata.layers['X_neighborhood'] = connectivities.T @ adata.X
+            x_neighborhood = connectivities.T @ adata.X
+        if sp.issparse(x_neighborhood):
+            # Canonical format (sorted indices), in place as the matrix is
+            # new: the sparse product leaves the indices unsorted, but the
+            # sparse ranking paths of the tokenizers read the rank and count
+            # values of a cell by storage position, and normalizers that cast
+            # the counts to another dtype sort them
+            x_neighborhood.sum_duplicates()
+        adata.layers['X_neighborhood'] = x_neighborhood
 
     return adata

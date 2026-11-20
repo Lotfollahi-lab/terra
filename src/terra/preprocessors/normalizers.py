@@ -376,7 +376,9 @@ def normalize_by_pflog1ppf(x: sp.csr_matrix,
         x = sp.csr_matrix(np.asarray(x, dtype=np.float32))
 
     # Work ENTIRELY on the .data array so the output keeps x's EXACT CSR
-    # structure (.indices / .indptr unchanged). This is essential: the
+    # structure (.indices / .indptr unchanged) if x is canonical (sorted
+    # indices, no duplicate entries, as the tokenizers ensure; scipy's
+    # astype sorts the indices of any other x). This is essential: the
     # sparse tokenization path aligns X_rank and X_count element-wise by
     # storage order, so X_count (this output) must share X_rank's (= x's)
     # per-row index order. Building new matrices via x.multiply(...).tocsr()
