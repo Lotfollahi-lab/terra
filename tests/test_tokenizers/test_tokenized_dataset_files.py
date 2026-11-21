@@ -164,6 +164,66 @@ def test_reconcile_checks_the_pf_targets_file(tmp_path,
                 dataset_path, **keys, pf_targets_file_path=path))
 
 
+# Layouts of the dataset (2 neighbours x 8 genes per cell) a model reads
+LAYOUT = dict(seq_len_cell=8, seq_len_neighborhood=16, n_segments=3)
+
+
+@pytest.mark.parametrize('keys', [
+    LAYOUT,
+    dict(LAYOUT, tokenized_seq_len_cell=8, truncate_neighbors=False),
+    # 4 genes of the cell and of its nearest neighbour
+    dict(seq_len_cell=4, seq_len_neighborhood=4, n_segments=2,
+         tokenized_seq_len_cell=8, truncate_neighbors=True),
+    # nothing to check
+    dict(),
+])
+def test_reconcile_accepts_layouts_that_fit_the_dataset(
+        tmp_path, token_dictionary_file_path, keys):
+    dataset_path = _tokenize_directory(tmp_path, token_dictionary_file_path)
+    reconcile_tokenizer_params(_data_config(dataset_path, **keys))
+
+
+@pytest.mark.parametrize('keys, mismatch', [
+    # fewer genes per cell without the dataset's stride
+    (dict(LAYOUT, seq_len_cell=4, seq_len_neighborhood=8),
+     'set data.tokenized_seq_len_cell: 8'),
+    (dict(LAYOUT, tokenized_seq_len_cell=16), 'tokenized_seq_len_cell'),
+    (dict(LAYOUT, seq_len_cell=16, seq_len_neighborhood=32,
+          tokenized_seq_len_cell=8), 'more than the 8 entries'),
+    (dict(LAYOUT, n_segments=4, seq_len_neighborhood=24),
+     "more than the dataset's 3 segments"),
+    (dict(LAYOUT, n_segments=2, seq_len_neighborhood=8),
+     'set data.truncate_neighbors: true'),
+    (dict(LAYOUT, seq_len_neighborhood=8), 'seq_len_neighborhood'),
+])
+def test_reconcile_rejects_layouts_that_do_not_fit_the_dataset(
+        tmp_path, token_dictionary_file_path, keys, mismatch):
+    dataset_path = _tokenize_directory(tmp_path, token_dictionary_file_path)
+    with pytest.raises(ValueError, match=mismatch):
+        reconcile_tokenizer_params(_data_config(dataset_path, **keys))
+
+
+@pytest.mark.parametrize('n_neighs, seq_len_cell, ok', [
+    (16, 512, True), (10, 512, True), (16, 256, True), (10, 256, True),
+    (6, 256, True), (16, 1024, False)])
+def test_layout_check_of_the_16x512_corpus(n_neighs, seq_len_cell, ok):
+    from terra.tokenizers.params import _layout_mismatches
+    recorded = {'tokenizer': 'CellGraphTokenizer', 'n_neighs': 16,
+                'model_input_size': 512 * 17}
+    config = dict(seq_len_cell=seq_len_cell,
+                  seq_len_neighborhood=n_neighs * seq_len_cell,
+                  n_segments=n_neighs + 1, tokenized_seq_len_cell=512,
+                  truncate_neighbors=n_neighs < 16)
+    assert (_layout_mismatches(config, recorded) == []) == ok
+    # Without tokenized_seq_len_cell, only the stored genes per cell fit
+    del config['tokenized_seq_len_cell']
+    assert (_layout_mismatches(config, recorded) == []) == (
+        seq_len_cell == 512)
+    # Cell-neighborhood records are not checked
+    recorded['tokenizer'] = 'CellNeighborhoodTokenizer'
+    assert _layout_mismatches(config, recorded) == []
+
+
 def test_reconcile_accepts_datasets_without_a_record(tmp_path, caplog):
     data_config = _data_config(tmp_path, stable_rank_ties=True)
     with caplog.at_level(logging.WARNING):

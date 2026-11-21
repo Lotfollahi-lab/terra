@@ -136,6 +136,63 @@ def read_tokenizer_params(dataset_path: Path | str) -> dict | None:
         return json.load(f)
 
 
+def _layout_mismatches(data_config: dict, recorded: dict) -> list[str]:
+    """
+    Settings of a model config's `data` section that do not fit the layout of
+    the cell-graph dataset with the record `recorded`.
+
+    The dataset's rows hold `n_neighs + 1` segments of
+    `int(model_input_size / (n_neighs + 1))` entries (the stride; the
+    tokenizer's segment length). A model reads the first `seq_len_cell`
+    entries of each of its first `n_segments` segments, with the stride given
+    by `tokenized_seq_len_cell` (default `seq_len_cell`) and fewer segments
+    only with `truncate_neighbors`; settings that do not fit raise an error
+    in the cell dataset or, for some, misread the rows silently (e.g. a model
+    with fewer segments reading every segment). Settings the config leaves
+    out are not checked; records of other tokenizers, or without
+    `n_neighs`, give no mismatch.
+    """
+    if (recorded.get('tokenizer') != 'CellGraphTokenizer'
+            or recorded.get('n_neighs') is None
+            or not recorded.get('model_input_size')):
+        return []
+    n_seg = int(recorded['n_neighs']) + 1
+    stride = int(recorded['model_input_size'] / n_seg)
+    seq_len_cell = data_config.get('seq_len_cell')
+    tokenized_seq_len_cell = data_config.get('tokenized_seq_len_cell')
+    n_segments = data_config.get('n_segments')
+    seq_len_neighborhood = data_config.get('seq_len_neighborhood')
+    mismatches = []
+    read_stride = tokenized_seq_len_cell or seq_len_cell
+    if read_stride is not None and int(read_stride) != stride:
+        mismatches.append(
+            f"tokenized_seq_len_cell: config {tokenized_seq_len_cell!r} "
+            f"(seq_len_cell {seq_len_cell!r}), dataset segments of {stride} "
+            f"entries; set data.tokenized_seq_len_cell: {stride}")
+    if seq_len_cell is not None and int(seq_len_cell) > stride:
+        mismatches.append(
+            f"seq_len_cell: config {seq_len_cell!r}, more than the {stride} "
+            "entries per segment of the dataset")
+    if n_segments is not None:
+        if int(n_segments) > n_seg:
+            mismatches.append(
+                f"n_segments: config {n_segments!r}, more than the dataset's "
+                f"{n_seg} segments")
+        elif (int(n_segments) < n_seg
+              and not data_config.get('truncate_neighbors', False)):
+            mismatches.append(
+                f"n_segments: config {n_segments!r}, fewer than the dataset's "
+                f"{n_seg} segments; set data.truncate_neighbors: true")
+    if (None not in (n_segments, seq_len_cell, seq_len_neighborhood)
+            and int(seq_len_neighborhood)
+            != (int(n_segments) - 1) * int(seq_len_cell)):
+        mismatches.append(
+            f"seq_len_neighborhood: config {seq_len_neighborhood!r}, expected "
+            f"(n_segments - 1) * seq_len_cell = "
+            f"{(int(n_segments) - 1) * int(seq_len_cell)}")
+    return mismatches
+
+
 def reconcile_tokenizer_params(data_config: dict):
     """
     Check a model config's `data` section against the tokenizer settings
@@ -143,10 +200,12 @@ def reconcile_tokenizer_params(data_config: dict):
 
     Raises a ValueError when the config states a setting the dataset was not
     tokenized with, or when it would make inference use other normalization
-    files than the tokenization did. Optional settings the config leaves out
-    are added to `data_config`, so that the saved model config makes inference
-    tokenize new data as the training data were tokenized. Datasets without a
-    record (tokenized before it was written) are accepted with a warning.
+    files than the tokenization did, and, for cell-graph datasets, when the
+    layout the model reads does not fit the dataset's (see
+    `_layout_mismatches`). Optional settings the config leaves out are added
+    to `data_config`, so that the saved model config makes inference tokenize
+    new data as the training data were tokenized. Datasets without a record
+    (tokenized before it was written) are accepted with a warning.
 
     Parameters
     ----------
@@ -210,6 +269,13 @@ def reconcile_tokenizer_params(data_config: dict):
             f"The model config does not match how '{dataset_path}' was "
             "tokenized (inference tokenizes new data with the config's "
             "settings):\n  " + "\n  ".join(mismatches))
+    layout_mismatches = _layout_mismatches(data_config, recorded)
+    if layout_mismatches:
+        raise ValueError(
+            f"The layout the model reads does not fit the dataset "
+            f"'{dataset_path}' ({recorded['n_neighs']} neighbours per cell, "
+            f"rows of {recorded['model_input_size']} entries):\n  "
+            + "\n  ".join(layout_mismatches))
 
     added = [key for key in OPTIONAL_KEYS
              if key in recorded and key not in data_config]
