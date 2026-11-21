@@ -11,6 +11,8 @@ import numpy as np
 import pyarrow.compute as pc
 from datasets import load_from_disk
 
+from .compact import is_compact
+
 
 logger = logging.getLogger(__name__)
 
@@ -245,9 +247,32 @@ def _check_split_excludes_heldout(args: dict,
                 "batch lists or set data.allow_heldout_in_split: true.")
 
 
+def _check_storage_format(ds: datasets.Dataset, data_path: str):
+    """
+    Raise when the storage format recorded with a tokenized dataset
+    (`terra_tokenizer_params.json`) is not the format of its columns, e.g. a
+    folder with the record of another tokenization. Datasets without a record
+    are not checked; the readers detect the format by the columns.
+    """
+    from terra.tokenizers.params import (TOKENIZER_PARAMS_FILE,
+                                         read_tokenizer_params)
+    record = read_tokenizer_params(data_path)
+    if record is None:
+        return
+    recorded = record.get('storage_format', 'padded')
+    stored = 'compact' if is_compact(ds) else 'padded'
+    if recorded != stored:
+        raise ValueError(
+            f"The tokenizer record of '{data_path}' ({TOKENIZER_PARAMS_FILE}) "
+            f"gives storage_format {recorded!r}, but its columns are those of "
+            f"the {stored!r} format: the record belongs to another "
+            "tokenization. Re-tokenize the data or restore its record.")
+
+
 def prepare_dataset(args: dict, train_mode: bool = False):
     data_path = args['data']['tokenized_data_folder_path']
     ds = load_from_disk(data_path)
+    _check_storage_format(ds, data_path)
 
     # 1) Remove obviously unneeded columns but KEEP cell_id for now
     fields_to_remove = [

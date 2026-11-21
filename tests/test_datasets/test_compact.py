@@ -122,10 +122,11 @@ def test_token_dtype():
     assert token_dtype({'<pad>': 0, 'ENSG1': 2 ** 40}) == np.int64
 
 
-def _write_input(tmp_path):
+def _write_input(tmp_path, batches=('b0',)):
     """
-    One batch of 40 cells (with long, empty and tied cells) and its token
-    dictionary and norm factors; returns the tokenizer settings for it.
+    Batches of 40 cells (with long, empty and tied cells), one file each in
+    `in/` and in `in_<batch>/`, and their token dictionary and norm factors;
+    returns the tokenizer settings for them.
     """
     rng = np.random.default_rng(0)
     n_cells, n_genes = 40, 30
@@ -133,6 +134,8 @@ def _write_input(tmp_path):
     token_dict.update({f'ENSG{i:011d}': 20000 + i for i in range(n_genes)})
     token_dict.update({'spv_0_b0': 30000, 'spv_xenium': 30001,
                        'spv_homo_sapiens': 30002, 'spv_lung': 30003})
+    token_dict.update({f'spv_0_{batch}': 30004 + i
+                       for i, batch in enumerate(batches[1:])})
     with open(tmp_path / 'td.pkl', 'wb') as f:
         pickle.dump(token_dict, f)
     genes = list(token_dict)[2:2 + n_genes]
@@ -140,18 +143,23 @@ def _write_input(tmp_path):
     pd.DataFrame({'gene_id': genes,
                   'tie_break_mean': rng.uniform(0.1, 2, n_genes)}).to_csv(
         tmp_path / 'nf.csv', index=False)
-    counts = rng.poisson(0.6, (n_cells, n_genes))
-    counts[:6, :] = rng.poisson(5, (6, n_genes))     # more genes than SEQ
-    counts[[3, 17, 18]] = 0                           # empty cells
-    counts[20:30] = (rng.random((10, n_genes)) < 0.4)  # count-1 ties
-    adata = ad.AnnData(X=sp.csr_matrix(counts.astype(np.int64)))
-    adata.var['ensembl_id'] = genes
-    adata.obs['cell_id'] = [f'0_b0_{i}' for i in range(n_cells)]
-    adata.obsm['spatial'] = rng.uniform(0, 100, (n_cells, 2))
-    adata.uns.update(dataset_id='0', batch='b0', assay='xenium',
-                     species='homo_sapiens', tissue='lung')
     (tmp_path / 'in').mkdir()
-    adata.write_h5ad(tmp_path / 'in' / 'b0.h5ad')
+    for i, batch in enumerate(batches):
+        if i:
+            rng = np.random.default_rng(i)
+        counts = rng.poisson(0.6, (n_cells, n_genes))
+        counts[:6, :] = rng.poisson(5, (6, n_genes))     # more genes than SEQ
+        counts[[3, 17, 18]] = 0                           # empty cells
+        counts[20:30] = (rng.random((10, n_genes)) < 0.4)  # count-1 ties
+        adata = ad.AnnData(X=sp.csr_matrix(counts.astype(np.int64)))
+        adata.var['ensembl_id'] = genes
+        adata.obs['cell_id'] = [f'0_{batch}_{c}' for c in range(n_cells)]
+        adata.obsm['spatial'] = rng.uniform(0, 100, (n_cells, 2))
+        adata.uns.update(dataset_id='0', batch=batch, assay='xenium',
+                         species='homo_sapiens', tissue='lung')
+        adata.write_h5ad(tmp_path / 'in' / f'{batch}.h5ad')
+        (tmp_path / f'in_{batch}').mkdir()
+        adata.write_h5ad(tmp_path / f'in_{batch}' / f'{batch}.h5ad')
     return dict(rank_cell_norm_method=None, rank_gene_norm_method=None,
                 rank_count_norm_method=None,
                 count_count_norm_method='shifted_log',
@@ -161,11 +169,12 @@ def _write_input(tmp_path):
                 token_dictionary_file_path=tmp_path / 'td.pkl')
 
 
-def _tokenize(tmp_path, name, use_generator=False, **kwargs):
+def _tokenize(tmp_path, name, use_generator=False, input_folder='in',
+              num_shards=None, **kwargs):
     tk = CellGraphTokenizer(**kwargs)
-    tk.tokenize_data(tmp_path / 'in', tmp_path, name,
-                     use_generator=use_generator,
-                     cache_directory_path=str(tmp_path / 'cache'))
+    tk.tokenize_data(tmp_path / input_folder, tmp_path, name,
+                     use_generator=use_generator, num_shards=num_shards,
+                     cache_directory_path=str(tmp_path / 'cache' / name))
     return datasets.load_from_disk(str(tmp_path / f'{name}.dataset'))
 
 
@@ -512,3 +521,123 @@ def test_compact_columns_follow_the_padded_order(column_cases, case):
         _assert_same(batches[0][0], batches[1][0])
         for a, b in zip(batches[0][1:4], batches[1][1:4]):
             assert torch.equal(a, b)
+
+
+# The corpus pipeline: per-dataset parts tokenized one file at a time
+# (stream_per_file), concatenated, saved in shards, split with precomputed
+# splits and read by prepare_dataset
+
+CORPUS_SETTINGS = dict(VARIANTS['corpus'], stream_per_file=True)
+
+
+@pytest.fixture(scope='module')
+def corpus_input(tmp_path_factory):
+    tmp_path = tmp_path_factory.mktemp('compact_corpus')
+    return tmp_path, _write_input(tmp_path, batches=('b0', 'b1'))
+
+
+def _table(dataset):
+    return dataset.data.table.combine_chunks()
+
+
+@pytest.mark.parametrize('processing_mode,nproc', [('sequential', 1),
+                                                    ('parallel', 2)])
+def test_streaming_writes_the_same_compact_dataset(corpus_input,
+                                                   processing_mode, nproc):
+    tmp_path, base = corpus_input
+    out = {}
+    for stream in (False, True):
+        out[stream] = _tokenize(
+            tmp_path, f'stream{int(stream)}_{processing_mode}', True,
+            **{**base, **VARIANTS['corpus'], 'storage_format': 'compact',
+               'stream_per_file': stream, 'processing_mode': processing_mode,
+               'nproc': nproc})
+    assert len(out[True]) == 80
+    assert list(out[True].features.items()) == list(
+        out[False].features.items())
+    assert _table(out[True]).equals(_table(out[False]))
+
+
+def _corpus(tmp_path, base, fmt):
+    """
+    The two batches tokenized as separate parts, concatenated and saved in 3
+    shards (cutting through the first batch), with the record of a part.
+    """
+    import shutil
+
+    from terra.tokenizers.params import TOKENIZER_PARAMS_FILE
+    parts = [_tokenize(tmp_path, f'part_{fmt}_{batch}', True,
+                       input_folder=f'in_{batch}',
+                       **{**base, **CORPUS_SETTINGS, 'storage_format': fmt})
+             for batch in ('b0', 'b1')]
+    corpus_path = tmp_path / f'corpus_{fmt}.dataset'
+    datasets.concatenate_datasets(parts).save_to_disk(str(corpus_path),
+                                                      num_shards=3)
+    shutil.copy(tmp_path / f'part_{fmt}_b0.dataset' / TOKENIZER_PARAMS_FILE,
+                corpus_path / TOKENIZER_PARAMS_FILE)
+    return parts, corpus_path
+
+
+@pytest.fixture(scope='module')
+def corpora(corpus_input):
+    tmp_path, base = corpus_input
+    return {fmt: _corpus(tmp_path, base, fmt)
+            for fmt in ('padded', 'compact')}
+
+
+@pytest.mark.parametrize('seq_len_cell,n_neighs', [(SEQ, N_NEIGHS), (4, 2)])
+def test_compact_corpus_through_prepare_dataset(corpora, tmp_path,
+                                                seq_len_cell, n_neighs):
+    from terra.datasets.utils import prepare_dataset, save_precomputed_split
+    padded_path = corpora['padded'][1]
+    compact_path = corpora['compact'][1]
+    padded = datasets.load_from_disk(str(padded_path))
+    compact = datasets.load_from_disk(str(compact_path))
+    assert len(compact.cache_files) == 3 and len(compact) == 80
+    # Rows of both batches, in a shuffled order
+    rows = np.random.default_rng(0).permutation(80)[:50].tolist()
+    split_path = tmp_path / 'split.pkl'
+    save_precomputed_split(compact, rows, split_path)
+    selected = {}
+    for fmt, path in (('padded', padded_path), ('compact', compact_path)):
+        args = {'data': {'tokenized_data_folder_path': str(path),
+                         'precomputed_split': str(split_path)},
+                'meta': {'cell_pos_enc': 'coord'}}
+        selected[fmt] = prepare_dataset(args)[0]
+    expected = [_padded_layout_lengths(padded, seq_len_cell, n_neighs)[r]
+                for r in rows]
+    dp = _cell_dataset(selected['padded'], seq_len_cell, n_neighs,
+                       n_nonzero_tokens_list=expected)
+    dc = _cell_dataset(selected['compact'], seq_len_cell, n_neighs)
+    assert dc.n_nz_tokens.tolist() == expected
+    for i in range(len(rows)):
+        _assert_same(dp[i], dc[i])
+
+
+def test_padded_and_compact_parts_are_not_concatenated(corpora):
+    padded_part = corpora['padded'][0][0]
+    compact_part = corpora['compact'][0][1]
+    with pytest.raises(ValueError):
+        datasets.concatenate_datasets([padded_part, compact_part])
+
+
+@pytest.mark.parametrize('fmt,record_of', [('compact', 'padded'),
+                                           ('padded', 'compact')])
+def test_record_of_another_storage_format_is_refused(corpora, tmp_path, fmt,
+                                                     record_of):
+    import shutil
+
+    from terra.datasets.utils import prepare_dataset
+    from terra.tokenizers.params import TOKENIZER_PARAMS_FILE
+    path = tmp_path / 'corpus.dataset'
+    shutil.copytree(corpora[fmt][1], path)
+    args = {'data': {'tokenized_data_folder_path': str(path)},
+            'meta': {'cell_pos_enc': 'coord'}}
+    assert len(prepare_dataset(args)[0]) == 80
+    shutil.copy(corpora[record_of][1] / TOKENIZER_PARAMS_FILE,
+                path / TOKENIZER_PARAMS_FILE)
+    with pytest.raises(ValueError, match=f"storage_format '{record_of}'"):
+        prepare_dataset(args)
+    # Without a record, the columns decide
+    (path / TOKENIZER_PARAMS_FILE).unlink()
+    assert len(prepare_dataset(args)[0]) == 80
