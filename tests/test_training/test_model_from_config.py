@@ -195,9 +195,9 @@ def test_builder_matches_previous_embedding_construction(layout):
 
 # -- Finetuning end to end on tiny bundles ----------------------------------- #
 
-def _write_bundle(folder, layout):
+def _write_bundle(folder, layout, config=None):
     folder.mkdir()
-    config = copy.deepcopy(CONFIGS[layout])
+    config = copy.deepcopy(config or CONFIGS[layout])
     token_dict, genes = _token_dict()
     with open(folder / 'token_dictionary.pkl', 'wb') as f:
         pickle.dump(token_dict, f)
@@ -210,7 +210,7 @@ def _write_bundle(folder, layout):
     with open(folder / 'model_config.yaml', 'w') as f:
         yaml.safe_dump(config, f)
     torch.manual_seed(0)
-    encoder, predictor = _training_model(CONFIGS[layout], layout, token_dict)
+    encoder, predictor = _training_model(config, layout, token_dict)
     _perturb(encoder, 1)
     _perturb(predictor, 2)
     # DDP-style keys, as saved in training
@@ -341,6 +341,88 @@ def test_finetune_self_supervised_samples_gene_masks_by_default(tmp_path):
         args=args, dataset=dataset, save_folder_path=str(tmp_path / 'runs'))
     assert list((tmp_path / 'runs').rglob('checkpoint_epoch_1.pt'))
     assert run_dir
+
+
+# A model reading 2 neighbours x 8 genes per cell of a corpus of 3 x 16
+# (truncate_neighbors, tokenized_seq_len_cell 16), with data.n_neighs /
+# data.model_input_size giving the model layout (2 / 24: tokenize_adata
+# writes 24-entry rows) or the corpus layout (3 / 64)
+SLICED_LAYOUTS = {
+    'model_layout': dict(model_input_size=24, n_neighs=2),
+    'corpus_layout': dict(model_input_size=64, n_neighs=3),
+}
+
+
+def _sliced_config(layout):
+    config = copy.deepcopy(CONFIG_96M)
+    config['data'].update(
+        seq_len_cell=8, seq_len_neighborhood=16, n_segments=3,
+        truncate_neighbors=True, tokenized_seq_len_cell=16,
+        **SLICED_LAYOUTS[layout])
+    return config
+
+
+def test_finetune_truncation_settings():
+    # As at inference: the pretraining layout, or the model's stride for
+    # rows of the config's model_input_size; the finetuning config overrides
+    from datasets import Dataset
+
+    from terra.training.finetune import _finetune_truncation_settings
+
+    data = _sliced_config('model_layout')['data']
+
+    def rows(n):
+        return Dataset.from_dict({'gene_tokens': [np.zeros(n, np.int64)]})
+
+    assert _finetune_truncation_settings(rows(64), data, {}) == {
+        'truncate_neighbors': True, 'tokenized_seq_len_cell': 16}
+    assert _finetune_truncation_settings(rows(24), data, {}) == {
+        'truncate_neighbors': True, 'tokenized_seq_len_cell': 8}
+    assert _finetune_truncation_settings(
+        rows(24), data, {'tokenized_seq_len_cell': 16,
+                         'truncate_neighbors': False}) == {
+        'truncate_neighbors': False, 'tokenized_seq_len_cell': 16}
+    # Configs without the pretraining layout keys: unchanged
+    assert _finetune_truncation_settings(rows(64), CONFIG_96M['data'], {}) == {
+        'truncate_neighbors': False, 'tokenized_seq_len_cell': None}
+
+
+@pytest.mark.parametrize('layout', list(SLICED_LAYOUTS))
+def test_finetune_reads_data_tokenized_for_a_sliced_model(tmp_path, layout):
+    # finetune.py read data tokenized for the model (24-entry rows) with the
+    # pretraining stride (16) and raised; inference reads them with 8
+    import terra.training.finetune as finetune_module
+    from terra.training.finetune_self_supervised import finetune_self_supervised
+
+    config = _sliced_config(layout)
+    bundle = tmp_path / 'bundle'
+    _write_bundle(bundle, '96M', config)
+    harmonized, dataset = _tokenized_data(bundle, tmp_path / 'cache')
+    assert len(dataset[0]['gene_tokens']) == config['data']['model_input_size']
+    parts = _split(harmonized, dataset)
+    args = {
+        'model': {'pretrained_checkpoint_path': str(bundle)},
+        'data': {'label_name': 'label', 'batch_size': 8, 'pin_memory': False,
+                 'num_workers': 0},
+        'finetune': {'use_peft': False, 'peft_target_modules': ['0.attn.qkv'],
+                     'use_mlp': False, 'hidden_dim': 8, 'lr': 1e-4,
+                     'num_epochs': 1, 'patience': 10, 'save_every_k_epochs': -1,
+                     'selection_type': 'agg_graph', 'excluded_tokens': None,
+                     'top_k': None, 'keep_special_tokens': False}}
+    predictions, targets, _ = finetune_module.finetune(
+        args=args,
+        train_adata=parts['train'][0], train_dataset=parts['train'][1],
+        val_adata=parts['val'][0], val_dataset=parts['val'][1],
+        test_adata=parts['test'][0], test_dataset=parts['test'][1])
+    assert len(predictions) == len(targets) == 8
+    ssl_args = {
+        'model': {'pretrained_checkpoint_path': str(bundle)},
+        'data': {'batch_size': 8, 'pin_memory': False, 'num_workers': 0},
+        'finetune': {'use_peft': False, 'lr': 1e-4, 'num_epochs': 1,
+                     'use_bfloat16': False}}
+    assert finetune_self_supervised(
+        args=ssl_args, dataset=dataset,
+        save_folder_path=str(tmp_path / 'runs'))
 
 
 def test_selection_mask_never_selects_special_tokens():

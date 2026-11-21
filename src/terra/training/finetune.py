@@ -52,6 +52,7 @@ from terra.utils.helper import (init_model_from_config, load_checkpoint,
                                 apply_peft, resolve_special_token_padding)
 from terra.datasets.cell_datasets import init_cell_dataset
 from terra.datasets.dataloaders import init_dataloader_and_sampler
+from terra.inference.embed import _truncation_settings
 from terra.masks.block_masking  import BlockMaskCollator
 from terra.masks.cell_masking import CellMaskCollator
 from terra.utils.distributed import init_distributed
@@ -65,6 +66,47 @@ os.environ["NCCL_ASYNC_ERROR_HANDLING"] = "1" # Better error propagation
 LOCAL_RANK = None
 
 logger = logging.getLogger(__name__)
+
+
+def _finetune_truncation_settings(dataset: Dataset,
+                                  model_data_config: dict,
+                                  finetune_data_config: dict,
+                                  ) -> dict:
+    """
+    Neighbor and gene truncation settings with which finetuning reads
+    `dataset`, as `init_cell_dataset` keyword arguments.
+
+    They are those of inference (`terra.inference.embed._truncation_settings`):
+    the pretraining layout of the model config (`truncate_neighbors`,
+    `tokenized_seq_len_cell`), except for data tokenized for the model with
+    `tokenize_adata`, whose rows of the config's `model_input_size` are read
+    with the stride `model_input_size // (n_neighs + 1)` (e.g. 2816-entry rows
+    for a config with model_input_size 2816 and n_neighs 10 whose
+    `tokenized_seq_len_cell` is 512, the stride of its 16 x 512 corpus). A
+    finetuning config whose `data` section sets `truncate_neighbors` or
+    `tokenized_seq_len_cell` overrides them.
+
+    Parameters
+    -----------
+    dataset:
+        Tokenized Hugging Face dataset.
+    model_data_config:
+        The `data` section of the pretrained model's config.
+    finetune_data_config:
+        The `data` section of the finetuning config.
+
+    Returns
+    -----------
+    settings:
+        `truncate_neighbors` and `tokenized_seq_len_cell`.
+    """
+    truncate_neighbors, tokenized_seq_len_cell = _truncation_settings(
+        dataset, model_data_config)
+    return {
+        'truncate_neighbors': finetune_data_config.get(
+            'truncate_neighbors', truncate_neighbors),
+        'tokenized_seq_len_cell': finetune_data_config.get(
+            'tokenized_seq_len_cell', tokenized_seq_len_cell)}
 
 
 # Setup argument parsing
@@ -474,14 +516,12 @@ def finetune(
     pad_spc_tokens = resolve_special_token_padding(
         model_config, args['finetune'].get('keep_special_tokens', False))
 
-    # The data must be tokenized like the pretraining data; a finetuning
-    # config may override the neighbor truncation
-    truncate_neighbors = args['data'].get(
-        'truncate_neighbors',
-        model_config['data'].get('truncate_neighbors', False))
-    tokenized_seq_len_cell = args['data'].get(
-        'tokenized_seq_len_cell',
-        model_config['data'].get('tokenized_seq_len_cell', None))
+    # The data are read like the pretraining data, or, if tokenized for the
+    # model with tokenize_adata, with the model's stride, as at inference; a
+    # finetuning config may override the truncation settings
+    def truncation_settings(dataset):
+        return _finetune_truncation_settings(
+            dataset, model_config['data'], args['data'])
 
     # -------------------------------------------------------------------- #
     # PREPARE MASK COLLATOR
@@ -520,8 +560,7 @@ def finetune(
         sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'],
         nz_spc=model_config['data'].get('nz_spc', False),
         pad_special_tokens=pad_spc_tokens,
-        truncate_neighbors=truncate_neighbors,
-        tokenized_seq_len_cell=tokenized_seq_len_cell
+        **truncation_settings(train_dataset)
     )
 
     # The training data are shuffled in every epoch (they were always seen
@@ -564,8 +603,7 @@ def finetune(
             sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'],
             nz_spc=model_config['data'].get('nz_spc', False),
             pad_special_tokens=pad_spc_tokens,
-            truncate_neighbors=truncate_neighbors,
-            tokenized_seq_len_cell=tokenized_seq_len_cell
+            **truncation_settings(val_dataset)
         )
 
         val_loader, _ = init_dataloader_and_sampler(
@@ -606,8 +644,7 @@ def finetune(
         sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'],
         nz_spc=model_config['data'].get('nz_spc', False),
         pad_special_tokens=pad_spc_tokens,
-        truncate_neighbors=truncate_neighbors,
-        tokenized_seq_len_cell=tokenized_seq_len_cell
+        **truncation_settings(eval_dataset)
     )
 
     eval_loader, _ = init_dataloader_and_sampler(

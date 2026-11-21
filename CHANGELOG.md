@@ -236,6 +236,10 @@ and this project adheres to [Semantic Versioning][].
     `data.model_input_size`, with which inference tokenizes new data, differ
     from the dataset's: for a model reading fewer neighbours, a fresh k-NN
     graph differs from the dataset's first k neighbours when distances tie.
+-   Finetuning (supervised and self-supervised) reads data tokenized for the
+    model with `tokenize_adata` with the model's stride, as inference does; it
+    raised for models that read fewer genes per cell than their pretraining
+    dataset holds.
 -   A checkpoint that cannot be loaded now raises an error instead of
     silently leaving the model randomly initialized (training, finetuning and
     inference). For training, `state.allow_checkpoint_load_failure: true`

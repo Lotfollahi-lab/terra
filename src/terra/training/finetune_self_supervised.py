@@ -36,6 +36,7 @@ from terra.datasets.cell_datasets import init_cell_dataset
 from terra.datasets.dataloaders import init_dataloader_and_sampler
 from terra.masks.block_masking import BlockMaskCollator
 from terra.masks.utils import apply_masks
+from terra.training.finetune import _finetune_truncation_settings
 from terra.training.train import resolve_seed
 from terra.utils.helper import (init_model_from_config, init_opt,
                                 resolve_special_token_padding,
@@ -242,12 +243,10 @@ def finetune_self_supervised(
         sep_gene_tokens_neb=model_config['data']['sep_gene_tokens_neb'],
         nz_spc=model_config['data'].get('nz_spc', False),
         pad_special_tokens=pad_spc_tokens,
-        truncate_neighbors=args['data'].get(
-            'truncate_neighbors',
-            model_config['data'].get('truncate_neighbors', False)),
-        tokenized_seq_len_cell=args['data'].get(
-            'tokenized_seq_len_cell',
-            model_config['data'].get('tokenized_seq_len_cell', None)))
+        # Read like the pretraining data, or, if tokenized for the model with
+        # tokenize_adata, with the model's stride, as at inference
+        **_finetune_truncation_settings(
+            dataset, model_config['data'], args['data']))
 
     loader, _ = init_dataloader_and_sampler(
         cell_dataset=cell_dataset,
