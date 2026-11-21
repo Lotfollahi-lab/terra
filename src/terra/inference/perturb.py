@@ -49,8 +49,10 @@ def _build_perturb_index(df: pd.DataFrame) -> dict[str, list[dict]]:
     (Using itertuples avoids Python object creation for every column.)
     """
     index = defaultdict(list)
-    for row in df.itertuples(index=False):
-        index[row.perturbed_cell_id].append(row._asdict())
+    for order, row in enumerate(df.itertuples(index=False)):
+        request = row._asdict()
+        request["_perturbation_order"] = order
+        index[row.perturbed_cell_id].append(request)
     return index
 
 
@@ -75,7 +77,9 @@ def _perturb_batch_with_idx(
     seq_len_cell: int = 256,
     pad_gene_tokens: bool = True,
     log1p_values: bool = False,
-    ) -> dict:
+    adjust_positions: bool = False,
+    n_segments: int = 11,
+) -> dict:
     """
     Modify the tensors in-place (cheap) and return the same dict.
 
@@ -100,6 +104,12 @@ def _perturb_batch_with_idx(
     log1p_values:
         If `True`, the expression values are log1p-normalized counts and
         fold changes apply to the counts (``_fold_change``).
+    adjust_positions:
+        For mixed wildcard/specific requests, pack padding to the end of each
+        segment once all edits have been applied. Specific-only behavior is
+        unchanged.
+    n_segments:
+        Number of fixed-length segments when packing mixed requests.
     """
     # Mapped without the torch format; convert the edited columns to tensors so
     # the in-place per-cell edits below work (no-op if already tensors).
@@ -109,6 +119,8 @@ def _perturb_batch_with_idx(
     neigh_ids = batch.get("cell_ids")     # neighbor ids (add_neigh_cell_ids only)
     B = len(own_ids)
     cell_positions = torch.arange(seq_len_cell)
+    wildcard_rows = index.get("all", [])
+    neighborhood_positions = torch.arange(seq_len_cell, batch["gene_tokens"].shape[1])
 
     def _apply(b, row, positions):
         gene_tokens = batch["gene_tokens"][b]
@@ -130,10 +142,11 @@ def _perturb_batch_with_idx(
 
     for b in range(B):
         own = own_ids[b]
+        operations = []
         # cell-target: edit cell b's own tokens when b is in the perturb list
         for row in index.get(own, []):
             if row["perturbation_target"] == "cell":
-                _apply(b, row, cell_positions)
+                operations.append((row, cell_positions))
         # neighborhood-target: edit the tokens of each listed neighbor of b
         if neigh_ids is not None:
             neighbors = np.asarray(neigh_ids[b][seq_len_cell:])
@@ -147,7 +160,27 @@ def _perturb_batch_with_idx(
                 positions = torch.as_tensor(
                     np.nonzero(neighbors == nid)[0] + seq_len_cell)
                 for row in rows:
-                    _apply(b, row, positions)
+                    operations.append((row, positions))
+        if wildcard_rows:
+            for row in wildcard_rows:
+                target = row["perturbation_target"]
+                if target not in ("cell", "neighborhood"):
+                    raise ValueError(f"Invalid perturbation_target: {target}.")
+                positions = cell_positions if target == "cell" else neighborhood_positions
+                operations.append((row, positions))
+            # Merge scopes by original row ordinal, including repeated rows.
+            operations.sort(key=lambda operation: operation[0]["_perturbation_order"])
+        for row, positions in operations:
+            _apply(b, row, positions)
+
+    if wildcard_rows and adjust_positions:
+        # Move token/value pairs only within fixed cell/neighbor segments.
+        # Provenance IDs are constant within these segments and stay unchanged.
+        tokens = batch["gene_tokens"].reshape(B, n_segments, seq_len_cell)
+        values = batch["gene_expr"].reshape(B, n_segments, seq_len_cell)
+        order = torch.argsort((tokens == 0).to(torch.int64), dim=-1, stable=True)
+        batch["gene_tokens"] = torch.gather(tokens, -1, order).reshape(B, -1)
+        batch["gene_expr"] = torch.gather(values, -1, order).reshape(B, -1)
     # Return the edited columns as numpy arrays. datasets re-encodes numpy via
     # fast buffer copies; torch tensors are ~2x slower and python lists are
     # pathologically slow (can appear to hang) for these wide token columns.
@@ -378,6 +411,8 @@ def perturb_dataset(dataset: Dataset,
     the gene tokens/expression of the dataset. Perturbations on all cells are
     applied batch-wise; perturbations targeting specific cells are matched by
     `cell_id` (and, for neighborhood targets, by the stored neighbor IDs).
+    Mixed wildcard and specific-cell requests apply in DataFrame row order;
+    repeated rows are applied repeatedly, without deduplication.
 
     Parameters
     -----------
@@ -416,18 +451,24 @@ def perturb_dataset(dataset: Dataset,
     keep_in_memory:
         Whether to keep the perturbed dataset in memory during mapping.
     return_only_perturbed_cells:
-        If `True`, return only the cells whose tokens the perturbations actually
-        edit (computed from the unperturbed dataset).
+        If `True`, return the union of cells eligible for the requests before
+        any edits. Eligibility does not require a numerical change, for
+        example after an earlier knockout of the same gene.
     pad_gene_tokens:
         If `True`, also zero out the gene tokens (not just the expression) of
         knocked-out genes, for all cells or specific cells.
     adjust_positions:
         If `True`, re-pack each segment so padded (zeroed) gene positions are
         moved to the end after perturbation.
+        Mixed wildcard/specific requests pack once after all edits, preserving
+        token/value pairs and fixed-segment neighbor IDs. The existing
+        specific-only indexed path does not re-pack positions.
     return_perturbation_flags:
         If `True`, attach one boolean column per `perturb_df` row,
-        `pert_flag_idx_{i}`, which is `True` for cells that perturbation row `i`
-        actually edits (its target gene is present in the targeted scope). The
+        `pert_flag_idx_{i}`, which is `True` for cells eligible for row `i`
+        before any edits (its target gene is present in the targeted scope).
+        Repeated rows can stay eligible after an earlier knockout; filtering
+        uses the union of these pre-edit masks. The
         columns are attached after mapping (a zero-copy column concat), not
         inside `.map`, so the map output schema is unchanged. Defaults to
         `False`, in which case no extra columns are added.
@@ -460,6 +501,9 @@ def perturb_dataset(dataset: Dataset,
     # If all perturbations are on all cells, skip indexing
     perturbed_cell_ids = perturb_df["perturbed_cell_id"].unique().tolist()
     all_cells = len(perturbed_cell_ids) == 1 and perturbed_cell_ids[0] == "all"
+    needs_cell_ids_input = (
+        (perturb_df["perturbation_target"] == "neighborhood") & (perturb_df["perturbed_cell_id"] != "all")
+    ).any()
     if all_cells:
 
         # Use partial so the dataset mapper sees only one argument as expected
@@ -477,8 +521,7 @@ def perturb_dataset(dataset: Dataset,
         # Perturbing specific cells: cell-target rows are matched on the cell's
         # own `cell_id`; neighborhood-target rows need the neighbor IDs, which
         # only exist when the dataset was tokenized with add_neigh_cell_ids=True.
-        if ((perturb_df["perturbation_target"] == "neighborhood").any()
-                and "cell_ids" not in dataset.column_names):
+        if needs_cell_ids_input and "cell_ids" not in dataset.column_names:
             raise ValueError(
                 "Perturbing the neighborhood of specific cells requires the "
                 "dataset to be tokenized with add_neigh_cell_ids=True "
@@ -494,6 +537,8 @@ def perturb_dataset(dataset: Dataset,
             seq_len_cell=seq_len_cell,
             pad_gene_tokens=pad_gene_tokens,
             log1p_values=log1p_values,
+            adjust_positions=adjust_positions,
+            n_segments=n_segments,
         )
 
     # Compute which cells the perturbations actually edit *before* mapping, from
@@ -519,9 +564,6 @@ def perturb_dataset(dataset: Dataset,
     # is a zero-copy column concat). Only neighborhood-on-specific-cells needs it
     # as *input*; otherwise drop it before mapping too so it isn't even decoded.
     has_cell_ids = "cell_ids" in dataset.column_names
-    needs_cell_ids_input = (
-        not all_cells
-        and (perturb_df["perturbation_target"] == "neighborhood").any())
     cell_ids_col = (dataset.select_columns(["cell_ids"]).with_format(None)
                     if has_cell_ids else None)
     map_input = (dataset if (needs_cell_ids_input or not has_cell_ids)
@@ -575,7 +617,7 @@ def perturb_dataset(dataset: Dataset,
             output_all_columns=saved_format["output_all_columns"],
             **saved_format.get("format_kwargs", {}))
 
-    # Optionally, return only the cells the perturbations actually edited.
+    # Optionally, return the union of cells eligible before any edits.
     if return_only_perturbed_cells:
         dataset = dataset.select(keep_idx)
 
