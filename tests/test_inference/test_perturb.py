@@ -19,6 +19,7 @@ import pickle
 import numpy as np
 import pandas as pd
 import pytest
+import yaml
 
 from terra import harmonize_adata, perturb_dataset, tokenize_adata
 
@@ -162,3 +163,54 @@ def test_fold_change_multiplies_the_counts(data, layout, log1p_values,
                                    rtol=1e-6)
     np.testing.assert_array_equal(new_values[~edited], values[~edited])
     np.testing.assert_array_equal(new_tokens, tokens)
+
+
+def _model_folder(path, tokenizer_type):
+    """Model folder with a token dictionary and a minimal model config."""
+    with open(path / 'token_dictionary.pkl', 'wb') as f:
+        pickle.dump({'<pad>': 0, 'ENSG1': 5, 'ENSG2': 6}, f)
+    data_config = {'count_count_norm_method': 'shifted_log'}
+    if tokenizer_type is not None:
+        data_config['tokenizer_type'] = tokenizer_type
+    with open(path / 'model_config.yaml', 'w') as f:
+        yaml.safe_dump({'data': data_config}, f)
+    return str(path)
+
+
+@pytest.mark.parametrize('tokenizer_type', ['cell_neigh', None])
+def test_cell_neighborhood_rows_with_the_equal_split(tmp_path,
+                                                     tokenizer_type):
+    # Cell-neighborhood rows with the equal split are two halves of
+    # seq_len_cell, which n_segments does not describe: they are perturbed
+    # with any n_segments (here the default, 11), as before the layout check
+    from datasets import Dataset
+
+    folder = _model_folder(tmp_path, tokenizer_type)
+    tokens = np.zeros(8, np.int64)
+    tokens[:2] = [5, 6]
+    tokens[4:6] = [6, 5]
+    values = np.zeros(8)
+    values[:2] = 1.0
+    values[4:6] = 2.0
+    dataset = Dataset.from_dict({
+        'cell_id': ['a', 'b'], 'gene_tokens': [tokens, tokens],
+        'gene_expr': [values, values], 'n_nonzero_tokens': [4, 4]})
+    perturb_df = pd.DataFrame([{
+        'perturbed_cell_id': 'all', 'perturbed_ensembl_id': 'ENSG1',
+        'perturbation_target': 'cell', 'perturbation_type': 'knockout',
+        'foldchange': np.nan}])
+    new_tokens, new_values = _columns(perturb_dataset(
+        dataset, perturb_df, model_folder_path=folder, seq_len_cell=4))
+    expected_tokens, expected_values = tokens.copy(), values.copy()
+    expected_tokens[0], expected_values[0] = 0, 0.0  # index cell only
+    for row in range(2):
+        np.testing.assert_array_equal(new_tokens[row], expected_tokens)
+        np.testing.assert_array_equal(new_values[row], expected_values)
+
+    # Rows of a cell-graph model must be n_segments segments of seq_len_cell
+    folder = _model_folder(tmp_path, 'cell_graph')
+    with pytest.raises(ValueError, match='n_segments'):
+        perturb_dataset(dataset, perturb_df, model_folder_path=folder,
+                        seq_len_cell=4)
+    assert len(perturb_dataset(dataset, perturb_df, model_folder_path=folder,
+                               seq_len_cell=4, n_segments=2)) == 2

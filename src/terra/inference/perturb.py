@@ -405,7 +405,9 @@ def perturb_dataset(dataset: Dataset,
         Number of cell gene tokens (excluding neighborhood gene tokens).
     n_segments:
         Number of segments (the index cell plus its neighbors); used when
-        re-packing positions after perturbation.
+        re-packing positions after perturbation. Cell-graph rows must be
+        `n_segments` segments of `seq_len_cell`; cell-neighborhood rows with
+        the equal split (two halves of `seq_len_cell`) take 2.
     nproc:
         Number of processes used to map the perturbation over the dataset.
         Defaults to 1 (single process). Values >1 use multiprocessing, which can
@@ -439,19 +441,35 @@ def perturb_dataset(dataset: Dataset,
         The perturbed Hugging Face `Dataset`, filtered to the affected cells if
         `return_only_perturbed_cells` is `True`.
     """
-    # The perturbations edit fixed positions of the padded rows: segment s
-    # holds entries [s * seq_len_cell, (s + 1) * seq_len_cell)
+    with open(Path(model_folder_path) / "model_config.yaml", "r") as f:
+        model_config = yaml.safe_load(f)
+
+    # The perturbations edit fixed positions of the padded rows: the index
+    # cell is entries [0, seq_len_cell), and with adjust_positions segment s
+    # is [s * seq_len_cell, (s + 1) * seq_len_cell). Cell-graph rows are
+    # n_segments segments of seq_len_cell. Cell-neighborhood rows are the
+    # index cell and its neighborhood: with the equal split (the tokenizer
+    # default since April 2026) two halves of seq_len_cell, which n_segments
+    # does not describe (it only matters with adjust_positions, which then
+    # takes n_segments=2); with the earlier split n_neighs + 1 segments.
     if len(dataset) > 0:
         row_length = padded_row_length(dataset[0])
-        if int(row_length / n_segments) != seq_len_cell:
+        tokenizer_type = (model_config.get("data") or {}).get(
+            "tokenizer_type")
+        layout_fits = int(row_length / n_segments) == seq_len_cell
+        if tokenizer_type != "cell_graph":
+            layout_fits = layout_fits or row_length == 2 * seq_len_cell
+        if not layout_fits:
             raise ValueError(
                 f"The dataset's rows hold {row_length} gene tokens, i.e. "
                 f"segments of {int(row_length / n_segments)} for n_segments="
                 f"{n_segments}, but seq_len_cell is {seq_len_cell}. Pass the "
-                "dataset's layout: n_segments = n_neighs + 1 and seq_len_cell "
-                "= rows / n_segments (e.g. seq_len_cell=512, n_segments=17 "
-                "for 16 neighbours x 512 genes per cell; the defaults, 256 "
-                "and 11, are for 10 neighbours x 256 genes).")
+                "dataset's layout: for cell-graph rows, n_segments = "
+                "n_neighs + 1 and seq_len_cell = rows / n_segments (e.g. "
+                "seq_len_cell=512, n_segments=17 for 16 neighbours x 512 "
+                "genes per cell; the defaults, 256 and 11, are for 10 "
+                "neighbours x 256 genes); for cell-neighborhood rows with "
+                "the equal split, seq_len_cell = rows / 2 and n_segments=2.")
 
     # The perturbations edit the padded layout (fixed segment positions)
     if is_compact(dataset):
@@ -464,8 +482,6 @@ def perturb_dataset(dataset: Dataset,
 
     # Expression values of shifted-log models are log1p(counts): fold changes
     # apply to the counts
-    with open(Path(model_folder_path) / "model_config.yaml", "r") as f:
-        model_config = yaml.safe_load(f)
     log1p_values = (
         model_config["data"].get("count_count_norm_method") == "shifted_log")
 
