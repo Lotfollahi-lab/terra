@@ -21,7 +21,7 @@ datasets = pytest.importorskip('datasets')
 
 from terra.datasets.cell_datasets import CellGraphDataset
 from terra.datasets.compact import (COMPACT_COLUMNS, check_n_nonzero_tokens,
-                                    compact_row,
+                                    compact_row, data_segment_length,
                                     expand_compact_item, is_compact,
                                     layout_n_nonzero_tokens, to_padded,
                                     token_dtype)
@@ -417,8 +417,61 @@ def test_layout_errors_match_getitem(tokenized):
     compact = tokenized[('corpus', 'compact', 0)].with_format('torch')
     with pytest.raises(ValueError, match='exceeds the dataset'):
         _cell_dataset(compact, 4, N_NEIGHS + 2)
+    # rows of 41 entries in 5 segments of 8 (the tokenizer's
+    # int(41 / 5)), which the stride 8 does not divide
+    rows = [np.r_[np.arange(2, 2 + MIS), 0] for _ in range(3)]
+    padded, compact41 = _hf_pair(rows, [r * 0.5 for r in rows],
+                                 [N_NEIGHS + 1] * 3, MIS + 1)
+    # __getitem__ raises for the padded rows, the compact cell dataset when
+    # it is made
+    cell_dataset = _cell_dataset(padded.with_format('torch'), 4, 2,
+                                 special_tokens=[], cell_pos_enc='segment')
     with pytest.raises(ValueError, match='not a multiple'):
-        _cell_dataset(compact, 3, 2, tokenized_seq_len_cell=7)
+        cell_dataset[0]
+    with pytest.raises(ValueError, match='not a multiple'):
+        _cell_dataset(compact41.with_format('torch'), 4, 2,
+                      special_tokens=[], cell_pos_enc='segment')
+
+
+def test_data_segment_length():
+    # The segment length of a row with the most segments, wherever it is:
+    # rows of cells with fewer neighbours (without pad_empty_neighbors) have
+    # fewer, longer segments
+    rows = [np.r_[np.arange(2, 12), np.zeros(MIS - 10, dtype=np.int64)]
+            for _ in range(9)]
+    _, compact = _hf_pair(rows, [r * 0.5 for r in rows],
+                          [2] * 8 + [N_NEIGHS + 1], MIS)
+    for group_rows in (1, 4, 8, 100):
+        assert data_segment_length(compact, group_rows=group_rows) == SEQ
+    _, short = _hf_pair(rows[:3], rows[:3], [2, 1, 2], MIS)
+    assert data_segment_length(short) == MIS // 2
+    # every row of the table for a selection with an indices mapping; a
+    # contiguous selection is a slice of the table, of which only the rows
+    # it holds are read
+    assert data_segment_length(compact.select([0, 2])) == SEQ
+    assert data_segment_length(compact.select([0, 1])) == MIS // 2
+    empty = datasets.Dataset.from_dict(
+        {key: [] for key in compact.column_names}, features=compact.features)
+    assert data_segment_length(empty) is None
+
+
+@pytest.mark.parametrize('seq_len_cell,n_neighs,tokenized_seq_len_cell',
+                         [(4, 2, 4), (4, 9, 4), (8, 4, 4), (4, 2, 2),
+                          (3, 2, 7)])
+def test_compact_rows_read_with_another_stride_are_refused(
+        tokenized, seq_len_cell, n_neighs, tokenized_seq_len_cell):
+    # The rows hold 5 segments of SEQ = 8 entries. A stride of 4 or 2
+    # divides them, so the cell dataset would read e.g. segment 1 at
+    # [4, 8), the end of the index cell, with no error (as from padded rows)
+    compact = tokenized[('corpus', 'compact', 0)].with_format('torch')
+    with pytest.raises(ValueError, match='segments hold 8 entries'):
+        _cell_dataset(compact, seq_len_cell, n_neighs,
+                      truncate_neighbors=n_neighs < N_NEIGHS,
+                      tokenized_seq_len_cell=tokenized_seq_len_cell)
+    # the same layouts read with the dataset's stride
+    if seq_len_cell <= SEQ and n_neighs <= N_NEIGHS:
+        _cell_dataset(compact, seq_len_cell, n_neighs,
+                      tokenized_seq_len_cell=SEQ)
 
 
 @pytest.mark.parametrize('variant', list(VARIANTS))

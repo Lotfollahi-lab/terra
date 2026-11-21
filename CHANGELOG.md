@@ -229,8 +229,10 @@ and this project adheres to [Semantic Versioning][].
     silently: pretraining checks the layout a cell-graph model reads
     (`seq_len_cell`, `n_segments`, `seq_len_neighborhood`,
     `tokenized_seq_len_cell`, `truncate_neighbors`) against the layout
-    recorded with its dataset, and `perturb_dataset` checks `seq_len_cell`
-    and `n_segments` against the dataset's rows.
+    recorded with its dataset, training and inference check that compact
+    datasets are read with their segment length (`tokenized_seq_len_cell`),
+    and `perturb_dataset` checks `seq_len_cell` and `n_segments` against the
+    rows of cell-graph datasets.
 -   A checkpoint that cannot be loaded now raises an error instead of
     silently leaving the model randomly initialized (training, finetuning and
     inference). For training, `state.allow_checkpoint_load_failure: true`

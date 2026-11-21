@@ -7,7 +7,8 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 
-from .compact import (check_n_nonzero_tokens, expand_compact_item, is_compact,
+from .compact import (check_n_nonzero_tokens, data_segment_length,
+                      expand_compact_item, is_compact,
                       layout_n_nonzero_tokens)
 
 
@@ -177,6 +178,23 @@ class CellBaseDataset(Dataset):
 
         # Per-cell lengths for the length-grouped sampler
         if self.compact:
+            # The rows must be read with the dataset's segment length as the
+            # stride: another stride that divides the rows misreads them
+            # without an error (e.g. a model of 256 genes per cell without
+            # tokenized_seq_len_cell, on a 16 x 512 corpus). Checked first,
+            # since the lengths below count the rows of such a layout one by
+            # one.
+            data_stride = data_segment_length(self.dataset)
+            if (data_stride is not None
+                    and data_stride != self.tokenized_seq_len_cell):
+                raise ValueError(
+                    f"The dataset's segments hold {data_stride} entries, but "
+                    f"the cell dataset reads segments of "
+                    f"{self.tokenized_seq_len_cell} (tokenized_seq_len_cell, "
+                    f"else seq_len_cell), which misreads the rows: set "
+                    f"data.tokenized_seq_len_cell: {data_stride} in the model "
+                    f"config, with seq_len_cell <= {data_stride} and "
+                    "truncate_neighbors: true to read fewer neighbours.")
             # The gene tokens of the layout read (e.g. 10 x 256 of a 16 x 512
             # corpus), from the stored segment lengths: no per-layout list
             layout = dict(seq_len_cell=self.seq_len_cell,

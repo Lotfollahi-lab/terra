@@ -270,6 +270,37 @@ def _selected_rows(dataset) -> np.ndarray | None:
     return np.asarray(column.to_numpy(), dtype=np.int64)
 
 
+def data_segment_length(dataset, group_rows: int = 262_144) -> int | None:
+    """
+    Segment length of the rows of a compact dataset: the stride
+    (`tokenized_seq_len_cell`) the cell datasets must read it with.
+
+    It is `int(model_input_size / n_segments)` of a row with the most
+    segments (`n_neighs + 1`, as the tokenizer computes it; rows of cells with
+    fewer neighbours, tokenized without `pad_empty_neighbors`, have fewer and
+    longer segments). Every row of the underlying table is scanned (also the
+    rows a selection with an indices mapping leaves out; a contiguous
+    selection is a slice of the table), a group of rows at a time, reading
+    only the list offsets of `segment_lengths`. None for a dataset without
+    rows.
+    """
+    import pyarrow.compute as pc
+
+    table = _underlying_table(dataset)
+    column = table.column('segment_lengths')
+    best_n, best_row = 0, None
+    for start in range(0, table.num_rows, group_rows):
+        n_seg = pc.list_value_length(column.slice(start, group_rows))
+        n_max = pc.max(n_seg).as_py()
+        if n_max is not None and n_max > best_n:
+            best_n = int(n_max)
+            best_row = start + int(pc.index(n_seg, n_max).as_py())
+    if best_row is None:
+        return None
+    mis = int(table.column('model_input_size')[best_row].as_py())
+    return int(mis / best_n)
+
+
 def _layout_slicing(stride: int, seq_len_cell: int, n_segments: int,
                     truncate_neighbors: bool, mis: np.ndarray):
     """
