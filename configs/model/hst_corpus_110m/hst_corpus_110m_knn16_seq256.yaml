@@ -9,8 +9,9 @@
 #   code_review_2026-11-11/REPORT.md section 4) with TERRA-96M's
 #   special_tokens [] and cell_pos_enc coord.
 # - Job config: configs/job/hst_corpus_110m/hst_corpus_110m_knn16_seq256.yaml
-#   (16 GPUs: 2 nodes x 8). Batch size, LR, EMA and weight decay below
-#   are set for 16 GPUs; change them together with the GPU count.
+#   (16 GPUs: 2 nodes x 8). Batch size, LR, EMA, weight decay and
+#   checkpoint_freq_iter below are set for 16 GPUs; change them together
+#   with the GPU count.
 #
 # OPEN RECIPE DECISIONS (the values below are defaults, not decisions):
 # 1. Metatokens: [] as TERRA-96M. Alternative (round 5): ['assay'] with
@@ -29,7 +30,8 @@
 #    ema [0.9995, 1.0]) to global 1120: lr = 6e-5 * sqrt(r),
 #    1 - ema0 = 0.0005 * r, r = global / 4608 (square-root rule; same EMA
 #    horizon in samples). On 32 GPUs (4 nodes): global 2240, lr 4.18e-05,
-#    ema [0.999757, 1.0], weight decay 0.0279 -> 0.279.
+#    ema [0.999757, 1.0], weight decay 0.0279 -> 0.279,
+#    checkpoint_freq_iter 10286.
 #    Unscaled alternative: lr 6e-5, ema [0.9995, 1.0]. Heuristics; pilot
 #    (round-5 P3).
 # 4. Weight decay: TERRA-96M's 0.04 -> 0.4 (I-JEPA default, round 5), times
@@ -214,7 +216,15 @@ optimization:
 state:
   log_freq: 20
   checkpoint_freq: 1
-  checkpoint_freq_iter: 5000
+  # Mid-epoch checkpoints every 5000 * 4608 / global batch = 20571 iterations
+  # (global 1120 on 16 GPUs; 10286 on 32 GPUs): TERRA-96M's spacing of
+  # 23.04M training cells, i.e. 4 mid-epoch + 1 end-of-epoch checkpoints
+  # per epoch with 96M training cells (5000 gave 18 per epoch,
+  # 90 files of about 0.6 GB per run). Rescale it with the batch size or GPU
+  # count. A run resumed from a mid-epoch checkpoint restarts that epoch
+  # (utils/helper.py load_checkpoint), so this does not change what a
+  # resume repeats.
+  checkpoint_freq_iter: 20571
   write_tag: terra
   folder_path: null # new timestamped run folder; to resume, set it to that folder (absolute) and load_checkpoint: True
   load_checkpoint: False

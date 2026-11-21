@@ -3,9 +3,10 @@
 #
 # hst_corpus_110m, re-tokenized 16 x 512 compact corpus, model layout
 # 6 neighbours x 256 genes. Submit with scripts/bsub_submit_tiger.sh <this file>.
-# The model config's batch size (170 per GPU), LR, EMA and weight decay are set
-# for NUM_NODES x NUM_GPUS_NODE = 16 GPUs: change them together (the model
-# config lists the 32-GPU values). TERRA-96M trained on 32 GPUs.
+# The model config's batch size (170 per GPU), LR, EMA, weight decay and
+# checkpoint_freq_iter are set for NUM_NODES x NUM_GPUS_NODE = 16 GPUs: change
+# them together (the model config lists the 32-GPU values). TERRA-96M trained
+# on 32 GPUs.
 
 job_requirement:
   LSB_DEFAULT_USERGROUP: team361  # The user group to be used for scheduling the job.
