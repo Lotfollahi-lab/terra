@@ -20,7 +20,8 @@ import torch
 datasets = pytest.importorskip('datasets')
 
 from terra.datasets.cell_datasets import CellGraphDataset
-from terra.datasets.compact import (check_n_nonzero_tokens, compact_row,
+from terra.datasets.compact import (COMPACT_COLUMNS, check_n_nonzero_tokens,
+                                    compact_row,
                                     expand_compact_item, is_compact,
                                     layout_n_nonzero_tokens, to_padded,
                                     token_dtype)
@@ -53,7 +54,8 @@ def _bits(t):
 
 
 def _assert_same(a, b):
-    assert a.keys() == b.keys()
+    # same keys in the same order (dict order follows the column order)
+    assert list(a) == list(b)
     for k in a:
         if isinstance(a[k], torch.Tensor):
             assert a[k].dtype == b[k].dtype and a[k].shape == b[k].shape, k
@@ -120,10 +122,11 @@ def test_token_dtype():
     assert token_dtype({'<pad>': 0, 'ENSG1': 2 ** 40}) == np.int64
 
 
-@pytest.fixture(scope='module')
-def tokenized(tmp_path_factory):
-    """Padded and compact tokenizations of one batch, per variant."""
-    tmp_path = tmp_path_factory.mktemp('compact')
+def _write_input(tmp_path):
+    """
+    One batch of 40 cells (with long, empty and tied cells) and its token
+    dictionary and norm factors; returns the tokenizer settings for it.
+    """
     rng = np.random.default_rng(0)
     n_cells, n_genes = 40, 30
     token_dict = {'<pad>': 0, '<mask>': 1}
@@ -149,28 +152,60 @@ def tokenized(tmp_path_factory):
                      species='homo_sapiens', tissue='lung')
     (tmp_path / 'in').mkdir()
     adata.write_h5ad(tmp_path / 'in' / 'b0.h5ad')
+    return dict(rank_cell_norm_method=None, rank_gene_norm_method=None,
+                rank_count_norm_method=None,
+                count_count_norm_method='shifted_log',
+                stable_rank_ties=True, eliminate_stored_zeros=True,
+                norm_factor_file_path=str(tmp_path / 'nf.csv'),
+                model_input_size=MIS, n_neighs=N_NEIGHS,
+                token_dictionary_file_path=tmp_path / 'td.pkl')
+
+
+def _tokenize(tmp_path, name, use_generator=False, **kwargs):
+    tk = CellGraphTokenizer(**kwargs)
+    tk.tokenize_data(tmp_path / 'in', tmp_path, name,
+                     use_generator=use_generator,
+                     cache_directory_path=str(tmp_path / 'cache'))
+    return datasets.load_from_disk(str(tmp_path / f'{name}.dataset'))
+
+
+@pytest.fixture(scope='module')
+def tokenized(tmp_path_factory):
+    """Padded and compact tokenizations of one batch, per variant."""
+    tmp_path = tmp_path_factory.mktemp('compact')
+    base = _write_input(tmp_path)
     out = {}
     for variant, settings in VARIANTS.items():
         for fmt in ('padded', 'compact'):
             for use_generator in ((False, True) if variant == 'corpus'
                                   else (False,)):
-                kwargs = dict(
-                    rank_cell_norm_method=None, rank_gene_norm_method=None,
-                    rank_count_norm_method=None,
-                    count_count_norm_method='shifted_log',
-                    stable_rank_ties=True, eliminate_stored_zeros=True,
-                    norm_factor_file_path=str(tmp_path / 'nf.csv'))
-                kwargs.update(settings)
-                tk = CellGraphTokenizer(
-                    model_input_size=MIS, n_neighs=N_NEIGHS,
-                    token_dictionary_file_path=tmp_path / 'td.pkl',
-                    storage_format=fmt, **kwargs)
                 name = f'{variant}_{fmt}_{int(use_generator)}'
-                tk.tokenize_data(tmp_path / 'in', tmp_path, name,
-                                 use_generator=use_generator,
-                                 cache_directory_path=str(tmp_path / 'cache'))
-                out[(variant, fmt, int(use_generator))] = (
-                    datasets.load_from_disk(str(tmp_path / f'{name}.dataset')))
+                out[(variant, fmt, int(use_generator))] = _tokenize(
+                    tmp_path, name, use_generator,
+                    **{**base, **settings, 'storage_format': fmt})
+    return out
+
+
+# (variant, use_generator, include_special_tokens, add_neigh_cell_ids)
+COLUMN_CASES = [(v, g, s, c) for v in VARIANTS for g in (0, 1)
+                for s in (0, 1) for c in (0, 1)]
+
+
+@pytest.fixture(scope='module')
+def column_cases(tmp_path_factory):
+    """Padded and compact tokenizations per case of `COLUMN_CASES`."""
+    tmp_path = tmp_path_factory.mktemp('compact_columns')
+    base = _write_input(tmp_path)
+    out = {}
+    for case in COLUMN_CASES:
+        variant, use_generator, special, cell_ids = case
+        out[case] = tuple(
+            _tokenize(tmp_path, f'{fmt}_{variant}_{use_generator}{special}'
+                      f'{cell_ids}', bool(use_generator),
+                      **{**base, **VARIANTS[variant], 'storage_format': fmt,
+                         'include_special_tokens': bool(special),
+                         'add_neigh_cell_ids': bool(cell_ids)})
+            for fmt in ('padded', 'compact'))
     return out
 
 
@@ -426,3 +461,54 @@ def test_compact_record_and_schema(tokenized):
         folder = Path(ds.cache_files[0]['filename']).parent
         record = json.loads((folder / TOKENIZER_PARAMS_FILE).read_text())
         assert record.get('storage_format') == fmt
+
+
+def test_special_token_names_match_the_tokenizer():
+    from terra.datasets import compact
+    from terra.tokenizers import cell_tokenizers
+    assert compact.SPECIAL_TOKEN_NAMES == cell_tokenizers.SPECIAL_TOKEN_NAMES
+
+
+def _inference_format(dataset):
+    # as tokenize_adata formats datasets (string columns left unformatted)
+    columns = [c for c in dataset.column_names
+               if c not in ('cell_id', 'cell_ids')]
+    return dataset.with_format('torch', columns=columns,
+                               output_all_columns=True)
+
+
+@pytest.mark.parametrize('case', COLUMN_CASES)
+def test_compact_columns_follow_the_padded_order(column_cases, case):
+    # The compact columns are the padded ones, in the padded order, followed
+    # by the compact-only columns, so items and batches have the same keys
+    # in the same order
+    from terra.masks.block_masking import BlockMaskCollator
+    padded, compact = column_cases[case]
+    _, _, special, cell_ids = case
+    columns = list(compact.features)
+    assert columns[-len(COMPACT_COLUMNS):] == list(COMPACT_COLUMNS)
+    assert columns[:-len(COMPACT_COLUMNS)] == list(padded.features)
+    assert ('cell_ids' in columns) == bool(cell_ids)
+    assert ('batch_value' in columns) == bool(special)
+    special_tokens = ['batch', 'assay'] if special else []
+    for seq_len_cell, n_neighs in [(SEQ, N_NEIGHS), (4, 2)]:
+        cell_datasets = [
+            _cell_dataset(_inference_format(d), seq_len_cell, n_neighs,
+                          special_tokens=special_tokens)
+            for d in (padded, compact)]
+        for i in range(len(padded)):
+            _assert_same(cell_datasets[0][i], cell_datasets[1][i])
+        batches = []
+        for cell_dataset in cell_datasets:
+            collator = BlockMaskCollator(
+                n_targets=1, n_contexts=1, n_segments=n_neighs + 1,
+                seq_len_cell=seq_len_cell,
+                seq_len_neighborhood=seq_len_cell * n_neighs,
+                n_special_tokens=len(special_tokens),
+                per_block_mask_ratio=0.6, sample_segments=True)
+            torch.manual_seed(1)
+            batches.append(collator([cell_dataset[i] for i in range(16)]))
+        assert batches[0][4] == batches[1][4]
+        _assert_same(batches[0][0], batches[1][0])
+        for a, b in zip(batches[0][1:4], batches[1][1:4]):
+            assert torch.equal(a, b)

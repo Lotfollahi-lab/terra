@@ -113,7 +113,13 @@ def compact_features(tok_dtype: np.dtype,
                      model_input_size: int,
                      include_special_tokens: bool,
                      add_neigh_cell_ids: bool):
-    """Hugging Face features of a compact cell-graph dataset."""
+    """
+    Hugging Face features of a compact cell-graph dataset.
+
+    The columns are those of the padded dataset, in its order (which the
+    item and batch dicts of `CellGraphDataset` and the collator follow),
+    followed by the compact-only columns (`COMPACT_COLUMNS`).
+    """
     from datasets import Features, Value
     List = _list_feature
     features = {
@@ -122,8 +128,11 @@ def compact_features(tok_dtype: np.dtype,
     }
     if add_neigh_cell_ids:
         features['cell_ids'] = List(Value('string'))
+    features['cell_id'] = Value('string')
+    if include_special_tokens:
+        for name in SPECIAL_TOKEN_NAMES:
+            features[f'{name}_value'] = List(Value('int32'))
     features.update({
-        'cell_id': Value('string'),
         'gene_tokens': List(Value(np.dtype(tok_dtype).name)),
         'gene_expr': List(Value('float32')),
         'n_nonzero_tokens': Value('int32'),
@@ -131,9 +140,6 @@ def compact_features(tok_dtype: np.dtype,
             segment_length_dtype(model_input_size).name)),
         'model_input_size': Value('int32'),
     })
-    if include_special_tokens:
-        for name in ('assay', 'species', 'tissue', 'gene_panel', 'batch'):
-            features[f'{name}_value'] = List(Value('int32'))
     return Features(features)
 
 
