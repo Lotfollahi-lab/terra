@@ -83,6 +83,11 @@ def tokenizer_params(tokenizer) -> dict:
     for key in ('pad_empty_neighbors', 'aggregate_own_neighbors'):
         if hasattr(tokenizer, key):
             optional[key] = getattr(tokenizer, key)
+    # Recorded only for the compact format, so the records of padded datasets
+    # are unchanged (concatenate_datasets.py compares the records of the parts)
+    storage_format = getattr(tokenizer, 'storage_format', 'padded')
+    if storage_format != 'padded':
+        optional['storage_format'] = storage_format
     try:
         from terra import __version__ as terra_version
     except ImportError:

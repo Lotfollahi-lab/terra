@@ -80,6 +80,8 @@ except:
     logger.warning("Could not import squidpy...")
 from datasets import Dataset, concatenate_datasets
 
+from ..datasets.compact import (STORAGE_FORMATS, compact_features,
+                                compact_row, token_dtype)
 from ..preprocessors.filters import filter_cells
 from ..preprocessors.graph import construct_neighbor_graph
 from ..preprocessors.normalizers import normalize_by_analytic_pearson_residuals
@@ -304,6 +306,18 @@ class CellBaseTokenizer(ABC):
         (identical to the default for `processing_mode='sequential'`).
         Default `False` (legacy behaviour). NOTE: verify output
         equivalence on a 2-file sample before corpus-scale use.
+    storage_format:
+        'padded' (default) stores every row at `model_input_size` gene tokens
+        (int64) and values (float64), as existing datasets. 'compact' (cell
+        graph tokenizer only) stores only the tokens of each segment up to its
+        last non-padding entry, plus the number of stored entries per segment
+        and the padded row length, in the dtypes the model reads (int16 tokens
+        when every id of the token dictionary is below 32768, else int32;
+        float32 values and relative coordinates; int32 counts);
+        `CellGraphDataset` pads them back when it reads a row, so the model
+        inputs are the same, and derives the lengths the sampler needs for
+        any layout read from it. Datasets of one corpus must all be written
+        with the same format to be concatenated. See `terra.datasets.compact`.
     """
     def __init__(
             self,
@@ -359,6 +373,7 @@ class CellBaseTokenizer(ABC):
             gcrd_target_read_depth_per_gene: float = 0.0487,
             seurat_loess_span: float = 0.75,
             eliminate_stored_zeros: bool = False,
+            storage_format: Literal['padded', 'compact'] = 'padded',
             ):
         self.nproc = nproc
         self.processing_mode = processing_mode
@@ -395,6 +410,10 @@ class CellBaseTokenizer(ABC):
             target_read_depth_per_gene=gcrd_target_read_depth_per_gene)
         self.seurat_loess_span = seurat_loess_span
         self.eliminate_stored_zeros = eliminate_stored_zeros
+        if storage_format not in STORAGE_FORMATS:
+            raise ValueError(f"Invalid 'storage_format' {storage_format!r}; "
+                             f"expected one of {list(STORAGE_FORMATS)}.")
+        self.storage_format = storage_format
 
         # Make the PFlog1pPF target source explicit (frozen-corpus vs per-file)
         # so a missing path can never silently mismatch a frozen-trained model.
@@ -490,6 +509,8 @@ class CellBaseTokenizer(ABC):
             key for key in list(self.vocab) if 'ENS' in key]
         self.coding_miRNA_dict = dict(
             zip(self.coding_miRNA_ids, [True] * len(self.vocab)))
+        # Dtype of the stored gene tokens of the compact storage format
+        self.token_dtype = token_dtype(self.token_dict)
 
     def _get_rank_tie_break_values(self,
                                    gene_ids: pd.Series | np.ndarray,
@@ -715,6 +736,9 @@ class CellBaseTokenizer(ABC):
         """
         # Create Hugging Face dataset
         logger.info('Creating Hugging Face dataset...')
+        # The compact format sets its dtypes explicitly (inferred, the columns
+        # of the unformatted dataset would keep int64 / float64)
+        features = self._output_features()
         if use_generator:
             # Each example is formatted as it is generated, so the dataset is
             # written once. (Formatting the generated dataset with `map`
@@ -729,6 +753,7 @@ class CellBaseTokenizer(ABC):
                         {k: dataset_dict[k][i] for k in dataset_dict.keys()})
             logger.info('Using generator for dataset creation.')
             return Dataset.from_generator(dict_generator,
+                                          features=features,
                                           num_proc=self.nproc,
                                           keep_in_memory=keep_in_memory,
                                           cache_dir=cache_directory_path)
@@ -741,7 +766,8 @@ class CellBaseTokenizer(ABC):
         formatted_dataset = dataset.map(
             self._format_examples,
             num_proc=self.nproc,
-            keep_in_memory=keep_in_memory)
+            keep_in_memory=keep_in_memory,
+            features=features)
                 
         return formatted_dataset
 
@@ -827,6 +853,18 @@ class CellBaseTokenizer(ABC):
             raise FileNotFoundError(
                 f"No '.{file_format}' files found in directory "
                 f"'{data_directory}'.")
+
+    def _output_features(self):
+        """
+        Features of the formatted dataset, or `None` to infer them (padded
+        storage format).
+        """
+        if self.storage_format == 'padded':
+            return None
+        return compact_features(
+            self.token_dtype, self.model_input_size,
+            include_special_tokens=self.include_special_tokens,
+            add_neigh_cell_ids=self.add_neigh_cell_ids)
 
     @abstractmethod
     def _tokenize_adata(self):
@@ -1679,7 +1717,32 @@ class CellGraphTokenizer(CellBaseTokenizer):
             example['gene_panel_value'] = [example['gene_panel_value']]
             example['batch_value'] = [example['batch_value']]
 
+        if self.storage_format == 'compact':
+            self._compact_example(example, n_gene_segments)
+
         return example
+
+    def _compact_example(self,
+                         example: dict,
+                         n_gene_segments: int):
+        """
+        Store a formatted (padded) example in the compact format (see
+        `terra.datasets.compact`), in place.
+        """
+        (example['gene_tokens'], example['gene_expr'],
+         example['segment_lengths']) = compact_row(
+            example['gene_tokens'], example['gene_expr'],
+            n_segments=n_gene_segments,
+            model_input_size=self.model_input_size,
+            tok_dtype=self.token_dtype)
+        example['model_input_size'] = np.int32(self.model_input_size)
+        example['n_nonzero_tokens'] = np.int32(example['n_nonzero_tokens'])
+        for key in ('rel_x_coord', 'rel_y_coord'):
+            example[key] = np.asarray(example[key], dtype=np.float32)
+        if self.include_special_tokens:
+            for name in SPECIAL_TOKEN_NAMES:
+                example[f'{name}_value'] = np.asarray(
+                    example[f'{name}_value'], dtype=np.int32)
 
 
 class CellNeighborhoodTokenizer(CellBaseTokenizer):
@@ -1708,6 +1771,9 @@ class CellNeighborhoodTokenizer(CellBaseTokenizer):
             CellBaseTokenizer.
         """
         super().__init__(**base_tokenizer_kwargs)
+        if self.storage_format != 'padded':
+            raise ValueError("storage_format 'compact' is only implemented "
+                             "for the CellGraphTokenizer.")
 
         if split_cell_neigh_equally:
             self.seq_len_cell = int(self.model_input_size / 2)

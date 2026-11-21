@@ -23,6 +23,7 @@ from scipy.sparse import issparse
 
 from terra.utils.helper import init_model, load_checkpoint
 from terra.datasets.cell_datasets import CellBaseDataset, init_cell_dataset
+from terra.datasets.compact import is_compact, to_padded
 from terra.datasets.dataloaders import init_dataloader_and_sampler
 from terra.masks.block_masking  import BlockMaskCollator
 from terra.masks.cell_masking import CellMaskCollator
@@ -438,6 +439,11 @@ def perturb_dataset(dataset: Dataset,
         The perturbed Hugging Face `Dataset`, filtered to the affected cells if
         `return_only_perturbed_cells` is `True`.
     """
+    # The perturbations edit the padded layout (fixed segment positions)
+    if is_compact(dataset):
+        logger.info('Converting the compact dataset to the padded layout.')
+        dataset = to_padded(dataset, keep_in_memory=keep_in_memory)
+
     # Load token dictionary
     with open(Path(model_folder_path) / "token_dictionary.pkl", "rb") as f:
         token_dict = pickle.load(f)

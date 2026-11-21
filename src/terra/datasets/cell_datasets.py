@@ -7,6 +7,9 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 
+from .compact import (check_n_nonzero_tokens, expand_compact_item, is_compact,
+                      layout_n_nonzero_tokens)
+
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +100,12 @@ class CellBaseDataset(Dataset):
         sampling_strategy:
             Token sampling strategy.
         n_nonzero_tokens_list:
-            List of number of nonzero tokens.
+            List of number of nonzero tokens (the lengths the length-grouped
+            sampler groups cells by). If not given, the dataset's
+            `n_nonzero_tokens`; for a compact dataset (see
+            `terra.datasets.compact`), the lengths of the layout read
+            (`truncate_neighbors` / `tokenized_seq_len_cell`), derived from
+            its segment lengths, and a given list is checked against them.
         include_cell_id:
             If `True`, return cell ID string in getitem().
         sep_gene_tokens_neb:
@@ -137,6 +145,9 @@ class CellBaseDataset(Dataset):
                 dataset = dataset.remove_columns(col)
 
         self.dataset = dataset
+        # Compact cell-graph rows (terra.datasets.compact) are padded back to
+        # the padded layout in __getitem__ before anything reads them
+        self.compact = is_compact(dataset)
         self.len = len(self.dataset)
         self.vocab_size = vocab_size
         self.seq_len_cell = seq_len_cell
@@ -148,10 +159,6 @@ class CellBaseDataset(Dataset):
                         self.n_special_tokens)
         self.n_segments = (seq_len_cell + seq_len_neighborhood) / seq_len_cell
         self.sampling_strategy = sampling_strategy
-        if n_nonzero_tokens_list:
-            self.n_nz_tokens = n_nonzero_tokens_list
-        else:
-            self.n_nz_tokens = list(self.dataset['n_nonzero_tokens'])
         self.include_cell_id = include_cell_id
         self.sep_gene_tokens_neb = sep_gene_tokens_neb
         self.nz_spc = nz_spc
@@ -167,6 +174,26 @@ class CellBaseDataset(Dataset):
         # smaller seq_len_cell, no re-tokenization. Defaults to seq_len_cell
         # (no gene-per-cell truncation). Composes with truncate_neighbors.
         self.tokenized_seq_len_cell = tokenized_seq_len_cell or seq_len_cell
+
+        # Per-cell lengths for the length-grouped sampler
+        if self.compact:
+            # The gene tokens of the layout read (e.g. 10 x 256 of a 16 x 512
+            # corpus), from the stored segment lengths: no per-layout list
+            layout = dict(seq_len_cell=self.seq_len_cell,
+                          n_segments=int(self.n_segments),
+                          tokenized_seq_len_cell=self.tokenized_seq_len_cell,
+                          truncate_neighbors=self.truncate_neighbors)
+            if n_nonzero_tokens_list:
+                check_n_nonzero_tokens(n_nonzero_tokens_list, self.dataset,
+                                       **layout)
+                self.n_nz_tokens = n_nonzero_tokens_list
+            else:
+                self.n_nz_tokens = layout_n_nonzero_tokens(self.dataset,
+                                                           **layout)
+        elif n_nonzero_tokens_list:
+            self.n_nz_tokens = n_nonzero_tokens_list
+        else:
+            self.n_nz_tokens = list(self.dataset['n_nonzero_tokens'])
 
         # Auto-detect per-cell metadata columns (anything ending in
         # ``_value`` in the HF dataset features). These are exposed
@@ -552,6 +579,9 @@ class CellGraphDataset(CellBaseDataset):
 
         # Retrieve Hugging Face item once
         item = self.dataset[item]
+        if self.compact:
+            # Rebuild the padded gene_tokens / gene_expr of a compact row
+            item = expand_compact_item(item)
 
         # TODO: add special tokens from token dict directly (1 value per row)
         item['tissue_token'] = torch.tensor([103])
@@ -809,6 +839,10 @@ class CellNeighborhoodDataset(CellBaseDataset):
             Keyword arguments for the initialization of the
             CellBaseDataset.
         """
+        if is_compact(base_dataset_kwargs.get('dataset')):
+            raise ValueError(
+                'The compact storage format is only written for cell-graph '
+                'datasets (CellGraphTokenizer).')
         super().__init__(**base_dataset_kwargs)
 
     def _get_segment_seq(self,

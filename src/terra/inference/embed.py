@@ -27,6 +27,7 @@ from terra.utils.helper import (init_model_from_config, load_checkpoint,
                        log_inference_time, resolve_special_token_padding,
                        sync_cuda)
 from terra.datasets.cell_datasets import CellBaseDataset, init_cell_dataset
+from terra.datasets.compact import padded_row_length
 from terra.datasets.dataloaders import init_dataloader_and_sampler
 from terra.masks.block_masking  import BlockMaskCollator
 from terra.masks.cell_masking import CellMaskCollator
@@ -282,7 +283,7 @@ def _truncation_settings(dataset: Dataset,
     if (tokenized_seq_len_cell is not None
             and data_config['tokenizer_type'] == 'cell_graph'
             and model_input_size and n_neighs and len(dataset) > 0
-            and len(dataset[0]['gene_tokens']) == model_input_size):
+            and padded_row_length(dataset[0]) == model_input_size):
         tokenized_seq_len_cell = model_input_size // (n_neighs + 1)
     return truncate_neighbors, tokenized_seq_len_cell
 

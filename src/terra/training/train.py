@@ -858,7 +858,19 @@ def train(args: dict,
         'allow_checkpoint_load_failure', False)
     use_profiler = args['state'].get('use_profiler', False)
 
-    if 'precomputed_epoch_n_nonzero_tokens' in args['data'].keys():
+    # Without precomputed lists, the cell datasets take the lengths from the
+    # (split) datasets; compact datasets (terra.datasets.compact) derive them
+    # for the layout read from their segment lengths, so the lists are
+    # optional
+    n_nonzero_tokens = None
+    epoch_n_nonzero_tokens = ([None] * len(train_dataset)
+                              if isinstance(train_dataset, list) else None)
+    if args['data'].get('precomputed_epoch_n_nonzero_tokens'):
+        if not isinstance(train_dataset, list):
+            # (a NameError before)
+            raise ValueError(
+                "data.precomputed_epoch_n_nonzero_tokens holds one list per "
+                "epoch split; it needs data.precomputed_epoch_splits.")
         with open(args['data']['precomputed_epoch_n_nonzero_tokens'], "rb") as f:
             epoch_n_nonzero_tokens = pickle.load(f)
         _check_n_nonzero_lengths(
@@ -866,14 +878,12 @@ def train(args: dict,
             (train_dataset if isinstance(train_dataset, list)
              else [train_dataset] * len(epoch_n_nonzero_tokens)),
             args['data']['precomputed_epoch_n_nonzero_tokens'])
-    elif args['data']['precomputed_n_nonzero_tokens']:
+    elif args['data'].get('precomputed_n_nonzero_tokens'):
         with open(args['data']['precomputed_n_nonzero_tokens'], "rb") as f:
             n_nonzero_tokens = pickle.load(f)
         _check_n_nonzero_lengths(
             [n_nonzero_tokens], [train_dataset],
             args['data']['precomputed_n_nonzero_tokens'])
-    else:
-        n_nonzero_tokens = None
 
     # Load token dict and get token dict-specfic params
     with open(token_dict_folder_path, 'rb') as file:
