@@ -152,6 +152,62 @@ def test_perturb_dataset_equal(tiny, monkeypatch, tmp_path):
         assert a[col] == b[col], col
 
 
+def test_perturb_dataset_refuses_fold_changes_of_rounded_values(
+        tiny, monkeypatch):
+    # Read-depth normalized float64 counts are float64 values, which the
+    # compact format rounds to float32; a fold change of the rounded value can
+    # differ in the last bit from one on the padded tokenization. Shifted-log
+    # values (test_perturb_dataset_equal) are float32 and stored exactly.
+    import pandas as pd
+
+    from terra import harmonize_adata, perturb_dataset, tokenize_adata
+    from terra.datasets import to_padded
+
+    config = copy.deepcopy(tiny.configs['96M'])
+    config['data'].update(count_cell_norm_method='read_depth',
+                          count_count_norm_method=None)
+    bundle = tiny.bundle('96M_read_depth', config)
+    harmonized = harmonize_adata(
+        tiny.adata(),
+        gene_mapping_dict_file_path=str(bundle / 'ensembl_dictionary.pkl'),
+        min_genes_per_cell=0, min_cells_per_gene=0)
+    harmonized.X = harmonized.X.astype(np.float64)
+    out = {}
+    for fmt in ('padded', 'compact'):
+        with monkeypatch.context() as m:
+            if fmt == 'compact':
+                m.setattr(cell_tokenizers, 'CellGraphTokenizer',
+                          _CompactCellGraphTokenizer)
+            out[fmt] = tokenize_adata(
+                harmonized.copy(), model_folder_path=str(bundle),
+                cache_directory_path=str(bundle.parent / f'cache_rd_{fmt}'),
+                nproc=1, processing_mode='sequential')
+    padded, compact = out['padded'], out['compact']
+    assert is_compact(compact)
+    a = padded.with_format(None)['gene_expr']
+    b = to_padded(compact).with_format(None)['gene_expr']
+    assert a != b
+    assert [np.float32(x).tolist() for x in a] == b
+
+    def perturb_df(kind):
+        return pd.DataFrame([{
+            'perturbed_ensembl_id': 'all', 'perturbed_cell_id': 'all',
+            'perturbation_target': 'cell', 'perturbation_type': kind,
+            'foldchange': 1.5 if kind == 'foldchange' else np.nan}])
+
+    kw = dict(model_folder_path=str(bundle), seq_len_cell=16, n_segments=4)
+    with pytest.raises(ValueError, match="storage_format='padded'"):
+        perturb_dataset(compact, perturb_df('foldchange'), **kw)
+    assert len(perturb_dataset(padded, perturb_df('foldchange'), **kw)) == 40
+    # Knockouts edit no values that the rounding touched
+    results = [perturb_dataset(dataset, perturb_df('knockout'), **kw)
+               for dataset in (padded, compact)]
+    for x, y in zip(*results):
+        for key in ('gene_tokens', 'gene_expr'):
+            assert np.asarray(x[key]).dtype == np.asarray(y[key]).dtype, key
+            assert np.array_equal(np.asarray(x[key]), np.asarray(y[key])), key
+
+
 @pytest.mark.parametrize('layout,special', [('112M', True), ('96M', False)])
 def test_inference_loader_batches_equal(tiny, monkeypatch, layout, special):
     # The loader shared by embed_dataset, gene_embed_dataset and

@@ -358,6 +358,37 @@ def _affected_cell_indices(dataset: Dataset,
     return idx
 
 
+def _check_compact_fold_changes(model_config: dict,
+                                perturb_df: pd.DataFrame):
+    """
+    Refuse fold changes on a compact dataset whose values the compact format
+    rounded.
+
+    The compact format stores float32 values (``terra.datasets.compact``).
+    Shifted-log values are float32 (``normalize_by_shifted_log``), so they are
+    stored exactly and the perturbed values equal those of the padded
+    tokenization. The values of other count normalizations (or raw counts)
+    can be float64 values that the compact format rounded to float32: a fold
+    change of the rounded value (applied in float64, then read as float32)
+    can differ in the last bit from one applied to the padded tokenization's
+    value. The unperturbed inputs and knockouts are the same.
+    """
+    method = (model_config.get("data") or {}).get("count_count_norm_method")
+    if method == "shifted_log":
+        return
+    if (perturb_df["perturbation_type"] == "foldchange").any():
+        raise ValueError(
+            "Fold changes on a compact dataset need float32 expression values "
+            "(count_count_norm_method 'shifted_log'); the model's "
+            f"count_count_norm_method is {method!r}, whose values can be "
+            "float64 values that the compact format stored rounded to float32, "
+            "so the perturbed values could differ in the last bit from those "
+            "of the padded tokenization. Tokenize the data with "
+            "storage_format='padded' "
+            "(e.g. with terra.tokenize_adata) for fold changes; knockouts work "
+            "on either format.")
+
+
 def perturb_dataset(dataset: Dataset,
                     perturb_df: pd.DataFrame,
                     model_folder_path: str,
@@ -473,6 +504,7 @@ def perturb_dataset(dataset: Dataset,
 
     # The perturbations edit the padded layout (fixed segment positions)
     if is_compact(dataset):
+        _check_compact_fold_changes(model_config, perturb_df)
         logger.info('Converting the compact dataset to the padded layout.')
         dataset = to_padded(dataset, keep_in_memory=keep_in_memory)
 

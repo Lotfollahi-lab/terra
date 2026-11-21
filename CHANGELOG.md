@@ -21,7 +21,9 @@ and this project adheres to [Semantic Versioning][].
     that read fewer neighbours or genes per cell, and
     `terra.datasets.to_padded` converts them back. Compact datasets need this
     version of TERRA to be read; the padded format remains the default and is
-    read as before.
+    read as before. Values are stored as float32, exactly for shifted-log
+    models; for other count normalizations `perturb_dataset` refuses fold
+    changes on compact datasets, whose results could differ in the last bit.
 -   New `meta.attention_backend` config option restricting the scaled
     dot-product-attention (SDPA) backends: `auto` (default; excludes
     FlashAttention), `flash` (allows it: lowest memory, largest usable batch

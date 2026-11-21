@@ -41,6 +41,14 @@ the shifted-log values are numpy's float32 log1p of the counts
 (``normalize_by_shifted_log``), whose implementation depends on the CPU numpy
 runs on (SIMD dispatch), so values recomputed on another machine at load time
 are not guaranteed to be the bits the tokenizer stored.
+
+Shifted-log values are float32, so the compact format stores them exactly.
+The values of other count normalizations (e.g. pflog1ppf, or raw counts that
+are not integers) can be float64 values, which it stores rounded to float32.
+The model reads float32, so its inputs are the same, but arithmetic on the
+float64 values before they are read is not: a fold change can differ in the
+last bit, and ``perturb_dataset`` refuses fold changes on such compact
+datasets (knockouts work).
 """
 
 from __future__ import annotations
@@ -540,7 +548,8 @@ def to_padded(dataset, num_proc: int | None = None,
     float64 values and coordinates, as the tokenizer writes it), keeping the
     dataset's format. The torch-formatted rows (the model inputs) equal those
     of the compact dataset; float64 values and coordinates that the tokenizer
-    computed in float64 hold their float32 rounding.
+    computed in float64 hold their float32 rounding (shifted-log values are
+    float32 and come back exactly).
     """
     from datasets import Value
     List = _list_feature
