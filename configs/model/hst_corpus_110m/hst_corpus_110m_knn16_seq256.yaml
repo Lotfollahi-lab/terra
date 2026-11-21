@@ -1,0 +1,221 @@
+# ==============================================================================
+# TERRA pretraining on the re-tokenized hst_corpus_110m, model layout
+# 16 neighbours x 256 genes per cell (4352 tokens), read from the corpus of
+# 16 neighbours x 512 genes per cell in the compact storage format.
+#
+# - Needs TERRA with compact tokenized datasets (branch
+#   feat/compact-tokenized-data); TERRA dev 7179a03 refuses compact rows.
+# - Recipe: the round-5 suggested retrain config (rebuttal/
+#   code_review_2026-11-11/REPORT.md section 4) with TERRA-96M's
+#   special_tokens [] and cell_pos_enc coord.
+# - Job config: configs/job/hst_corpus_110m/hst_corpus_110m_knn16_seq256.yaml
+#   (16 GPUs: 2 nodes x 8). Batch size, LR, EMA and weight decay below
+#   are set for 16 GPUs; change them together with the GPU count.
+#
+# OPEN RECIPE DECISIONS (the values below are defaults, not decisions):
+# 1. Metatokens: [] as TERRA-96M. Alternative (round 5): ['assay'] with
+#    mask.special_token_pad_ratio 0.3 (the flagship hst_corpus_110m.yaml
+#    also sets data.nz_spc and meta.new_spc true with metatokens; they
+#    change how metatokens are encoded). Never 'batch' (round-5 F-2, F-7)
+#    or 'gene_panel' (round-4 A-1).
+# 2. Batch size: 70 per GPU, global 1120 on 16 GPUs. ESTIMATE from
+#    CPU-measured activation memory (devaudit/overnight/seq512/SEQ512.md 4):
+#    the memory fraction of TERRA-96M's 144 per GPU at 10 x 256, with every
+#    segment full, mask ratio 0.6 and padded masks; not measured on a
+#    GPU. Pilot first: one step at this batch on one 80 GB GPU,
+#    torch.cuda.max_memory_allocated(); raise the batch if far below 80 GB.
+#    With mask ratio 0.8 (item 7) the same estimate gives 88 per GPU.
+# 3. LR and EMA: rescaled from TERRA-96M (global 4608, lr 6e-5,
+#    ema [0.9995, 1.0]) to global 1120: lr = 6e-5 * sqrt(r),
+#    1 - ema0 = 0.0005 * r, r = global / 4608 (square-root rule; same EMA
+#    horizon in samples). On 32 GPUs (4 nodes): global 2240, lr 4.18e-05,
+#    ema [0.999757, 1.0], weight decay 0.0279 -> 0.279.
+#    Unscaled alternative: lr 6e-5, ema [0.9995, 1.0]. Heuristics; pilot
+#    (round-5 P3).
+# 4. Weight decay: TERRA-96M's 0.04 -> 0.4 (I-JEPA default, round 5), times
+#    sqrt(r) to keep sum(lr * wd) over the run. Alternatives: 0.04 -> 0.4
+#    unscaled, or 0.4 -> 4.0 (TERRA-112M). Pilot (round-5 F-R4).
+# 5. Warmup: 0.25 epoch (round 5; gradient clipping is off during warmup).
+#    TERRA-96M: 1 epoch.
+# 6. Epochs: 5. About 86k steps per epoch on 16 GPUs (96M
+#    training cells assumed; the new split decides), 4.1x the
+#    steps of TERRA-96M's 5 epochs. Wall-clock time per step is unmeasured.
+# 7. Mask ratio 0.6 (round 5, TERRA-112M); TERRA-96M used 0.8.
+# 8. Count encoding value_bins with 20 bins (round 5, TERRA-112M); TERRA-96M
+#    used mlp.
+# 9. mask.min_context_genes 1 (round 5): every cell keeps a context gene;
+#    changes results relative to the released models.
+# 10. Release epoch: pre-register the rule (round 5, section 2), e.g. the
+#    final epoch, or the best epoch on labelled batches in no reported
+#    benchmark. test_model_checkpoint.py scores the corpus validation
+#    batches, which are zero-shot benchmark batches.
+# 11. Held-out batches: val_batch_ids / test_batch_ids are the 32 + 187 ids
+#    of terra-reproducibility analysis/data_preparation/heldout_batch_ids.py
+#    (last changed in 19bf480e; the same on dev 3fb1e380), so train()'s
+#    held-out scan (datasets/utils.py _check_split_excludes_heldout) covers
+#    all 219 ids. They include 75_batch0-3 (shp75-4b_1p), which TERRA-96M
+#    trained on: a user decision, the lists are not changed here. A
+#    TERRA-112M-style run on all cells uses ..._precomputed_split_full.pkl
+#    (split_dataset.py --full_dataset) and no val/test lists.
+#
+# Corpus keys (must match terra_tokenizer_params.json of the corpus; train()
+# raises otherwise, src/terra/tokenizers/params.py reconcile_tokenizer_params):
+# - tokenized_seq_len_cell: 512 is the corpus stride. Without it, a model
+#   with seq_len_cell 256 misreads the rows silently on dev; this branch
+#   raises (params.py _layout_mismatches).
+# - No precomputed_n_nonzero_tokens: compact rows give the lengths of the
+#   layout read when the dataset loads (datasets/cell_datasets.py:178-196,
+#   compact.layout_n_nonzero_tokens); train.py treats the key as optional.
+# - model_input_size / n_neighs are the MODEL layout: inference tokenizes new
+#   data with them ((n_neighs + 1) x seq_len_cell). Training does not read
+#   them and train() does not check them against the record.
+# - zero_expr_from_raw_counts, gcrd_*, seurat_loess_span: the tokenizer
+#   defaults (cell_tokenizers.py:373-376), which the corpus tokenizer configs
+#   keep; stated so that inference (inference/tokenize.py TOKENIZER_CONFIG_KEYS)
+#   and the record check use them explicitly. include_zero_expr_genes (false)
+#   is recorded but not checked; aggregate_own_neighbors is cell_neigh only.
+# - norm_factor_file_path: the file the corpus was tokenized with (tie-break
+#   key tie_break_mean); its sha256 must equal the record's, and train()
+#   copies it into the run folder. No pf_targets_file_path (shifted_log).
+# - precomputed_split: written by split_dataset.py with
+#   --tokenizer_folder_path $TERRA_DATA_DIR/tokenizer (its default is
+#   /nfs/team361/sb75/DATASETS/tokenizer); it records the held-out ids it
+#   excludes, so train() skips the cell-id scan when they cover both lists.
+# - The protein_init and special_token_correction sections are absent, i.e.
+#   off.
+# ==============================================================================
+seed: 0
+data:
+  dataset_name: 'hst_corpus_110m'
+  tokenizer_type: 'cell_graph'
+  model_input_size: 4352 # model layout: (n_neighs + 1) * seq_len_cell
+  n_neighs: 16
+  seq_len_cell: 256
+  seq_len_neighborhood: 4096 # n_neighs * seq_len_cell
+  n_segments: 17 # n_neighs + 1
+  tokenized_seq_len_cell: 512 # corpus stride (16 x 512 corpus)
+  truncate_neighbors: false # all 16 neighbours of the corpus
+  rank_cell_norm_method: null
+  rank_gene_norm_method: null
+  rank_count_norm_method: null
+  count_cell_norm_method: null
+  count_gene_norm_method: null
+  count_count_norm_method: 'shifted_log'
+  stable_rank_ties: true
+  rank_tie_break_norm_factor: 'tie_break_mean'
+  eliminate_stored_zeros: true
+  pad_empty_neighbors: true
+  zero_expr_from_raw_counts: false # tokenizer default
+  gcrd_basis_target_read_depth: 153.4768 # tokenizer default (unused with shifted_log)
+  gcrd_target_read_depth_per_gene: 0.0487 # tokenizer default (unused with shifted_log)
+  seurat_loess_span: 0.75 # tokenizer default (unused with shifted_log)
+  raw_data_folder_path: '${TERRA_DATA_DIR}/silver/hst_corpus_110m'
+  token_dict_folder_path: '${TERRA_DATA_DIR}/tokenizer/token_dictionary_homo_sapiens.pkl'
+  tokenized_data_folder_path: '${TERRA_DATA_DIR}/gold/cell-graph-tokenizer/hst_corpus_110m/hst_corpus_110m_32_None_None_None_None_None_shifted_log_knn_16_8704.dataset'
+  norm_factor_file_path: '/nfs/team361/sb75/terra-reproducibility/artifacts/data/hst_corpus_110m/hst_corpus_110m_train_norm_factors.csv'
+  precomputed_split: '${TERRA_DATA_DIR}/tokenizer/hst_corpus_110m_32_None_None_None_None_None_shifted_log_knn_16_8704_precomputed_split_train.pkl'
+  sampling_strategy: null
+  batch_size: 70 # per GPU; ESTIMATE, see item 2 above
+  num_workers: 16
+  pin_memory: True
+  sep_gene_tokens_neb: False
+  use_sampler: True
+  n_special_values: 1000
+  nz_spc: False
+  mega_batch_mult_max: 1000
+  val_batch_ids: [
+    '49_batch0', '1000_batch11', '1000_batch19', '1000_batch32', '1007_batch1', '1007_batch14', '1002_batch3',
+    '1002_batch15', '1002_batch27', '59_batch0', '59_batch6', '59_batch7', '59_batch4', '59_batch1',
+    '59_batch5', '78_batch3', '78_batch10', '78_batch1', '78_batch0', '78_batch2', '78_batch6',
+    '78_batch7', '78_batch9', '78_batch8', '78_batch4', '78_batch5', '75_batch0', '75_batch1',
+    '75_batch2', '75_batch3', '1016_batch3', '1016_batch12']
+  test_batch_ids: [
+    '1002_batch40', '1002_batch4', '1002_batch16', '1002_batch18', '1002_batch23', '1002_batch31', '1002_batch34',
+    '1002_batch53', '1002_batch55', '1002_batch46', '1018_batch0', '1018_batch1', '1018_batch2', '1018_batch3',
+    '1018_batch4', '1018_batch5', '1018_batch6', '1018_batch7', '1018_batch8', '1018_batch9', '1018_batch10',
+    '1018_batch11', '1018_batch12', '1018_batch13', '1018_batch14', '1018_batch15', '1018_batch16', '1018_batch17',
+    '1018_batch18', '1018_batch19', '1018_batch20', '1018_batch21', '1018_batch22', '1019_batch0', '1019_batch1',
+    '1019_batch2', '1019_batch3', '1019_batch4', '1019_batch5', '1019_batch6', '1019_batch7', '1019_batch8',
+    '1019_batch9', '1019_batch10', '1019_batch11', '1019_batch12', '1019_batch13', '1019_batch14', '1019_batch15',
+    '1019_batch16', '1019_batch17', '1019_batch18', '1016_batch0', '1016_batch1', '1016_batch2', '1016_batch4',
+    '1016_batch5', '1016_batch6', '1016_batch7', '1016_batch8', '1016_batch9', '1016_batch10', '1016_batch11',
+    '1016_batch13', '1016_batch14', '1016_batch15', '1016_batch16', '1016_batch17', '1017_batch0', '1017_batch1',
+    '1017_batch2', '1017_batch3', '30_batch0', '34_batch0', '35_batch0', '60_batch0', '1000_batch37',
+    '1000_batch36', '1000_batch28', '1000_batch6', '1000_batch2', '1000_batch0', '1000_batch3', '1000_batch16',
+    '1000_batch15', '1000_batch22', '1000_batch27', '1000_batch29', '1000_batch30', '1009_batch5', '1009_batch4',
+    '1009_batch9', '1009_batch10', '1009_batch6', '1009_batch14', '1009_batch0', '1009_batch8', '1009_batch11',
+    '1009_batch1', '1009_batch3', '1009_batch7', '1009_batch13', '1010_batch5', '1010_batch19', '1010_batch4',
+    '1010_batch9', '1010_batch20', '1010_batch17', '1010_batch10', '1010_batch14', '1010_batch25', '1010_batch0',
+    '1010_batch8', '1010_batch23', '1010_batch21', '1010_batch1', '1010_batch7', '1010_batch16', '1010_batch15',
+    '1010_batch13', '1010_batch12', '1011_batch5', '1011_batch4', '1011_batch9', '1011_batch20', '1011_batch17',
+    '1011_batch10', '1011_batch6', '1011_batch8', '1011_batch18', '1011_batch11', '1011_batch21', '1011_batch7',
+    '1011_batch16', '1022_batch0', '1022_batch1', '1022_batch2', '1022_batch3', '1022_batch4', '1022_batch5',
+    '1022_batch6', '1022_batch7', '1022_batch8', '1022_batch9', '1022_batch10', '1022_batch11', '1022_batch12',
+    '1022_batch13', '1022_batch14', '1022_batch15', '1022_batch16', '1022_batch17', '1022_batch18', '1022_batch19',
+    '1022_batch22', '1022_batch23', '1022_batch24', '1022_batch25', '1022_batch26', '1022_batch27', '1022_batch28',
+    '1022_batch29', '1022_batch30', '1022_batch31', '1022_batch32', '1022_batch33', '1022_batch34', '1022_batch35',
+    '1022_batch36', '1022_batch37', '1022_batch38', '1022_batch39', '1022_batch40', '1022_batch41', '1022_batch42',
+    '1022_batch43', '1022_batch44', '1022_batch45', '1022_batch46', '1022_batch47', '1022_batch48', '1022_batch49',
+    '1022_batch50', '1022_batch51', '1022_batch52', '1022_batch53', '1022_batch54']
+meta:
+  api_version: 'v3'
+  add_cls: False
+  gt_type: 'combined'
+  count_encoding: 'value_bins'
+  n_value_bins: 20
+  cell_pos_enc: 'coord'
+  enc_depth: 12
+  enc_emb_dim: 384
+  pred_depth: 12
+  pred_emb_dim: 192
+  num_heads: 6
+  mlp_ratio: 4
+  special_tokens: []
+  pos_learnable: False
+  use_bfloat16: True
+  use_flash_attention: True
+  attention_backend: flash # in effect the kernels of 'torch' (how TERRA-96M/112M trained): flash unmasked, memory-efficient masked (models/modules.py:27-59)
+  use_layer_norm: True
+  predict_gene: True
+  new_spc: False
+  excl_spc_from_loss: True
+  target_enc_layer_norm: True
+  mlp_bias: True
+  zero_fully_masked_attention_rows: True # required with padded masks and no metatokens
+mask:
+  n_contexts: 1
+  n_targets: 1
+  block_masking: True
+  cell_masking: False
+  targets_list: null
+  context_mask_size: 200 # unused with block masking
+  target_mask_size: 50 # unused with block masking
+  per_block_mask_ratio: 0.6
+  sample_segments: True
+  special_token_pad_ratio: 0.0 # no metatokens
+  restrict_special_attention: False
+  pad_masks_to_batch_max: True
+  min_context_genes: 1
+optimization:
+  warmup: 0.25
+  epochs: 5
+  ema:
+  - 0.999878
+  - 1.0
+  start_lr: 1.0e-06
+  lr: 2.96e-05
+  final_lr: 1.0e-06
+  weight_decay: 0.0197
+  final_weight_decay: 0.197
+  ipe_scale: 1.0
+  clip_grad: 2.0
+  lambda_var: 0.
+  lambda_cov: 0.
+state:
+  log_freq: 20
+  checkpoint_freq: 1
+  checkpoint_freq_iter: 5000
+  write_tag: terra
+  folder_path: null # new timestamped run folder; to resume, set it to that folder (absolute) and load_checkpoint: True
+  load_checkpoint: False
+  read_checkpoint: null
