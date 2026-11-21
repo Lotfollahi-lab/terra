@@ -540,7 +540,8 @@ def collect_adata_from_folder(load_folder_path: str,
                               ) -> ad.AnnData:
     """
     Loop through folder, read all `.h5ad` files and concatenate them
-    into one AnnData object.
+    into one AnnData object. Linked dataset folders are followed, so a
+    cohort folder can hold links to the dataset folders instead of copies.
 
     Parameters
     --------
@@ -567,7 +568,7 @@ def collect_adata_from_folder(load_folder_path: str,
     adata_list = []
 
     # Walk through the load folder path and read files
-    for subdir, _, files in os.walk(load_folder_path):
+    for subdir, _, files in os.walk(load_folder_path, followlinks=True):
         if dataset_ids:
             if not any(dataset_id in subdir.split('/')[-1].split('-')[0] for dataset_id in dataset_ids):
                 continue
