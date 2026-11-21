@@ -229,12 +229,13 @@ def _cell_dataset(dataset, seq_len_cell, n_neighs, **kwargs):
     return CellGraphDataset(dataset=dataset, **base)
 
 
-def _padded_layout_lengths(padded, seq_len_cell, n_neighs):
+def _padded_layout_lengths(padded, seq_len_cell, n_neighs, seq=SEQ,
+                           n_stored=N_NEIGHS):
     """What a per-layout n_nonzero_tokens list holds for a padded dataset."""
+    if n_neighs == n_stored and seq_len_cell == seq:
+        return [int(x) for x in padded.with_format(None)['n_nonzero_tokens']]
     tokens = np.asarray(padded.with_format('numpy')['gene_tokens'])
-    if n_neighs == N_NEIGHS and seq_len_cell == SEQ:
-        return [int(x) for x in padded['n_nonzero_tokens']]
-    cols = np.concatenate([np.arange(s * SEQ, s * SEQ + seq_len_cell)
+    cols = np.concatenate([np.arange(s * seq, s * seq + seq_len_cell)
                            for s in range(n_neighs + 1)])
     return np.count_nonzero(tokens[:, cols], axis=1).tolist()
 
@@ -641,3 +642,138 @@ def test_record_of_another_storage_format_is_refused(corpora, tmp_path, fmt,
     # Without a record, the columns decide
     (path / TOKENIZER_PARAMS_FILE).unlink()
     assert len(prepare_dataset(args)[0]) == 80
+
+
+# The production layout: 16 neighbours x 512 genes per cell, read as is and
+# by models with fewer genes per cell and fewer neighbours
+
+PROD_NEIGHS, PROD_SEQ = 16, 512
+# (seq_len_cell, n_neighs) read from the stored 512 x 16 layout
+PROD_LAYOUTS = [(512, 16), (256, 16), (256, 10), (256, 6)]
+
+
+@pytest.fixture(scope='module')
+def production_layout(tmp_path_factory):
+    """
+    Padded and compact tokenizations at 16 x 512 with the corpus settings,
+    of 48 cells with up to 650 genes (contiguous token ids, as the token
+    dictionary built for the corpus).
+    """
+    import pandas as pd
+    tmp_path = tmp_path_factory.mktemp('compact_16x512')
+    rng = np.random.default_rng(5)
+    n_cells, n_genes = 48, 700
+    genes = [f'ENSG{i:011d}' for i in range(n_genes)]
+    token_dict = {'<pad>': 0, '<mask>': 1}
+    token_dict.update({g: 2 + i for i, g in enumerate(genes)})
+    for name in ('spv_0_b0', 'spv_xenium', 'spv_homo_sapiens', 'spv_lung'):
+        token_dict[name] = len(token_dict)
+    with open(tmp_path / 'td.pkl', 'wb') as f:
+        pickle.dump(token_dict, f)
+    pd.DataFrame({'gene_id': genes,
+                  'tie_break_mean': rng.uniform(0.1, 2, n_genes)}).to_csv(
+        tmp_path / 'nf.csv', index=False)
+    counts = rng.poisson(0.05, (n_cells, n_genes))
+    counts[:5] = rng.poisson(2.0, (5, n_genes))     # more than 512 genes
+    counts[5:10] = rng.random((5, n_genes)) < 0.55  # ~385 genes, all tied
+    counts[[12, 30]] = 0                            # empty cells
+    adata = ad.AnnData(X=sp.csr_matrix(counts.astype(np.int64)))
+    adata.var['ensembl_id'] = genes
+    adata.obs['cell_id'] = [f'0_b0_{i}' for i in range(n_cells)]
+    adata.obsm['spatial'] = rng.uniform(0, 300, (n_cells, 2))
+    adata.uns.update(dataset_id='0', batch='b0', assay='xenium',
+                     species='homo_sapiens', tissue='lung')
+    (tmp_path / 'in').mkdir()
+    adata.write_h5ad(tmp_path / 'in' / 'b0.h5ad')
+    settings = dict(
+        model_input_size=PROD_SEQ * (PROD_NEIGHS + 1), n_neighs=PROD_NEIGHS,
+        token_dictionary_file_path=tmp_path / 'td.pkl',
+        norm_factor_file_path=str(tmp_path / 'nf.csv'),
+        rank_cell_norm_method=None, rank_gene_norm_method=None,
+        rank_count_norm_method=None, count_cell_norm_method=None,
+        count_gene_norm_method=None, count_count_norm_method='shifted_log',
+        include_zero_expr_genes=False, stable_rank_ties=True,
+        rank_tie_break_norm_factor='tie_break_mean', pad_empty_neighbors=True,
+        eliminate_stored_zeros=True, stream_per_file=True)
+    out = {fmt: _tokenize(tmp_path, f'prod_{fmt}', True,
+                          **settings, storage_format=fmt)
+           for fmt in ('padded', 'compact')}
+    lengths = np.stack(out['compact'].with_format('numpy')['segment_lengths'])
+    assert lengths.shape == (n_cells, PROD_NEIGHS + 1)
+    assert (lengths == PROD_SEQ).any() and (lengths[:, 0] == 0).any()
+    assert ((lengths > 256) & (lengths < PROD_SEQ)).any()
+    assert out['compact'].features['gene_tokens'].feature.dtype == 'int16'
+    return out
+
+
+def _production_cell_dataset(dataset, seq_len_cell, n_neighs, **kwargs):
+    return CellGraphDataset(
+        dataset=dataset, gt_type='combined', cell_pos_enc='coord',
+        vocab_size=706, seq_len_cell=seq_len_cell,
+        seq_len_neighborhood=seq_len_cell * n_neighs,
+        special_tokens=['batch', 'assay'], include_cell_id=True,
+        truncate_neighbors=n_neighs != PROD_NEIGHS,
+        tokenized_seq_len_cell=PROD_SEQ, **kwargs)
+
+
+@pytest.mark.parametrize('seq_len_cell,n_neighs', PROD_LAYOUTS)
+def test_production_layout_items_equal(production_layout, seq_len_cell,
+                                       n_neighs):
+    padded = production_layout['padded'].with_format('torch')
+    compact = production_layout['compact'].with_format('torch')
+    expected = _padded_layout_lengths(padded, seq_len_cell, n_neighs,
+                                      seq=PROD_SEQ, n_stored=PROD_NEIGHS)
+    dp = _production_cell_dataset(padded, seq_len_cell, n_neighs,
+                                  n_nonzero_tokens_list=expected)
+    dc = _production_cell_dataset(compact, seq_len_cell, n_neighs)
+    assert dc.n_nz_tokens.tolist() == expected
+    n_tokens = 2 + seq_len_cell * (n_neighs + 1)
+    for i in range(len(dp)):
+        a, b = dp[i], dc[i]
+        assert a['tokens'].shape == (n_tokens,)
+        _assert_same(a, b)
+
+
+def test_padded_datasets_are_written_and_read_as_before(production_layout):
+    # The default format writes the padded columns and dtypes of earlier
+    # TERRA versions and no storage format record, and the cell dataset
+    # reads them as before: the stored row lengths, and the first 256 genes
+    # of the cell and of its first 6 neighbours (all-padding neighbour
+    # segments skipped, the sequence padded at the end)
+    import json
+    from pathlib import Path
+
+    from terra.tokenizers.params import TOKENIZER_PARAMS_FILE
+    raw = production_layout['padded']
+    assert list(raw.features) == [
+        'rel_x_coord', 'rel_y_coord', 'cell_id', 'batch_value',
+        'gene_panel_value', 'assay_value', 'species_value', 'tissue_value',
+        'gene_tokens', 'gene_expr', 'n_nonzero_tokens']
+    dtypes = {col: getattr(feature, 'feature', feature).dtype
+              for col, feature in raw.features.items()}
+    assert dtypes['gene_tokens'] == dtypes['n_nonzero_tokens'] == 'int64'
+    assert dtypes['gene_expr'] == dtypes['rel_x_coord'] == 'float64'
+    assert dtypes['batch_value'] == 'int64'
+    folder = Path(raw.cache_files[0]['filename']).parent
+    record = json.loads((folder / TOKENIZER_PARAMS_FILE).read_text())
+    assert 'storage_format' not in record
+    padded = raw.with_format('torch')
+    assert not is_compact(padded)
+    dp = _production_cell_dataset(padded, 256, 6)
+    assert not dp.compact
+    assert dp.n_nz_tokens == [int(x) for x in raw['n_nonzero_tokens']]
+    n_skipped = 0
+    for i in range(len(dp)):
+        row, item = padded[i], dp[i]
+        segments = [torch.arange(s * PROD_SEQ, s * PROD_SEQ + 256)
+                    for s in range(7)]
+        kept = [segments[0]] + [
+            cols for cols in segments[1:] if row['gene_tokens'][cols].any()]
+        n_skipped += 7 - len(kept)
+        cols = torch.cat(kept)
+        n = len(cols)
+        assert torch.equal(item['tokens'][2:2 + n], row['gene_tokens'][cols])
+        assert torch.equal(item['values'][2:2 + n], row['gene_expr'][cols])
+        assert not item['tokens'][2 + n:].any()
+        assert not item['values'][2 + n:].any()
+    assert n_skipped > 0

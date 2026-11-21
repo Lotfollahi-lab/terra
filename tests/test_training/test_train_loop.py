@@ -699,3 +699,75 @@ def test_train_records_the_reconciled_tokenizer_settings(run_train, tmp_path,
     import yaml
     with open(tmp_path / 'run' / 'params.yaml') as f:
         assert yaml.safe_load(f)['data']['stable_rank_ties'] is True
+
+
+def _compact_dataset(padded: Dataset) -> Dataset:
+    """The rows of `padded` in the compact storage format."""
+    import numpy as np
+    from datasets import Features, Sequence, Value
+
+    from terra.datasets.compact import compact_row
+    rows = padded.with_format(None)
+    mis = SEQ_LEN_CELL * N_SEGMENTS
+    out = {'gene_tokens': [], 'gene_expr': [], 'n_nonzero_tokens': [],
+           'batch_value': [], 'cell_id': [], 'segment_lengths': [],
+           'model_input_size': []}
+    for row in rows:
+        tokens, values, lengths = compact_row(
+            np.asarray(row['gene_tokens']), np.asarray(row['gene_expr']),
+            N_SEGMENTS, mis, np.int16)
+        out['gene_tokens'].append(tokens)
+        out['gene_expr'].append(values)
+        out['segment_lengths'].append(lengths)
+        out['model_input_size'].append(mis)
+        for key in ('n_nonzero_tokens', 'batch_value', 'cell_id'):
+            out[key].append(row[key])
+    dataset = Dataset.from_dict(out, features=Features({
+        'gene_tokens': Sequence(Value('int16')),
+        'gene_expr': Sequence(Value('float32')),
+        'n_nonzero_tokens': Value('int32'),
+        'batch_value': Sequence(Value('int32')),
+        'cell_id': Value('string'),
+        'segment_lengths': Sequence(Value('int16')),
+        'model_input_size': Value('int32')}))
+    dataset.set_format(type='torch',
+                       columns=[c for c in out if c != 'cell_id'],
+                       output_all_columns=True)
+    return dataset
+
+
+@pytest.mark.parametrize('sliced', [False, True])
+def test_compact_dataset_trains_like_the_padded_one(run_train, tmp_path,
+                                                    sliced):
+    # The same losses, models and optimizer states from the compact format,
+    # at the stored layout and at a sliced one (4 genes of the cell and of
+    # its nearest neighbour), whose sampler lengths the compact dataset
+    # derives and the padded one reads from a per-layout list
+    from terra.datasets.compact import is_compact
+    padded = _dataset()
+    compact = _compact_dataset(padded)
+    assert is_compact(compact)
+    overrides = {}
+    if sliced:
+        overrides['data'] = dict(
+            seq_len_cell=4, seq_len_neighborhood=4, n_segments=2,
+            truncate_neighbors=True, tokenized_seq_len_cell=SEQ_LEN_CELL)
+    padded_overrides = copy.deepcopy(overrides)
+    if sliced:
+        tokens = padded[:]['gene_tokens']
+        cols = torch.cat([torch.arange(s * SEQ_LEN_CELL, s * SEQ_LEN_CELL + 4)
+                          for s in range(2)])
+        lengths = (tokens[:, cols] != 0).sum(dim=1).tolist()
+        path = tmp_path / 'layout_n_nonzero_tokens.pkl'
+        with open(path, 'wb') as f:
+            pickle.dump(lengths, f)
+        padded_overrides['data']['precomputed_n_nonzero_tokens'] = str(path)
+    result = {}
+    states = {}
+    for fmt, dataset, config in (('padded', padded, padded_overrides),
+                                 ('compact', compact, overrides)):
+        result[fmt] = run_train(dataset=dataset, **copy.deepcopy(config))
+        states[fmt] = _final_state(tmp_path)
+    assert len(result['compact']['logged']) == 2 * ITERATIONS_PER_EPOCH
+    assert result['compact']['logged'] == result['padded']['logged']
+    assert _same_training_state(states['compact'], states['padded'])

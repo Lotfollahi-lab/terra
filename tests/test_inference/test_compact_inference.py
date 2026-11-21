@@ -23,18 +23,20 @@ class _CompactCellGraphTokenizer(cell_tokenizers.CellGraphTokenizer):
         super().__init__(storage_format='compact', **kwargs)
 
 
-def _tokenized_pair(tiny, bundle, monkeypatch, include_special_tokens):
+def _tokenized_pair(tiny, bundle, monkeypatch, include_special_tokens,
+                    seed=0):
     """Padded and compact tokenizations of the same data for `bundle`."""
     from terra import tokenize_adata
 
-    harmonized = tiny.harmonized(bundle, include_special_tokens)
-    padded = tiny.dataset(bundle, include_special_tokens)
+    harmonized = tiny.harmonized(bundle, include_special_tokens, seed=seed)
+    padded = tiny.dataset(bundle, include_special_tokens, seed=seed)
     with monkeypatch.context() as m:
         m.setattr(cell_tokenizers, 'CellGraphTokenizer',
                   _CompactCellGraphTokenizer)
         compact = tokenize_adata(
             harmonized.copy(), model_folder_path=str(bundle),
-            cache_directory_path=str(bundle.parent / f'cache_c{bundle.name}'),
+            cache_directory_path=str(
+                bundle.parent / f'cache_c{bundle.name}_{seed}'),
             nproc=1, processing_mode='sequential',
             include_special_tokens=include_special_tokens)
     assert is_compact(compact) and not is_compact(padded)
@@ -148,3 +150,50 @@ def test_perturb_dataset_equal(tiny, monkeypatch, tmp_path):
     assert a.column_names == b.column_names and len(a) == len(b)
     for col in a.column_names:
         assert a[col] == b[col], col
+
+
+@pytest.mark.parametrize('layout,special', [('112M', True), ('96M', False)])
+def test_inference_loader_batches_equal(tiny, monkeypatch, layout, special):
+    # The loader shared by embed_dataset, gene_embed_dataset and
+    # infer_token_distance yields the same batches
+    import torch
+
+    from terra.inference.embed import _init_inference_loader
+    from terra.utils.helper import resolve_special_token_padding
+
+    bundle = tiny.bundle(layout)
+    config = tiny.configs[layout]
+    padded, compact = _tokenized_pair(tiny, bundle, monkeypatch, special)
+    pad_special_tokens = resolve_special_token_padding(config, special)
+    batches = []
+    for dataset in (padded, compact):
+        torch.manual_seed(0)
+        loader = _init_inference_loader(
+            dataset=dataset, model_config=config, vocab_size=10_000,
+            pad_special_tokens=pad_special_tokens, batch_size=8,
+            pin_memory=False, num_workers=0)
+        batches.append(list(loader))
+    assert len(batches[0]) == len(batches[1]) == 5
+    for a, b in zip(*batches):
+        assert list(a[0]) == list(b[0])
+        for key in a[0]:
+            x, y = a[0][key], b[0][key]
+            if isinstance(x, torch.Tensor):
+                assert x.dtype == y.dtype and torch.equal(x, y), key
+            else:
+                assert x == y, key
+        for x, y in zip(a[1:4], b[1:4]):
+            assert (x is None and y is None) or torch.equal(x, y)
+
+
+def test_token_distance_equal(tiny, monkeypatch):
+    pytest.importorskip('geomloss')
+    from terra.inference import infer_token_distance
+
+    bundle = tiny.bundle('112M')
+    original = _tokenized_pair(tiny, bundle, monkeypatch, False)
+    perturbed = _tokenized_pair(tiny, bundle, monkeypatch, False, seed=1)
+    kw = dict(batch_size=8, num_workers=0, loss='energy')
+    _assert_equal_outputs(
+        infer_token_distance(original[0], perturbed[0], str(bundle), **kw),
+        infer_token_distance(original[1], perturbed[1], str(bundle), **kw))
