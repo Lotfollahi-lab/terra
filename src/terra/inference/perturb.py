@@ -396,7 +396,9 @@ def perturb_dataset(dataset: Dataset,
         TERRA-112M and TERRA-96M) a value v becomes
         log1p(expm1(v) * foldchange); other values are multiplied directly. A
         `"neighborhood"` target on a specific cell edits that cell's tokens in
-        the sequences of the cells that have it as a neighbor.
+        the sequences of the cells that have it as a neighbor. Gene IDs must
+        be present in the model vocabulary or be `"all"`; missing or unknown
+        IDs raise a `ValueError`. A known gene may be absent from a cell's tokens.
     model_folder_path:
         Path to the folder containing the model config and token dictionary;
         used to map ensembl IDs to token IDs.
@@ -455,6 +457,14 @@ def perturb_dataset(dataset: Dataset,
         perturb_df["perturbed_ensembl_id"] == "all",
         perturb_df["perturbed_ensembl_id"].map(token_dict),
     )
+    invalid_gene_ids = perturb_df.loc[
+        perturb_df["perturbed_gene_token"].isna(), "perturbed_ensembl_id"]
+    if not invalid_gene_ids.empty:
+        raise ValueError(
+            "perturbed_ensembl_id contains missing IDs or IDs absent from the "
+            "model vocabulary (up to 10 shown): "
+            f"{invalid_gene_ids.iloc[:10].tolist()}. "
+            "Use Ensembl gene IDs from the model's token_dictionary.pkl or 'all'.")
     logger.info(f"Applying perturbations using dataframe:\n{perturb_df}")
 
     # If all perturbations are on all cells, skip indexing
