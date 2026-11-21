@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning][].
 
 ### Added
 
+-   Compact storage of cell-graph tokenized datasets
+    (`CellGraphTokenizer(storage_format='compact')`): rows are stored without
+    padding and in the dtypes the model reads, which makes a corpus many times
+    smaller, and the model inputs are unchanged. The format is recorded with
+    the dataset and detected by training, inference and perturbation; compact
+    datasets need no precomputed `n_nonzero_tokens` lists, also for models
+    that read fewer neighbours or genes per cell, and
+    `terra.datasets.to_padded` converts them back. Compact datasets need this
+    version of TERRA to be read; the padded format remains the default and is
+    read as before.
 -   New `meta.attention_backend` config option restricting the scaled
     dot-product-attention (SDPA) backends: `auto` (default; excludes
     FlashAttention), `flash` (allows it: lowest memory, largest usable batch
@@ -215,6 +225,12 @@ and this project adheres to [Semantic Versioning][].
 
 ### Fixed
 
+-   Layouts that do not fit the data now raise instead of misreading rows
+    silently: pretraining checks the layout a cell-graph model reads
+    (`seq_len_cell`, `n_segments`, `seq_len_neighborhood`,
+    `tokenized_seq_len_cell`, `truncate_neighbors`) against the layout
+    recorded with its dataset, and `perturb_dataset` checks `seq_len_cell`
+    and `n_segments` against the dataset's rows.
 -   A checkpoint that cannot be loaded now raises an error instead of
     silently leaving the model randomly initialized (training, finetuning and
     inference). For training, `state.allow_checkpoint_load_failure: true`

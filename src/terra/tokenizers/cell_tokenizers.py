@@ -312,12 +312,14 @@ class CellBaseTokenizer(ABC):
         graph tokenizer only) stores only the tokens of each segment up to its
         last non-padding entry, plus the number of stored entries per segment
         and the padded row length, in the dtypes the model reads (int16 tokens
-        when every id of the token dictionary is below 32768, else int32;
-        float32 values and relative coordinates; int32 counts);
-        `CellGraphDataset` pads them back when it reads a row, so the model
-        inputs are the same, and derives the lengths the sampler needs for
-        any layout read from it. Datasets of one corpus must all be written
-        with the same format to be concatenated. See `terra.datasets.compact`.
+        when every id of the token dictionary fits, else int32 or int64;
+        float32 values and relative coordinates; int32 counts), and records
+        `"storage_format": "compact"` in `terra_tokenizer_params.json`.
+        `CellGraphDataset` pads the rows back when it reads them, so the
+        model inputs are the same, and derives the lengths the sampler needs
+        for any layout read from them. Datasets of one corpus must all be
+        written with the same format to be concatenated. See
+        `terra.datasets.compact`.
     """
     def __init__(
             self,

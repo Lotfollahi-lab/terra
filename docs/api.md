@@ -98,3 +98,18 @@ samples.
 
     read_xenium_10x
 ```
+
+Cell-graph datasets tokenized with `storage_format='compact'` store their
+rows without padding; every reader detects them and pads the rows back, so
+the model inputs equal those of the padded format.
+
+```{eval-rst}
+.. currentmodule:: terra.datasets
+
+.. autosummary::
+    :toctree: generated
+
+    is_compact
+    to_padded
+    layout_n_nonzero_tokens
+```
