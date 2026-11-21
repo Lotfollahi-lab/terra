@@ -197,3 +197,27 @@ def test_token_distance_equal(tiny, monkeypatch):
     _assert_equal_outputs(
         infer_token_distance(original[0], perturbed[0], str(bundle), **kw),
         infer_token_distance(original[1], perturbed[1], str(bundle), **kw))
+
+
+def test_perturb_dataset_checks_the_layout(tiny, monkeypatch):
+    # The tiny bundle's rows hold 4 segments of 16 genes; the defaults (11
+    # segments of 256) would edit and re-pack the wrong positions
+    import pandas as pd
+
+    from terra import perturb_dataset
+
+    bundle = tiny.bundle('96M')
+    perturb_df = pd.DataFrame([{
+        'perturbed_ensembl_id': 'all', 'perturbed_cell_id': 'all',
+        'perturbation_target': 'cell', 'perturbation_type': 'knockout',
+        'foldchange': np.nan}])
+    for dataset in _tokenized_pair(tiny, bundle, monkeypatch, False):
+        for layout in (dict(), dict(seq_len_cell=16, n_segments=3),
+                       dict(seq_len_cell=8, n_segments=4)):
+            with pytest.raises(ValueError, match='seq_len_cell'):
+                perturb_dataset(dataset, perturb_df,
+                                model_folder_path=str(bundle), **layout)
+        perturbed = perturb_dataset(dataset, perturb_df,
+                                    model_folder_path=str(bundle),
+                                    seq_len_cell=16, n_segments=4)
+        assert len(perturbed) == len(dataset)

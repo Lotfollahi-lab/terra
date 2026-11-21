@@ -23,7 +23,7 @@ from scipy.sparse import issparse
 
 from terra.utils.helper import init_model, load_checkpoint
 from terra.datasets.cell_datasets import CellBaseDataset, init_cell_dataset
-from terra.datasets.compact import is_compact, to_padded
+from terra.datasets.compact import is_compact, padded_row_length, to_padded
 from terra.datasets.dataloaders import init_dataloader_and_sampler
 from terra.masks.block_masking  import BlockMaskCollator
 from terra.masks.cell_masking import CellMaskCollator
@@ -439,6 +439,20 @@ def perturb_dataset(dataset: Dataset,
         The perturbed Hugging Face `Dataset`, filtered to the affected cells if
         `return_only_perturbed_cells` is `True`.
     """
+    # The perturbations edit fixed positions of the padded rows: segment s
+    # holds entries [s * seq_len_cell, (s + 1) * seq_len_cell)
+    if len(dataset) > 0:
+        row_length = padded_row_length(dataset[0])
+        if int(row_length / n_segments) != seq_len_cell:
+            raise ValueError(
+                f"The dataset's rows hold {row_length} gene tokens, i.e. "
+                f"segments of {int(row_length / n_segments)} for n_segments="
+                f"{n_segments}, but seq_len_cell is {seq_len_cell}. Pass the "
+                "dataset's layout: n_segments = n_neighs + 1 and seq_len_cell "
+                "= rows / n_segments (e.g. seq_len_cell=512, n_segments=17 "
+                "for 16 neighbours x 512 genes per cell; the defaults, 256 "
+                "and 11, are for 10 neighbours x 256 genes).")
+
     # The perturbations edit the padded layout (fixed segment positions)
     if is_compact(dataset):
         logger.info('Converting the compact dataset to the padded layout.')
