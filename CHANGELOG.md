@@ -232,7 +232,10 @@ and this project adheres to [Semantic Versioning][].
     recorded with its dataset, training and inference check that compact
     datasets are read with their segment length (`tokenized_seq_len_cell`),
     and `perturb_dataset` checks `seq_len_cell` and `n_segments` against the
-    rows of cell-graph datasets.
+    rows of cell-graph datasets. Pretraining also warns when `data.n_neighs` /
+    `data.model_input_size`, with which inference tokenizes new data, differ
+    from the dataset's: for a model reading fewer neighbours, a fresh k-NN
+    graph differs from the dataset's first k neighbours when distances tie.
 -   A checkpoint that cannot be loaded now raises an error instead of
     silently leaving the model randomly initialized (training, finetuning and
     inference). For training, `state.allow_checkpoint_load_failure: true`

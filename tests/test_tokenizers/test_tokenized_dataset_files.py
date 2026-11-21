@@ -224,6 +224,45 @@ def test_layout_check_of_the_16x512_corpus(n_neighs, seq_len_cell, ok):
     assert _layout_mismatches(config, recorded) == []
 
 
+@pytest.mark.parametrize('n_neighs, model_input_size, warns', [
+    (16, 8704, False), (10, 2816, True), (6, 1792, True), (16, 4352, True),
+    (None, None, False)])
+def test_inference_layout_warning_of_the_16x512_corpus(
+        n_neighs, model_input_size, warns):
+    # Inference tokenizes new data with the config's n_neighs and
+    # model_input_size: with the corpus' values it reads them like the
+    # corpus rows, else a fresh k-NN graph (other neighbours on ties)
+    from terra.tokenizers.params import _inference_layout_warning
+    recorded = {'tokenizer': 'CellGraphTokenizer', 'n_neighs': 16,
+                'model_input_size': 512 * 17}
+    config = dict(seq_len_cell=256, seq_len_neighborhood=2560, n_segments=11,
+                  tokenized_seq_len_cell=512, truncate_neighbors=True)
+    if n_neighs is not None:
+        config.update(n_neighs=n_neighs, model_input_size=model_input_size)
+    warning = _inference_layout_warning(config, recorded)
+    assert (warning is not None) == warns
+    if warns:
+        assert ('data.n_neighs: 16 and data.model_input_size: 8704'
+                in warning)
+    recorded['tokenizer'] = 'CellNeighborhoodTokenizer'
+    assert _inference_layout_warning(config, recorded) is None
+
+
+@pytest.mark.parametrize('n_neighs, model_input_size, warns', [
+    (N_NEIGHS, MODEL_INPUT_SIZE, False), (1, 8, True)])
+def test_reconcile_warns_when_inference_would_tokenize_another_layout(
+        tmp_path, token_dictionary_file_path, caplog, n_neighs,
+        model_input_size, warns):
+    dataset_path = _tokenize_directory(tmp_path, token_dictionary_file_path)
+    # 4 genes of the cell and of its nearest neighbour
+    keys = dict(seq_len_cell=4, seq_len_neighborhood=4, n_segments=2,
+                tokenized_seq_len_cell=8, truncate_neighbors=True,
+                n_neighs=n_neighs, model_input_size=model_input_size)
+    with caplog.at_level(logging.WARNING):
+        reconcile_tokenizer_params(_data_config(dataset_path, **keys))
+    assert ('inference tokenizes new data with them' in caplog.text) == warns
+
+
 def test_reconcile_accepts_datasets_without_a_record(tmp_path, caplog):
     data_config = _data_config(tmp_path, stable_rank_ties=True)
     with caplog.at_level(logging.WARNING):

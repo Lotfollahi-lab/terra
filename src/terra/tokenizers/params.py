@@ -193,6 +193,48 @@ def _layout_mismatches(data_config: dict, recorded: dict) -> list[str]:
     return mismatches
 
 
+def _inference_layout_warning(data_config: dict,
+                              recorded: dict) -> str | None:
+    """
+    Warning for a model config whose `n_neighs` / `model_input_size` differ
+    from those of its cell-graph dataset (`None` if they agree, or if the
+    config or record leaves them out).
+
+    Training does not read them, but inference tokenizes new data with them.
+    For a model that reads fewer neighbours (or genes) than its dataset holds,
+    new data are then not read like the training rows: a fresh k-NN graph
+    differs from the first k neighbours of the dataset's larger graph when
+    neighbour distances tie (duplicate coordinates, grids). With the dataset's
+    values, inference reads new data with `truncate_neighbors` /
+    `tokenized_seq_len_cell` as training reads the dataset
+    (`terra.inference.embed._truncation_settings`).
+    """
+    if (recorded.get('tokenizer') != 'CellGraphTokenizer'
+            or recorded.get('n_neighs') is None
+            or not recorded.get('model_input_size')
+            or data_config.get('n_neighs') is None
+            or not data_config.get('model_input_size')):
+        return None
+    dataset_layout = (int(recorded['n_neighs']),
+                      int(recorded['model_input_size']))
+    config_layout = (int(data_config['n_neighs']),
+                     int(data_config['model_input_size']))
+    if config_layout == dataset_layout:
+        return None
+    return (
+        f"data.n_neighs / data.model_input_size are {config_layout[0]} / "
+        f"{config_layout[1]}, the dataset's {dataset_layout[0]} / "
+        f"{dataset_layout[1]}. Training does not read them, but inference "
+        "tokenizes new data with them, so new data are not read like the "
+        f"training rows (a fresh {config_layout[0]}-NN graph differs from "
+        f"the first {config_layout[0]} neighbours of a "
+        f"{dataset_layout[0]}-NN graph when neighbour distances tie). Set "
+        f"data.n_neighs: {dataset_layout[0]} and data.model_input_size: "
+        f"{dataset_layout[1]}: inference then reads new data with "
+        "truncate_neighbors / tokenized_seq_len_cell as training reads the "
+        "dataset.")
+
+
 def reconcile_tokenizer_params(data_config: dict):
     """
     Check a model config's `data` section against the tokenizer settings
@@ -202,10 +244,13 @@ def reconcile_tokenizer_params(data_config: dict):
     tokenized with, or when it would make inference use other normalization
     files than the tokenization did, and, for cell-graph datasets, when the
     layout the model reads does not fit the dataset's (see
-    `_layout_mismatches`). Optional settings the config leaves out are added
-    to `data_config`, so that the saved model config makes inference tokenize
-    new data as the training data were tokenized. Datasets without a record
-    (tokenized before it was written) are accepted with a warning.
+    `_layout_mismatches`). Warns when the config's `n_neighs` /
+    `model_input_size`, with which inference tokenizes new data, differ from
+    the dataset's (see `_inference_layout_warning`). Optional settings the
+    config leaves out are added to `data_config`, so that the saved model
+    config makes inference tokenize new data as the training data were
+    tokenized. Datasets without a record (tokenized before it was written)
+    are accepted with a warning.
 
     Parameters
     ----------
@@ -276,6 +321,9 @@ def reconcile_tokenizer_params(data_config: dict):
             f"'{dataset_path}' ({recorded['n_neighs']} neighbours per cell, "
             f"rows of {recorded['model_input_size']} entries):\n  "
             + "\n  ".join(layout_mismatches))
+    layout_warning = _inference_layout_warning(data_config, recorded)
+    if layout_warning:
+        logger.warning(layout_warning)
 
     added = [key for key in OPTIONAL_KEYS
              if key in recorded and key not in data_config]
