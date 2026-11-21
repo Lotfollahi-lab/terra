@@ -68,9 +68,17 @@
 # - No precomputed_n_nonzero_tokens: compact rows give the lengths of the
 #   layout read when the dataset loads (datasets/cell_datasets.py:178-196,
 #   compact.layout_n_nonzero_tokens); train.py treats the key as optional.
-# - model_input_size / n_neighs are the MODEL layout: inference tokenizes new
-#   data with them ((n_neighs + 1) x seq_len_cell). Training does not read
-#   them and train() does not check them against the record.
+# - model_input_size / n_neighs are the CORPUS layout (16 neighbours, rows of
+#   17 x 512 = 8704 entries) in every hst_corpus_110m_knn* config, also for
+#   models that read fewer neighbours or genes. Training does not read them
+#   (train() warns when they differ from the record). Inference tokenizes new
+#   data with them and reads the rows with tokenized_seq_len_cell /
+#   truncate_neighbors as training reads the corpus rows
+#   (inference/embed.py _truncation_settings), so new data give the inputs
+#   the corpus rows give. With the model layout (e.g. 10 / 2816) inference
+#   would build a fresh 10-NN graph, whose neighbours differ from the first
+#   10 of the corpus' 16-NN graph when neighbour distances tie (duplicate
+#   coordinates, grids; rehearsal 2026-11-21: 9 of 120 cells of 23_batch0).
 # - zero_expr_from_raw_counts, gcrd_*, seurat_loess_span: the tokenizer
 #   defaults (cell_tokenizers.py:373-376), which the corpus tokenizer configs
 #   keep; stated so that inference (inference/tokenize.py TOKENIZER_CONFIG_KEYS)
@@ -90,11 +98,11 @@ seed: 0
 data:
   dataset_name: 'hst_corpus_110m'
   tokenizer_type: 'cell_graph'
-  model_input_size: 2816 # model layout: (n_neighs + 1) * seq_len_cell
-  n_neighs: 10
+  model_input_size: 8704 # corpus layout (16 + 1) x 512, read as 11 x 256 (see 'Corpus keys')
+  n_neighs: 16 # corpus layout; the model reads n_segments - 1 = 10 neighbours
   seq_len_cell: 256
-  seq_len_neighborhood: 2560 # n_neighs * seq_len_cell
-  n_segments: 11 # n_neighs + 1
+  seq_len_neighborhood: 2560 # (n_segments - 1) * seq_len_cell
+  n_segments: 11 # the cell + the neighbours the model reads
   tokenized_seq_len_cell: 512 # corpus stride (16 x 512 corpus)
   truncate_neighbors: true # fewer neighbours than the corpus
   rank_cell_norm_method: null
