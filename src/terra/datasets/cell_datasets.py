@@ -78,6 +78,7 @@ class CellBaseDataset(Dataset):
                  pad_special_tokens: bool = False,
                  truncate_neighbors: bool = False,
                  tokenized_seq_len_cell: int | None = None,
+                 return_row_index: bool = False,
                  ):
         """
         Torch CellBaseDataset class.
@@ -112,6 +113,16 @@ class CellBaseDataset(Dataset):
         sep_gene_tokens_neb:
             If `True`, use separate tokens for genes in neighborhood vs
             index cell.
+        return_row_index:
+            If `True`, every item holds its row in `dataset` (`row_idx`, a
+            0-d long tensor) and, for cell-graph datasets tokenized with
+            `add_spatial_index` (a `neighbor_offsets` column), the rows of its
+            neighbour cells (`neighbor_rows`, long tensor of n_segments - 1
+            entries, segment 2 first, -1 where the cell has no such
+            neighbour). Neighbour rows are the item's row plus the offsets,
+            so `dataset` must keep each tokenized file's rows together and in
+            order (a selection of whole files does; see
+            `terra.training.exposures.check_neighbor_rows`).
         """
         if gt_type not in ['rank', 'counts', 'combined']:
             raise ValueError(f'Invalid "gt_type": {gt_type}.')
@@ -175,6 +186,10 @@ class CellBaseDataset(Dataset):
         # smaller seq_len_cell, no re-tokenization. Defaults to seq_len_cell
         # (no gene-per-cell truncation). Composes with truncate_neighbors.
         self.tokenized_seq_len_cell = tokenized_seq_len_cell or seq_len_cell
+        # Row ids for exposure logging, sampling designs and loss weights
+        self.return_row_index = return_row_index
+        self.has_neighbor_offsets = (
+            'neighbor_offsets' in self.dataset.features)
 
         # Per-cell lengths for the length-grouped sampler
         if self.compact:
@@ -368,6 +383,32 @@ class CellBaseDataset(Dataset):
             if val.numel() == 0:
                 continue
             item_dict[key] = val[0].long()
+        return item_dict
+
+    def _attach_row_index(self,
+                          row: int,
+                          item: dict,
+                          item_dict: dict,
+                          ) -> dict:
+        """
+        Add the item's row (`row_idx`) and, if the dataset stores neighbour
+        offsets, the rows of the neighbours the item reads
+        (`neighbor_rows`; see `return_row_index`).
+        """
+        if not self.return_row_index:
+            return item_dict
+        item_dict['row_idx'] = torch.tensor(int(row), dtype=torch.long)
+        if self.has_neighbor_offsets:
+            n_read = int(self.n_segments) - 1
+            offsets = torch.as_tensor(
+                item['neighbor_offsets'], dtype=torch.long).reshape(-1)
+            neighbor_rows = torch.full((n_read,), -1, dtype=torch.long)
+            n = min(n_read, offsets.numel())
+            neighbor_rows[:n] = offsets[:n] + int(row)
+            # Rows outside the dataset (a file cut by the split) are unknown
+            neighbor_rows[(neighbor_rows < 0)
+                          | (neighbor_rows >= self.len)] = -1
+            item_dict['neighbor_rows'] = neighbor_rows
         return item_dict
 
     def _sample_seq(self,
@@ -594,6 +635,7 @@ class CellGraphDataset(CellBaseDataset):
                     item: int,
                     ) -> dict:
         item_dict = {}
+        row = item
 
         # Retrieve Hugging Face item once
         item = self.dataset[item]
@@ -830,6 +872,8 @@ class CellGraphDataset(CellBaseDataset):
         # Expose per-cell metadata (batch_value, assay_value, ...) as
         # scalar fields independent of self.special_tokens.
         item_dict = self._attach_metadata(item=item, item_dict=item_dict)
+        item_dict = self._attach_row_index(row=row, item=item,
+                                           item_dict=item_dict)
 
         return item_dict
 
@@ -972,6 +1016,7 @@ class CellNeighborhoodDataset(CellBaseDataset):
                     item: int
                     ) -> dict:
         item_dict = {}
+        row = item
 
         # Retrieve Hugging Face item once
         item = self.dataset[item]
@@ -1061,6 +1106,10 @@ class CellNeighborhoodDataset(CellBaseDataset):
         # Expose per-cell metadata (batch_value, assay_value, ...) as
         # scalar fields independent of self.special_tokens.
         item_dict = self._attach_metadata(item=item, item_dict=item_dict)
+        # The aggregated neighbourhood segment is no single cell, so only the
+        # row (cell-neighborhood datasets have no neighbor_offsets)
+        item_dict = self._attach_row_index(row=row, item=item,
+                                           item_dict=item_dict)
 
         return item_dict
 

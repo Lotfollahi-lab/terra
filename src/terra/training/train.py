@@ -52,7 +52,10 @@ from terra.models.distribution_alignment import (
     compute_distribution_alignment_loss)
 from terra.datasets.cell_datasets import (
     init_cell_dataset, rank_special_value_offset)
-from terra.datasets.dataloaders import init_dataloader_and_sampler
+from terra.datasets.dataloaders import (EpochIndexLists,
+                                        init_dataloader_and_sampler)
+from terra.training.exposures import (ExposureTracker, check_neighbor_rows,
+                                      exposure_config, needs_neighbor_rows)
 from terra.masks.block_masking  import BlockMaskCollator
 from terra.masks.cell_masking import CellMaskCollator
 from terra.masks.utils import apply_masks, padding_key_masks
@@ -858,6 +861,17 @@ def train(args: dict,
         'allow_checkpoint_load_failure', False)
     use_profiler = args['state'].get('use_profiler', False)
 
+    # Data selection experiments (all off by default): rows each epoch
+    # presents, and exposure logging, counters and loss weights
+    # (terra.training.exposures)
+    epoch_index_lists_path = args['data'].get('epoch_index_lists')
+    exposure_cfg = exposure_config(args)
+    if isinstance(train_dataset, list) and (
+            epoch_index_lists_path or exposure_cfg is not None):
+        raise ValueError(
+            "data.epoch_index_lists and the exposure section are not "
+            "supported with data.precomputed_epoch_splits.")
+
     # Without precomputed lists, the cell datasets take the lengths from the
     # (split) datasets; compact datasets (terra.datasets.compact) derive them
     # for the layout read from their segment lengths, so the lists are
@@ -1288,7 +1302,18 @@ def train(args: dict,
             sep_gene_tokens_neb=sep_gene_tokens_neb,
             nz_spc=nz_spc,
             truncate_neighbors=args['data'].get('truncate_neighbors', False),
-            tokenized_seq_len_cell=args['data'].get('tokenized_seq_len_cell', None))
+            tokenized_seq_len_cell=args['data'].get('tokenized_seq_len_cell', None),
+            return_row_index=exposure_cfg is not None)
+
+    epoch_index_lists = None
+    if epoch_index_lists_path:
+        epoch_index_lists = EpochIndexLists(
+            epoch_index_lists_path, n_rows=len(train_cell_dataset),
+            n_epochs=num_epochs)
+        logger.info(
+            f"Each epoch presents {epoch_index_lists.length} rows of the "
+            f"{len(train_cell_dataset)} of the training split, from "
+            f"'{epoch_index_lists_path}'.")
 
     if isinstance(train_dataset, list):
         train_loaders = []
@@ -1327,10 +1352,41 @@ def train(args: dict,
             persistent_workers=False,
             multiprocessing_context=multiprocessing_context,
             mega_batch_mult_max=mega_batch_mult_max,
-            seed=seed)
+            seed=seed,
+            epoch_index_lists=epoch_index_lists)
 
     logger.info(f"Length of train loader: {len(train_loader)}.")
     ipe = len(train_loader)
+
+    exposure_tracker = None
+    if exposure_cfg is not None:
+        has_neighbor_rows = (tokenizer_type == 'cell_graph'
+                             and train_cell_dataset.has_neighbor_offsets)
+        if (needs_neighbor_rows(exposure_cfg) and has_neighbor_rows
+                and exposure_cfg['neighbor_row_check']):
+            n_pairs = check_neighbor_rows(train_dataset, seed=seed)
+            logger.info(f"Neighbour rows checked: {n_pairs} pairs.")
+        exposure_tracker = ExposureTracker(
+            exposure_cfg,
+            n_rows=len(train_cell_dataset),
+            n_segments=int(n_segments),
+            n_special_tokens=n_special_tokens,
+            nz_spc=nz_spc,
+            excl_spc_from_loss=excl_spc_from_loss,
+            loss_fn_type=loss_fn_type,
+            has_neighbor_rows=has_neighbor_rows,
+            folder=save_folder_path,
+            rank=rank,
+            world_size=world_size,
+            device=device,
+            manifest=dict(
+                iterations_per_epoch=ipe,
+                epochs=num_epochs,
+                batch_size_per_rank=batch_size,
+                epoch_index_lists=epoch_index_lists_path,
+                tokenized_data_folder_path=args['data'].get(
+                    'tokenized_data_folder_path'),
+                precomputed_split=args['data'].get('precomputed_split')))
 
     # Initialize optimizer and scheduler
     optimizer, scaler, scheduler, wd_scheduler = init_opt(
@@ -1573,6 +1629,8 @@ def train(args: dict,
 
         # Update distributed dataloader epoch
         train_sampler.set_epoch(epoch)
+        if exposure_tracker is not None:
+            exposure_tracker.start_epoch(epoch)
 
         loss_meter = AverageMeter()
         #maskA_meter = AverageMeter()
@@ -1581,6 +1639,10 @@ def train(args: dict,
         for itr, (udata, masks_enc, masks_pred, masks_attention, pad_special_tokens) in enumerate(train_loader):
             for key, val in udata.items():
                 udata[key] = val.to(device, non_blocking=True)
+            # Rows of the niche and its neighbours (exposure section only);
+            # not model inputs
+            batch_rows = udata.pop('row_idx', None)
+            batch_neighbor_rows = udata.pop('neighbor_rows', None)
             masks_enc = [u.to(device, non_blocking=True) for u in masks_enc]
             masks_pred = [u.to(device, non_blocking=True) for u in masks_pred]
             masks_attention = masks_attention.to(device, non_blocking=True)
@@ -1698,7 +1760,17 @@ def train(args: dict,
                 # Compute loss
                 loss_exp = 1.0
                 loss = 0.
-                if pad_masks_to_batch_max:
+                if exposure_tracker is not None and exposure_tracker.weighted:
+                    # Every target token's loss times its row's weight
+                    # (exposure.loss_weights)
+                    loss = exposure_tracker.weighted_loss(
+                        z=z, h=h, masks_pred=masks_pred,
+                        masks_pred_valid=(masks_pred_valid
+                                          if pad_masks_to_batch_max else None),
+                        segments=udata['segments'], rows=batch_rows,
+                        neighbor_rows=batch_neighbor_rows,
+                        pad_special_tokens=pad_special_tokens)
+                elif pad_masks_to_batch_max:
                     # Mean over valid (non-padded) target entries only
                     for zi, hi, vi in zip(z, h, masks_pred_valid):
                         if excl_spc_from_loss and not pad_special_tokens:
@@ -1732,6 +1804,18 @@ def train(args: dict,
                                 loss += torch.mean(
                                     torch.abs(zi - hi)**loss_exp) / loss_exp
                 loss /= len(masks_pred)
+
+                if exposure_tracker is not None:
+                    # Per-niche / per-cell losses and exposure counts, from
+                    # the predictions and targets (the loss is unchanged)
+                    exposure_tracker.record(
+                        step=epoch * ipe + itr, z=z, h=h,
+                        masks_pred=masks_pred,
+                        masks_pred_valid=(masks_pred_valid
+                                          if pad_masks_to_batch_max else None),
+                        segments=udata['segments'], rows=batch_rows,
+                        neighbor_rows=batch_neighbor_rows,
+                        pad_special_tokens=pad_special_tokens)
 
                 # ----------------------------------------------------
                 # VICReg-style variance + covariance regularization
@@ -2276,6 +2360,8 @@ def train(args: dict,
         # -- Save Checkpoint after every epoch
         logger.info('avg. loss %.3f'
                     % _meter_average_over_ranks(loss_meter, device))
+        if exposure_tracker is not None:
+            exposure_tracker.end_epoch(epoch)
         save_checkpoint(epoch)
 
     if use_profiler and WORLD_RANK == 0 :

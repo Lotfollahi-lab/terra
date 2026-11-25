@@ -120,7 +120,8 @@ def _list_feature(feature):
 def compact_features(tok_dtype: np.dtype,
                      model_input_size: int,
                      include_special_tokens: bool,
-                     add_neigh_cell_ids: bool):
+                     add_neigh_cell_ids: bool,
+                     add_spatial_index: bool = False):
     """
     Hugging Face features of a compact cell-graph dataset.
 
@@ -140,6 +141,14 @@ def compact_features(tok_dtype: np.dtype,
     if include_special_tokens:
         for name in SPECIAL_TOKEN_NAMES:
             features[f'{name}_value'] = List(Value('int32'))
+    if add_spatial_index:
+        # CellGraphTokenizer(add_spatial_index=True)
+        features.update({
+            'cell_index': Value('int32'),
+            'x_coord': Value('float64'),
+            'y_coord': Value('float64'),
+            'neighbor_offsets': List(Value('int32')),
+        })
     features.update({
         'gene_tokens': List(Value(np.dtype(tok_dtype).name)),
         'gene_expr': List(Value('float32')),
@@ -569,6 +578,11 @@ def to_padded(dataset, num_proc: int | None = None,
     for col in list(features):
         if col.endswith('_value'):
             features[col] = List(Value('int64'))
+    # Spatial index columns (add_spatial_index), as the padded format infers
+    if 'cell_index' in features:
+        features['cell_index'] = Value('int64')
+    if 'neighbor_offsets' in features:
+        features['neighbor_offsets'] = List(Value('int64'))
     padded = dataset.with_format(None).map(
         _expand_batch, batched=True, batch_size=1000, num_proc=num_proc,
         remove_columns=list(COMPACT_COLUMNS), features=features,

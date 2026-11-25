@@ -88,6 +88,9 @@ def tokenizer_params(tokenizer) -> dict:
     storage_format = getattr(tokenizer, 'storage_format', 'padded')
     if storage_format != 'padded':
         optional['storage_format'] = storage_format
+    # Likewise only when set: extra columns, the tokens are unchanged
+    if getattr(tokenizer, 'add_spatial_index', False):
+        optional['add_spatial_index'] = True
     try:
         from terra import __version__ as terra_version
     except ImportError:

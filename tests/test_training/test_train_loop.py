@@ -50,6 +50,7 @@ import subprocess
 import sys
 import types
 
+import numpy as np
 import pytest
 import torch
 import torch.distributed as dist
@@ -771,3 +772,199 @@ def test_compact_dataset_trains_like_the_padded_one(run_train, tmp_path,
     assert len(result['compact']['logged']) == 2 * ITERATIONS_PER_EPOCH
     assert result['compact']['logged'] == result['padded']['logged']
     assert _same_training_state(states['compact'], states['padded'])
+
+
+# ---------------------------------------------------------------------------
+# Data selection experiments: epoch index lists (data.epoch_index_lists) and
+# the exposure section (terra.training.exposures)
+# ---------------------------------------------------------------------------
+
+def _ring_dataset():
+    """
+    `_dataset()` with the columns of CellGraphTokenizer(add_spatial_index):
+    row r's neighbours (segments 2..) are rows r+1, r+2, ... (mod N_CELLS).
+    """
+    plain = _dataset().with_format(None)
+    offsets = [[(r + j) % N_CELLS - r for j in range(1, N_SEGMENTS)]
+               for r in range(N_CELLS)]
+    dataset = (plain.add_column('cell_index', list(range(N_CELLS)))
+               .add_column('neighbor_offsets', offsets))
+    dataset.set_format(type='torch',
+                       columns=[c for c in dataset.column_names
+                                if c != 'cell_id'],
+                       output_all_columns=True)
+    return dataset
+
+
+LOG_ALL = {'log_niche_losses': True, 'log_cell_losses': True,
+           'cell_loss_track_every': 1, 'counters': True, 'flush_every': 3}
+
+
+def test_exposure_logging_does_not_change_training(run_train, tmp_path):
+    from terra.training.exposures import load_records
+    meta = {'excl_spc_from_loss': True}
+    run_train(dataset=_ring_dataset(), meta=meta)
+    reference = _final_state(tmp_path)
+    result = run_train(dataset=_ring_dataset(), meta=meta,
+                       exposure=dict(LOG_ALL))
+    assert _same_training_state(_final_state(tmp_path), reference)
+
+    log_dir = tmp_path / 'run' / 'exposures'
+    for epoch in range(2):
+        niche = load_records(str(log_dir), 'niche_losses', epoch=epoch)
+        cells = load_records(str(log_dir), 'cell_losses', epoch=epoch)
+        counters = np.load(log_dir / f'counters_ep{epoch:03d}.npz')
+        # every row once per epoch, at its step
+        assert sorted(niche['row'].tolist()) == list(range(N_CELLS))
+        steps = epoch * ITERATIONS_PER_EPOCH + np.arange(ITERATIONS_PER_EPOCH)
+        assert sorted(set(niche['step'].tolist())) == steps.tolist()
+        # the logged loss is the mean of the batch's niche losses (equal
+        # numbers of targets per cell without padded masks)
+        for step in steps:
+            sel = niche['step'] == step
+            assert len(set(niche['n_targets'][sel].tolist())) == 1
+            assert result['logged'][step]['loss'] == pytest.approx(
+                float(niche['loss'][sel].mean()), rel=1e-5)
+        # the cell records split each niche's targets and loss
+        for step, row, loss, n in zip(niche['step'], niche['row'],
+                                      niche['loss'], niche['n_targets']):
+            sel = (cells['step'] == step) & (cells['niche_row'] == row)
+            assert cells['n_targets'][sel].sum() == n
+            assert float((cells['loss'][sel] * cells['n_targets'][sel]).sum()
+                         ) == pytest.approx(float(loss) * n, rel=1e-5)
+            for seg, cell in zip(cells['segment'][sel], cells['cell_row'][sel]):
+                assert cell == (row + seg - 1) % N_CELLS
+        assert np.array_equal(counters['centre'], np.ones(N_CELLS))
+        assert counters['target_tokens'].sum() == niche['n_targets'].sum()
+        assert (counters['target'] <= counters['present']).all()
+        assert (counters['present'] <= N_SEGMENTS).all()
+        assert counters['target'].sum() == len(cells['loss'])
+
+
+def test_niche_losses_without_neighbour_offsets(run_train, tmp_path):
+    run_train(exposure={'log_niche_losses': True})
+    from terra.training.exposures import load_records
+    niche = load_records(str(tmp_path / 'run' / 'exposures'), epoch=1)
+    assert sorted(niche['row'].tolist()) == list(range(N_CELLS))
+    with pytest.raises(ValueError, match='add_spatial_index'):
+        run_train(exposure={'counters': True})
+
+
+def test_neighbour_rows_are_checked_before_training(run_train):
+    dataset = _ring_dataset().with_format(None)
+    # the rows of the file in reverse order of their cell_index
+    broken = dataset.remove_columns('cell_index').add_column(
+        'cell_index', list(range(N_CELLS))[::-1])
+    broken.set_format(type='torch', columns=[
+        c for c in broken.column_names if c != 'cell_id'],
+        output_all_columns=True)
+    with pytest.raises(ValueError, match='row \\+ neighbor_offsets'):
+        run_train(dataset=broken, exposure={'counters': True})
+
+
+def test_epoch_index_lists_in_training(run_train, tmp_path):
+    run_train()
+    reference = _final_state(tmp_path)
+    identity = tmp_path / 'identity.npy'
+    np.save(identity, np.tile(np.arange(N_CELLS), (2, 1)))
+    run_train(data={'epoch_index_lists': str(identity)})
+    assert _same_training_state(_final_state(tmp_path), reference)
+
+    # 16 rows twice per epoch: same number of steps, half the rows
+    subset = tmp_path / 'subset.npy'
+    np.save(subset, np.tile(np.arange(16), (2, 2)))
+    result = run_train(dataset=_ring_dataset(),
+                       data={'epoch_index_lists': str(subset)},
+                       exposure={'log_niche_losses': True, 'counters': True})
+    assert len(result['logged']) == 2 * ITERATIONS_PER_EPOCH
+    from terra.training.exposures import load_records
+    log_dir = tmp_path / 'run' / 'exposures'
+    for epoch in range(2):
+        rows = load_records(str(log_dir), epoch=epoch)['row']
+        assert sorted(rows.tolist()) == sorted(list(range(16)) * 2)
+        centre = np.load(log_dir / f'counters_ep{epoch:03d}.npz')['centre']
+        assert centre.tolist() == [2] * 16 + [0] * 16
+
+
+@pytest.mark.parametrize('mode,meta', [('niche', {}),
+                                       ('cell', {'excl_spc_from_loss': True})])
+def test_loss_weights_in_training(run_train, tmp_path, mode, meta):
+    first = run_train(dataset=_ring_dataset(), meta=meta,
+                      optimization={'epochs': 1})['logged'][0]['loss']
+    rng = np.random.default_rng(0)
+    cases = {'ones': np.ones(N_CELLS), 'fives': np.full(N_CELLS, 5.0),
+             'varied': rng.uniform(0.1, 3.0, N_CELLS)}
+    for name, weights in cases.items():
+        path = tmp_path / f'{name}.npy'
+        np.save(path, weights.astype(np.float32))
+        logged = run_train(dataset=_ring_dataset(), meta=meta,
+                           optimization={'epochs': 1},
+                           exposure={'loss_weights': str(path),
+                                     'loss_weight_mode': mode})['logged']
+        assert all(math.isfinite(p['loss']) for p in logged)
+        if name == 'varied':
+            # reweights the targets of the first batch
+            assert logged[0]['loss'] != pytest.approx(first, rel=1e-4)
+        else:
+            # constant weights (5 is clipped to 2): only ratios matter
+            assert logged[0]['loss'] == pytest.approx(first, rel=1e-5)
+
+
+_TWO_RANK_EXPOSURE_WORKER = """
+import pickle
+import sys
+import types
+
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel
+
+sys.path.insert(0, sys.argv[4])
+import test_train_loop as harness
+
+T = harness.T
+rank, init_file, folder = int(sys.argv[1]), sys.argv[2], sys.argv[3]
+sys.modules['wandb'] = types.SimpleNamespace(log=lambda *a, **k: None)
+T.DistributedDataParallel = lambda module, **kw: DistributedDataParallel(
+    module, **{k: v for k, v in kw.items()
+               if k not in ('device_ids', 'output_device')})
+dist.init_process_group('gloo', init_method=f'file://{init_file}',
+                        rank=rank, world_size=2)
+token_dict_path = f'{folder}/token_dictionary.pkl'
+if rank == 0:
+    with open(token_dict_path, 'wb') as f:
+        pickle.dump({f't{i}': i for i in range(700)}, f)
+dist.barrier()
+args = harness._args(folder, token_dict_path, {
+    'data': {'batch_size': 4},
+    'exposure': {'log_niche_losses': True, 'counters': True}})
+T.train(args, train_dataset=harness._ring_dataset(), save_folder_path=folder,
+        LOCAL_RANK=rank, WORLD_RANK=rank)
+"""
+
+
+def test_exposures_on_two_ranks(tmp_path):
+    from terra.training.exposures import load_records
+    script = tmp_path / 'worker.py'
+    script.write_text(_TWO_RANK_EXPOSURE_WORKER)
+    (tmp_path / 'run').mkdir()
+    procs = [subprocess.Popen(
+        [sys.executable, str(script), str(rank), str(tmp_path / 'init'),
+         str(tmp_path / 'run'), os.path.dirname(__file__)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        for rank in range(2)]
+    try:
+        outputs = [proc.communicate(timeout=180) for proc in procs]
+    finally:
+        for proc in procs:
+            proc.kill()
+    assert [proc.returncode for proc in procs] == [0, 0], outputs[0][1][-3000:]
+    log_dir = tmp_path / 'run' / 'exposures'
+    for epoch in range(2):
+        per_rank = [np.concatenate([np.load(p)['row'] for p in sorted(
+            (log_dir / f'rank{r}').glob(f'niche_losses_ep{epoch:03d}_*.npz'))])
+            for r in range(2)]
+        assert all(len(rows) == N_CELLS // 2 for rows in per_rank)
+        rows = load_records(str(log_dir), epoch=epoch)['row']
+        assert sorted(rows.tolist()) == list(range(N_CELLS))
+        centre = np.load(log_dir / f'counters_ep{epoch:03d}.npz')['centre']
+        assert centre.tolist() == [1] * N_CELLS

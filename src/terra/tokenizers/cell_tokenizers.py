@@ -866,7 +866,8 @@ class CellBaseTokenizer(ABC):
         return compact_features(
             self.token_dtype, self.model_input_size,
             include_special_tokens=self.include_special_tokens,
-            add_neigh_cell_ids=self.add_neigh_cell_ids)
+            add_neigh_cell_ids=self.add_neigh_cell_ids,
+            add_spatial_index=getattr(self, 'add_spatial_index', False))
 
     @abstractmethod
     def _tokenize_adata(self):
@@ -886,6 +887,7 @@ class CellBaseTokenizer(ABC):
 class CellGraphTokenizer(CellBaseTokenizer):
     def __init__(self,
                  pad_empty_neighbors: bool = False,
+                 add_spatial_index: bool = False,
                  **base_tokenizer_kwargs,
                  ):
         """
@@ -904,14 +906,35 @@ class CellGraphTokenizer(CellBaseTokenizer):
             neighbors are dropped), so its segments no longer start where
             the cell datasets read them. A `UserWarning` reports such cells
             in the data either way.
+        add_spatial_index:
+            If `True`, every row also holds where its cells are, for
+            exposure logging and spatial sampling designs (the tokens are
+            unchanged): `cell_index` (int32, the cell's position among the
+            cells of its file that pass the filter, i.e. its row within the
+            file's rows), `x_coord` / `y_coord` (float64, absolute
+            coordinates from `obsm['spatial']`) and `neighbor_offsets`
+            (int32 list, one per neighbor in segment order: the neighbor's
+            `cell_index` minus the cell's, so its row is the cell's row plus
+            the offset while the file's rows stay together and in order). The
+            offsets follow the order of the relative coordinates and of the
+            segments. Needs `pad_empty_neighbors=True`: otherwise the
+            segments of a cell with an empty neighbor shift (see above) and
+            no longer match its offsets. Recorded as
+            `"add_spatial_index": true` in `terra_tokenizer_params.json`.
         **base_tokenizer_kwargs:
             Keyword arguments for the initialization of the
             CellBaseTokenizer.
         """
         super().__init__(**base_tokenizer_kwargs)
+        if add_spatial_index and not pad_empty_neighbors:
+            raise ValueError(
+                "add_spatial_index needs pad_empty_neighbors=True: without it, "
+                "an empty neighbor shifts the segments of the cells around "
+                "it, and their neighbor offsets would name the wrong cells.")
 
         self.seq_len_cell = int(self.model_input_size / (self.n_neighs + 1))
         self.pad_empty_neighbors = pad_empty_neighbors
+        self.add_spatial_index = add_spatial_index
 
     def _tokenize_adata(self,
                         adata_file_path: Path | str | None = None,
@@ -1445,6 +1468,9 @@ class CellGraphTokenizer(CellBaseTokenizer):
         # a one-row matrix per cell
         conn_csr = (sp.issparse(connectivities)
                     and connectivities.format == 'csr')
+        # Neighbor positions relative to the cell, in segment order
+        # (add_spatial_index)
+        neighbor_offsets = [None] * n_cells if self.add_spatial_index else None
         for i in range(len(adata_neigh)):
             # Collect all neighbors of cell i
             if conn_csr:
@@ -1534,6 +1560,9 @@ class CellGraphTokenizer(CellBaseTokenizer):
                 (coords[ordered_neighbors, 0] - coords[i, 0]).tolist())
             adata_dict['rel_y_coord'][i].extend(
                 (coords[ordered_neighbors, 1] - coords[i, 1]).tolist())
+            if neighbor_offsets is not None:
+                neighbor_offsets[i] = (
+                    np.asarray(ordered_neighbors, dtype=np.int64) - i).tolist()
 
             if self.add_neigh_cell_ids:
                 for k in ordered_neighbors:
@@ -1595,8 +1624,17 @@ class CellGraphTokenizer(CellBaseTokenizer):
         if self.include_special_tokens:
             adata_dict.update(self._special_token_values(adata, n_cells))
 
+        if self.add_spatial_index:
+            # Where the cell and its neighbors are (see add_spatial_index);
+            # coordinates as stored, in float64
+            coords64 = np.asarray(adata.obsm['spatial'], dtype=np.float64)
+            adata_dict['cell_index'] = list(range(n_cells))
+            adata_dict['x_coord'] = coords64[:, 0].tolist()
+            adata_dict['y_coord'] = coords64[:, 1].tolist()
+            adata_dict['neighbor_offsets'] = neighbor_offsets
+
         return adata_dict
-            
+
     def _format_examples(self,
                          example: dict) -> dict:
         """
@@ -1745,6 +1783,10 @@ class CellGraphTokenizer(CellBaseTokenizer):
             for name in SPECIAL_TOKEN_NAMES:
                 example[f'{name}_value'] = np.asarray(
                     example[f'{name}_value'], dtype=np.int32)
+        if self.add_spatial_index:
+            example['cell_index'] = np.int32(example['cell_index'])
+            example['neighbor_offsets'] = np.asarray(
+                example['neighbor_offsets'], dtype=np.int32)
 
 
 class CellNeighborhoodTokenizer(CellBaseTokenizer):
