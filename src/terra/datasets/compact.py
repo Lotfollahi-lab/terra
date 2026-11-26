@@ -278,6 +278,54 @@ def _selected_rows(dataset) -> np.ndarray | None:
     return np.asarray(column.to_numpy(), dtype=np.int64)
 
 
+def _folder_record(dataset) -> dict | None:
+    """
+    The tokenizer record (`terra_tokenizer_params.json`, see
+    `terra.tokenizers.params`) of the folder that holds every arrow file of a
+    dataset loaded from disk; None for in-memory datasets, datasets whose
+    files are in several folders, and folders without a record.
+    """
+    import os
+    from terra.tokenizers.params import read_tokenizer_params
+    try:
+        files = [f['filename'] for f in dataset.cache_files]
+    except (AttributeError, KeyError, TypeError):
+        return None
+    folders = {os.path.dirname(os.path.abspath(f)) for f in files}
+    if len(folders) != 1:
+        return None
+    return read_tokenizer_params(folders.pop())
+
+
+def _segment_length_without_scan(dataset) -> int | None:
+    """
+    `data_segment_length` of a dataset saved with the record of a cell-graph
+    tokenizer, without reading its rows. A row of a k-NN tokenization has at
+    most `n_neighs + 1` segments (the cell and its neighbours), so if every
+    record batch of the table stores `n_neighs + 1` segment lengths per row
+    (the length of its list values, which the Arrow metadata gives without
+    reading row data), every row has `n_neighs + 1` segments and the row
+    `data_segment_length` takes is the first. None (the rows are read)
+    otherwise: rows of cells with fewer neighbours tokenized without
+    `pad_empty_neighbors`, or the varying segment counts of a radius or
+    Delaunay graph, whose record batches then do not all hold exactly
+    `n_neighs + 1` segment lengths per row.
+    """
+    record = _folder_record(dataset)
+    if (record is None or record.get('tokenizer') != 'CellGraphTokenizer'
+            or not record.get('n_neighs')):
+        return None
+    n_seg = int(record['n_neighs']) + 1
+    table = _underlying_table(dataset)
+    if table.num_rows == 0:
+        return None
+    for chunk in table.column('segment_lengths').chunks:
+        if (chunk.offset != 0 or chunk.null_count
+                or len(chunk.values) != n_seg * len(chunk)):
+            return None
+    return int(int(table.column('model_input_size')[0].as_py()) / n_seg)
+
+
 def data_segment_length(dataset, group_rows: int = 262_144) -> int | None:
     """
     Segment length of the rows of a compact dataset: the stride
@@ -286,14 +334,19 @@ def data_segment_length(dataset, group_rows: int = 262_144) -> int | None:
     It is `int(model_input_size / n_segments)` of a row with the most
     segments (`n_neighs + 1`, as the tokenizer computes it; rows of cells with
     fewer neighbours, tokenized without `pad_empty_neighbors`, have fewer and
-    longer segments). Every row of the underlying table is scanned (also the
-    rows a selection with an indices mapping leaves out; a contiguous
-    selection is a slice of the table), a group of rows at a time, reading
-    only the list offsets of `segment_lengths`. None for a dataset without
-    rows.
+    longer segments). For a dataset saved with its tokenizer record whose
+    rows all have `n_neighs + 1` segments, this is found from the record and
+    the Arrow metadata (`_segment_length_without_scan`). Otherwise every row
+    of the underlying table is scanned (also the rows a selection with an
+    indices mapping leaves out; a contiguous selection is a slice of the
+    table), a group of rows at a time, reading only the list offsets of
+    `segment_lengths`. None for a dataset without rows.
     """
     import pyarrow.compute as pc
 
+    stride = _segment_length_without_scan(dataset)
+    if stride is not None:
+        return stride
     table = _underlying_table(dataset)
     column = table.column('segment_lengths')
     best_n, best_row = 0, None

@@ -455,6 +455,62 @@ def test_data_segment_length():
     assert data_segment_length(empty) is None
 
 
+def _scanned_segment_length(dataset):
+    """data_segment_length read from the rows (the dataset without its
+    folder's record: an in-memory copy of its table)."""
+    from terra.datasets.compact import _underlying_table
+    copy = datasets.Dataset(_underlying_table(dataset).combine_chunks())
+    assert copy.cache_files == []
+    return data_segment_length(copy)
+
+
+@pytest.mark.parametrize('variant', list(VARIANTS))
+def test_data_segment_length_from_the_record(tokenized, variant,
+                                             monkeypatch):
+    from terra.datasets import compact as C
+    ds = tokenized[(variant, 'compact', 0)]
+    scanned = _scanned_segment_length(ds)
+    assert scanned == SEQ
+    n_seg = np.array([len(x) for x in ds.with_format(None)['segment_lengths']])
+    full = bool((n_seg == N_NEIGHS + 1).all())
+    # rows with fewer segments (no_pad_empty) are read; full rows are not
+    assert (C._segment_length_without_scan(ds) is not None) == full
+    if full:
+        def no_scan(*a, **k):
+            raise AssertionError('rows read')
+        monkeypatch.setattr('pyarrow.compute.list_value_length', no_scan)
+    for d in (ds, ds.select([5, 0, 39, 7]), ds.with_format('torch')):
+        assert data_segment_length(d) == scanned
+
+
+def test_data_segment_length_without_a_usable_record(tokenized, tmp_path):
+    from terra.datasets import compact as C
+    from terra.tokenizers.params import TOKENIZER_PARAMS_FILE
+    import json
+    import shutil
+    from pathlib import Path
+    ds = tokenized[('corpus', 'compact', 0)]
+    folder = Path(ds.cache_files[0]['filename']).parent
+    record = json.loads((folder / TOKENIZER_PARAMS_FILE).read_text())
+    for name, change in (('none', None), ('no_neighs', {'n_neighs': None}),
+                         ('other_neighs', {'n_neighs': N_NEIGHS + 1}),
+                         ('neigh_tokenizer',
+                          {'tokenizer': 'CellNeighborhoodTokenizer'})):
+        path = tmp_path / f'{name}.dataset'
+        shutil.copytree(folder, path)
+        if change is None:
+            (path / TOKENIZER_PARAMS_FILE).unlink()
+        else:
+            (path / TOKENIZER_PARAMS_FILE).write_text(
+                json.dumps({**record, **change}))
+        copy = datasets.load_from_disk(str(path))
+        assert C._segment_length_without_scan(copy) is None, name
+        assert data_segment_length(copy) == SEQ, name
+    # a contiguous selection (a slice of the table) is read
+    assert C._segment_length_without_scan(ds.select(range(3, 9))) is None
+    assert data_segment_length(ds.select(range(3, 9))) == SEQ
+
+
 @pytest.mark.parametrize('seq_len_cell,n_neighs,tokenized_seq_len_cell',
                          [(4, 2, 4), (4, 9, 4), (8, 4, 4), (4, 2, 2),
                           (3, 2, 7)])
